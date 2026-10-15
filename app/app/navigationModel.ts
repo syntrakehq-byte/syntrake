@@ -10,6 +10,7 @@ export type ViewKey =
   | "reports"
   | "settings"
   | "portfolio"
+  | "broker"
   | "autonomy"
   | "trading"
   | "opportunities"
@@ -28,7 +29,7 @@ function asNavItem(key: ViewKey, label: string, locked: boolean): ShellNavItem {
   return locked ? { key, label, locked: true } : { key, label };
 }
 
-const INVESTING_VIEWS: ViewKey[] = ["daily", "portfolio", "planning", "research", "reports", "autonomy", "settings"];
+const INVESTING_VIEWS: ViewKey[] = ["daily", "portfolio", "broker", "planning", "research", "reports", "autonomy", "settings"];
 const TRADING_VIEWS: ViewKey[] = ["trading", "alerts", "journal"];
 const LEGACY_TRADING_VIEWS: ViewKey[] = ["opportunities", "execution", "risk"];
 
@@ -45,6 +46,8 @@ export function inferModeFromView(rawView: string | null | undefined): Autopilot
   const normalized =
     raw === "plan"
       ? "planning"
+      : raw === "copilot"
+        ? "autonomy"
       : raw === "opportunity"
         ? "opportunities"
         : raw === "alert"
@@ -75,6 +78,8 @@ export function resolveModeAwareView(args: {
   const normalized =
     raw === "plan"
       ? "planning"
+      : raw === "copilot"
+        ? "autonomy"
       : raw === "opportunity"
         ? "opportunities"
         : raw === "alert"
@@ -183,6 +188,18 @@ export function buildModeAwareNavItems(args: {
       locked.has("portfolio"),
     ),
     asNavItem(
+      "broker",
+      pickByLang(args.lang, {
+        en: "Broker",
+        pt: "Broker",
+        es: "Broker",
+        fr: "Broker",
+        de: "Broker",
+        it: "Broker",
+      }),
+      locked.has("broker"),
+    ),
+    asNavItem(
       "planning",
       pickByLang(args.lang, {
         en: "Plan",
@@ -221,12 +238,12 @@ export function buildModeAwareNavItems(args: {
     asNavItem(
       "autonomy",
       pickByLang(args.lang, {
-        en: "Autonomy",
-        pt: "Autonomia",
-        es: "Autonomia",
-        fr: "Autonomie",
-        de: "Autonomie",
-        it: "Autonomia",
+        en: "Copilot",
+        pt: "Copilot",
+        es: "Copilot",
+        fr: "Copilot",
+        de: "Copilot",
+        it: "Copilot",
       }),
       locked.has("autonomy"),
     ),
@@ -355,6 +372,13 @@ export function buildShellCopy(args: {
     };
   }
 
+  if (args.view === "broker") {
+    return {
+      title: "Investing Broker",
+      subtitle: "Connect demo or live broker access. Syntrake prepares the workflow; the customer submits orders manually.",
+    };
+  }
+
   if (args.view === "research") {
     return {
       title: "Investing Research",
@@ -365,21 +389,21 @@ export function buildShellCopy(args: {
   if (args.view === "reports") {
     return {
       title: "Investing Reports",
-      subtitle: "Portfolio activity, decision receipts, Paper orders, and operational snapshots.",
+      subtitle: "Portfolio activity, decision receipts, broker orders, and operational snapshots.",
     };
   }
 
   if (args.view === "settings") {
     return {
       title: "Investing Settings",
-      subtitle: "Paper/manual workflow controls, valuation policy, notifications, and security state.",
+      subtitle: "Broker/manual workflow controls, valuation policy, notifications, and security state.",
     };
   }
 
   if (args.view === "autonomy") {
     return {
-      title: "Investing Autonomy",
-      subtitle: "Supervised Paper autonomy, operational readiness, and explicit Live blocking.",
+      title: "Investing Copilot",
+      subtitle: "Bot-like guidance without autonomous broker submission.",
     };
   }
 

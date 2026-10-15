@@ -259,19 +259,6 @@ function normalizeStorageUserId(userId: string | null | undefined) {
   return clean || "anon";
 }
 
-function readFirstAdvisorIntroSeen(mode: Mode, userId?: string | null) {
-  if (typeof window === "undefined") return false;
-  try {
-    const raw = window.localStorage.getItem(FIRST_ADVISOR_INTRO_SEEN_KEY);
-    if (!raw) return false;
-    const parsed = (JSON.parse(raw) || {}) as Record<string, boolean>;
-    const key = `${normalizeStorageUserId(userId)}:${mode}`;
-    return parsed?.[key] === true;
-  } catch {
-    return false;
-  }
-}
-
 function writeFirstAdvisorIntroSeen(mode: Mode, seen: boolean, userId?: string | null) {
   if (typeof window === "undefined") return;
   try {

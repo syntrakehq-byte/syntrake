@@ -51,6 +51,30 @@ export async function reversePersistentPaperCashMovement(args: {
   }), "investing_cash_reversal_failed");
 }
 
+export async function importPersistentPaperOpeningPosition(args: {
+  userId: string;
+  accountId: string;
+  symbol: string;
+  quantity: string;
+  totalCost: string;
+  currency: string;
+  acquiredAt: string;
+  clientRequestId: string;
+}) {
+  const database = getInvestingSupabaseAdmin() as any;
+  return resultOrThrow(await database.rpc("investing_import_opening_position_v1", {
+    p_actor_user_id: args.userId,
+    p_account_id: args.accountId,
+    p_symbol: args.symbol.trim().toUpperCase(),
+    p_quantity: toMoney(args.quantity, 12),
+    p_total_cost: toMoney(args.totalCost, 8),
+    p_currency: args.currency.toUpperCase(),
+    p_acquired_at: args.acquiredAt,
+    p_idempotency_key: args.clientRequestId,
+    p_correlation_id: `investing_opening_position_${randomUUID()}`,
+  }), "investing_opening_position_import_failed");
+}
+
 export async function applyPersistentPaperSplit(args: {
   userId: string;
   accountId: string;

@@ -42,8 +42,22 @@ export default function CockpitShell({
   showPageHeader?: boolean;
 }) {
   const { lang } = useSiteLanguage();
+  const [mobileMoreOpen, setMobileMoreOpen] = React.useState(false);
   const isDaily = active === "daily";
   const isTradingSurface = ["trading", "opportunities", "execution", "risk", "journal", "alerts"].includes(active);
+  const mobilePrimaryItems = items.length > 5 ? items.slice(0, 4) : items;
+  const mobileMoreItems = items.length > 5 ? items.slice(4) : [];
+  const hasMobileMore = mobileMoreItems.length > 0;
+  const mobileMoreActive = mobileMoreItems.some((it) => it.key === active);
+  const mobileGridClass = hasMobileMore || mobilePrimaryItems.length >= 5
+    ? "grid-cols-5"
+    : mobilePrimaryItems.length === 4
+      ? "grid-cols-4"
+      : mobilePrimaryItems.length === 3
+        ? "grid-cols-3"
+        : mobilePrimaryItems.length === 2
+          ? "grid-cols-2"
+          : "grid-cols-1";
 
   const trialLabel = !isPaid
     ? trial?.active
@@ -66,7 +80,7 @@ export default function CockpitShell({
           })
         : null
     : null;
-  const accountBadgeLabel = isPaid ? "Premium" : trial?.active ? "Trial" : isTradingSurface ? "Discovery" : "Free";
+  const accountBadgeLabel = isPaid ? "Pro" : trial?.active ? "Trial" : isTradingSurface ? "Discovery" : "Free";
   const accountBadgeTone = isPaid
     ? "border-[#3a2e15] bg-[#1d160b] text-[#f3c77a]"
     : trial?.active
@@ -158,21 +172,50 @@ export default function CockpitShell({
           </div>
         </div>
 
-        <div className="border-t border-slate-800/80 min-[981px]:hidden">
+        <div className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-700/80 bg-[#0b1424]/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl min-[981px]:hidden">
+          {mobileMoreOpen ? (
+            <div className="mx-auto max-w-[640px] border-b border-slate-700/80 p-3">
+              <div className="grid grid-cols-2 gap-2">
+                {mobileMoreItems.map((it) => (
+                  <button
+                    key={`mobile-more-${it.key}`}
+                    type="button"
+                    onClick={() => {
+                      setMobileMoreOpen(false);
+                      if (it.locked) onLockedNav?.(it.key);
+                      else onNav(it.key);
+                    }}
+                    data-active={it.key === active ? "true" : "false"}
+                    className={classNames(
+                      "min-h-11 rounded-xl border px-3 text-left text-sm font-semibold",
+                      it.key === active
+                        ? "border-[#365d98] bg-[#172846] text-white"
+                        : "border-slate-700 bg-[#12203a] text-slate-100"
+                    )}
+                  >
+                    {it.label}
+                  </button>
+                ))}
+                <Link href="/pricing?source=mobile_account" className="flex min-h-11 items-center rounded-xl border border-slate-700 bg-[#12203a] px-3 text-sm font-semibold text-white">Plan: {accountBadgeLabel}</Link>
+                <div className="flex min-h-11 items-center rounded-xl border border-slate-700 bg-[#12203a] px-3"><LanguageSwitcher compact /></div>
+                <div className="flex min-h-11 items-center gap-2 rounded-xl border border-slate-700 bg-[#12203a] px-3 text-sm font-semibold text-white"><UserButton /> Account</div>
+              </div>
+            </div>
+          ) : null}
           <nav
             aria-label="Primary"
-            className="mx-auto flex max-w-[1280px] gap-2 overflow-x-auto px-4 py-3 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+            className={classNames("mx-auto grid max-w-[640px] px-2 py-2", mobileGridClass)}
           >
-            {items.map((it) => {
+            {mobilePrimaryItems.map((it) => {
               const isActive = it.key === active;
               return (
                 <button
                   key={`mobile-${it.key}`}
                   type="button"
-                  onClick={() => (it.locked ? onLockedNav?.(it.key) : onNav(it.key))}
+                  onClick={() => it.locked ? onLockedNav?.(it.key) : onNav(it.key)}
                   data-active={isActive ? "true" : "false"}
                   className={classNames(
-                    "min-w-[92px] flex-none rounded-2xl border px-3 py-2 text-xs font-semibold tracking-[0.01em] transition",
+                    "min-h-11 min-w-0 rounded-xl border px-1 py-2 text-[11px] font-semibold tracking-[0.01em] transition",
                     isActive
                       ? "border-[#365d98] bg-[#12203a] text-white shadow-[0_10px_24px_rgba(0,0,0,0.18)]"
                       : "border-slate-800 bg-[#0d1628] text-slate-300 hover:border-slate-700 hover:text-white"
@@ -189,6 +232,23 @@ export default function CockpitShell({
                 </button>
               );
             })}
+            {hasMobileMore ? (
+              <button
+                type="button"
+                aria-expanded={mobileMoreOpen}
+                aria-label="More navigation and account options"
+                onClick={() => setMobileMoreOpen((open) => !open)}
+                data-active={mobileMoreActive ? "true" : "false"}
+                className={classNames(
+                  "min-h-11 min-w-0 rounded-xl border px-1 py-2 text-[11px] font-semibold tracking-[0.01em] transition",
+                  mobileMoreActive
+                    ? "border-[#365d98] bg-[#12203a] text-white shadow-[0_10px_24px_rgba(0,0,0,0.18)]"
+                    : "border-slate-800 bg-[#0d1628] text-slate-300 hover:border-slate-700 hover:text-white"
+                )}
+              >
+                More
+              </button>
+            ) : null}
           </nav>
         </div>
       </div>
@@ -196,7 +256,7 @@ export default function CockpitShell({
       <div
         className={classNames(
           "mx-auto w-full max-w-[1280px]",
-          isDaily ? "px-[18px] py-[18px] lg:px-[26px] lg:py-[26px]" : "px-4 py-6 lg:px-6 lg:py-8"
+          isDaily ? "px-[18px] pb-24 pt-[18px] lg:px-[26px] lg:py-[26px]" : "px-4 pb-24 pt-6 lg:px-6 lg:py-8"
         )}
       >
         {active !== "daily" && showPageHeader ? (

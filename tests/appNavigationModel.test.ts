@@ -13,10 +13,11 @@ describe("app navigation model", () => {
     expect(buildModeAwareNavItems({ mode: "investing", lang: "en" })).toEqual([
       { key: "daily", label: "Today" },
       { key: "portfolio", label: "Portfolio" },
+      { key: "broker", label: "Broker" },
       { key: "planning", label: "Plan" },
       { key: "research", label: "Research" },
       { key: "reports", label: "Reports" },
-      { key: "autonomy", label: "Autonomy" },
+      { key: "autonomy", label: "Copilot" },
       { key: "settings", label: "Settings" },
     ]);
 
@@ -35,7 +36,9 @@ describe("app navigation model", () => {
     expect(resolveModeAwareView({ rawView: "reports", mode: "investing" })).toBe("reports");
     expect(resolveModeAwareView({ rawView: "settings", mode: "investing" })).toBe("settings");
     expect(resolveModeAwareView({ rawView: "portfolio", mode: "investing" })).toBe("portfolio");
+    expect(resolveModeAwareView({ rawView: "broker", mode: "investing" })).toBe("broker");
     expect(resolveModeAwareView({ rawView: "autonomy", mode: "investing" })).toBe("autonomy");
+    expect(resolveModeAwareView({ rawView: "copilot", mode: "investing" })).toBe("autonomy");
     expect(resolveModeAwareView({ rawView: "unknown", mode: "investing" })).toBe("daily");
     expect(resolveModeAwareView({ rawView: "execution", mode: "trading" })).toBe("trading");
     expect(resolveModeAwareView({ rawView: "opportunities", mode: "trading" })).toBe("trading");
@@ -58,7 +61,9 @@ describe("app navigation model", () => {
     expect(inferModeFromView("trading")).toBe("trading");
     expect(inferModeFromView("execution")).toBe("trading");
     expect(inferModeFromView("portfolio")).toBe("investing");
+    expect(inferModeFromView("broker")).toBe("investing");
     expect(inferModeFromView("planning")).toBe("investing");
+    expect(inferModeFromView("copilot")).toBe("investing");
     expect(inferModeFromView("research")).toBe("investing");
     expect(inferModeFromView("reports")).toBe("investing");
     expect(inferModeFromView("settings")).toBe("investing");

@@ -194,9 +194,6 @@ function fixNowActionLabel(action: FixNowAction): string {
   return action;
 }
 
-function fixReceiptSourceLabel(source: "manual" | "handsfree"): string {
-  return source === "handsfree" ? "hands-free" : "user-triggered";
-}
 type FixNowPriority = "high" | "med" | "low";
 type FixNowExecutionRow = {
   symbol: string;
@@ -207,14 +204,6 @@ type FixNowExecutionRow = {
   deltaValueEur: number | null;
   qtyHint: string | null;
   reason: string;
-};
-
-type AutoFixReceipt = {
-  id: string;
-  at: string;
-  source: "manual" | "handsfree";
-  fixKey: string;
-  rows: Array<{ symbol: string; action: FixNowAction; targetValueEur: number | null; qty: number | null; reason: string }>;
 };
 
 const HANDS_FREE_FIXNOW_KEY = "sc_hands_free_fixnow_v1";
@@ -319,18 +308,6 @@ function fmtEUR(v: number | null | undefined) {
   const abs = Math.abs(n);
   const grouped = String(abs).replace(/\B(?=(\d{3})+(?!\d))/g, " ");
   return `${sign}${grouped} EUR`;
-}
-
-function fmtTimeUTC(v: string | null | undefined) {
-  if (!v) return "-";
-  const d = new Date(v);
-  if (!Number.isFinite(d.getTime())) return "-";
-  const yyyy = d.getUTCFullYear();
-  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const dd = String(d.getUTCDate()).padStart(2, "0");
-  const hh = String(d.getUTCHours()).padStart(2, "0");
-  const min = String(d.getUTCMinutes()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd} ${hh}:${min} UTC`;
 }
 
 function fmtQty(v: number | null | undefined) {
@@ -907,7 +884,6 @@ export default function PortfolioTab({
   const [toast, setToast] = useState<string | null>(null);
   const [dismissFixGuide, setDismissFixGuide] = useState(false);
   const [handsFreeFixNow, setHandsFreeFixNow] = useState(false);
-  const [lastAutoFixReceipt, setLastAutoFixReceipt] = useState<AutoFixReceipt | null>(null);
   const [goalQuiz, setGoalQuiz] = useState<ReturnType<typeof readGoalQuiz>>(null);
   const lastHandsFreeRunRef = useRef<string>("");
   const onboardingHintShownRef = useRef(false);
@@ -2272,26 +2248,6 @@ export default function PortfolioTab({
                   Hide guide
                 </button>
               </div>
-
-              {lastAutoFixReceipt ? (
-                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="text-sm font-semibold text-emerald-900">
-                      Auto-fix receipt ({fixReceiptSourceLabel(lastAutoFixReceipt.source)})
-                    </div>
-                    <div className="text-xs text-emerald-800">{fmtTimeUTC(lastAutoFixReceipt.at)}</div>
-                  </div>
-                  <div className="mt-2 text-xs text-emerald-900">Leak key: {lastAutoFixReceipt.fixKey || "general"}</div>
-                  <div className="mt-3 space-y-2">
-                    {lastAutoFixReceipt.rows.slice(0, 6).map((r, i) => (
-                      <div key={`${r.symbol}-${i}`} className="rounded-xl border border-emerald-200 bg-white px-3 py-2 text-xs text-zinc-800">
-                        <span className="font-semibold text-zinc-900">{r.symbol}</span> | {fixNowActionLabel(r.action)} | target {fmtEUR(r.targetValueEur)} | qty{" "}
-                        {fmtQty(r.qty)} | {r.reason}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
             </div>
           </Card>
         ) : null}

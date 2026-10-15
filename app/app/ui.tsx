@@ -214,12 +214,12 @@ function FirstValueRail(props: {
         key: "autonomy",
         status: "locked",
         title: pickByLang(props.lang, {
-          en: "Autonomy",
-          pt: "Autonomia",
-          es: "Autonomia",
-          fr: "Autonomie",
-          de: "Autonomie",
-          it: "Autonomia",
+          en: "Copilot",
+          pt: "Copilot",
+          es: "Copilot",
+          fr: "Copilot",
+          de: "Copilot",
+          it: "Copilot",
         }),
         detail: pickByLang(props.lang, {
           en: "Control level",
@@ -280,12 +280,12 @@ function FirstValueRail(props: {
               it: "Puoi gia leggere il flow live. Completa questi dati per rendere sizing, limiti di rischio e checklist broker piu specifici.",
             })
         : pickByLang(props.lang, {
-            en: "This is the guided path: set the plan, load the portfolio, read one daily action, then use Advisor and Autonomy only when the base is clear.",
-            pt: "Este e o caminho guiado: definir o plano, carregar o portfolio, ler uma acao diaria e so depois usar Advisor e Autonomia com a base clara.",
-            es: "Este es el camino guiado: definir plan, cargar portfolio, leer una accion diaria y despues usar Advisor y Autonomia con la base clara.",
-            fr: "Voici le chemin guide : definir le plan, charger le portefeuille, lire une action quotidienne, puis utiliser Advisor et Autonomie.",
-            de: "Das ist der gefuehrte Weg: Plan setzen, Portfolio laden, eine Tagesaktion lesen, dann Advisor und Autonomy nutzen.",
-            it: "Questo e il percorso guidato: definisci piano, carica portfolio, leggi una azione daily, poi usa Advisor e Autonomia.",
+            en: "This is the guided path: set the plan, load the portfolio, connect broker access, read one daily action, then use Advisor and Copilot when the base is clear.",
+            pt: "Este e o caminho guiado: definir o plano, carregar o portfolio, ligar broker, ler uma acao diaria e so depois usar Advisor e Copilot com a base clara.",
+            es: "Este es el camino guiado: definir plan, cargar portfolio, conectar broker, leer una accion diaria y despues usar Advisor y Copilot con la base clara.",
+            fr: "Voici le chemin guide : definir le plan, charger le portefeuille, connecter le broker, lire une action quotidienne, puis utiliser Advisor et Copilot.",
+            de: "Das ist der gefuehrte Weg: Plan setzen, Portfolio laden, Broker verbinden, eine Tagesaktion lesen, dann Advisor und Copilot nutzen.",
+            it: "Questo e il percorso guidato: definisci piano, carica portfolio, collega broker, leggi una azione daily, poi usa Advisor e Copilot.",
           });
 
     return (
@@ -717,9 +717,9 @@ export default function AppUI() {
                   <p className="text-[11px] font-black uppercase tracking-[0.22em] text-cyan-100/70">
                     Private automation
                   </p>
-                  <h2 className="mt-1 text-lg font-black text-white">Bot automatico + paper history</h2>
+                  <h2 className="mt-1 text-lg font-black text-white">Bot automatico + demo history</h2>
                   <p className="mt-1 max-w-2xl text-sm leading-6 text-cyan-50/75">
-                    Testa o bot em paper, guarda ate 6 meses de historico e so prepara live quando estiver armado e ligado a broker.
+                    Testa o bot em demo, guarda ate 6 meses de historico e so prepara live quando estiver armado e ligado a broker.
                   </p>
                 </div>
                 <button
@@ -758,6 +758,7 @@ export default function AppUI() {
               {view === "advisor" && <InvestingDashboardSurface page="research" />}
               {view === "research" && <InvestingDashboardSurface page="research" />}
               {view === "portfolio" && <InvestingDashboardSurface page="portfolio" />}
+              {view === "broker" && <InvestingDashboardSurface page="broker" />}
               {view === "reports" && <InvestingDashboardSurface page="reports" />}
               {view === "settings" && <InvestingDashboardSurface page="settings" />}
               {view === "autonomy" && <InvestingDashboardSurface page="autonomy" />}

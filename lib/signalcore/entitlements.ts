@@ -10,6 +10,7 @@ export type EntitledViewKey =
   | "reports"
   | "settings"
   | "portfolio"
+  | "broker"
   | "autonomy"
   | "trading"
   | "opportunities"
@@ -36,7 +37,7 @@ export type AccessEntitlements = {
   };
 };
 
-const INVESTING_VIEWS: EntitledViewKey[] = ["daily", "portfolio", "planning", "research", "reports", "autonomy", "settings"];
+const INVESTING_VIEWS: EntitledViewKey[] = ["daily", "portfolio", "broker", "planning", "research", "reports", "autonomy", "settings"];
 const FULL_TRADING_VIEWS: EntitledViewKey[] = ["trading", "opportunities", "execution", "risk", "journal", "alerts"];
 const DISCOVERY_TRADING_VIEWS: EntitledViewKey[] = ["trading", "opportunities"];
 const LOCKED_DISCOVERY_TRADING_VIEWS: EntitledViewKey[] = ["execution", "risk", "journal", "alerts"];

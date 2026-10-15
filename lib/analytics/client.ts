@@ -11,7 +11,9 @@ export type CampaignData = {
 
 declare global {
   interface Window {
-    dataLayer?: Array<Record<string, unknown>>;
+    // Matches the global type injected by Next/third-party analytics.
+    // eslint-disable-next-line @typescript-eslint/no-wrapper-object-types
+    dataLayer?: Object[];
     __scCampaign?: CampaignData;
   }
 }

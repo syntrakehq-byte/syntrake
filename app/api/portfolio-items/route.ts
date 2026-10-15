@@ -7,6 +7,7 @@ import {
   isInvestingSharedBrokerBlocked,
   resolveEffectiveSharedBrokerMode,
 } from "@/lib/broker/investingBoundary";
+import { legacyPortfolioBoundary } from "@/lib/signalcore/legacyPortfolioBoundary";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,10 +28,36 @@ export async function GET(req: Request) {
 
   const url = new URL(req.url);
   const supabase = getSupabaseAdmin();
+  const effectiveMode = await resolveEffectiveSharedBrokerMode({
+    userId,
+    requestedMode: url.searchParams.get("mode"),
+    supabase,
+  });
+  if (isInvestingSharedBrokerBlocked(effectiveMode.mode)) {
+    const boundary = legacyPortfolioBoundary("investing");
+    return NextResponse.json(
+      {
+        ok: false,
+        error: INVESTING_SHARED_BROKER_SYNC_BLOCKED,
+        mode: "investing",
+        spoofed: effectiveMode.spoofed,
+        deprecated: true,
+        ...boundary,
+      },
+      {
+        status: 410,
+        headers: {
+          "Cache-Control": "no-store",
+          "X-SignalCore-Deprecated": "true",
+          "X-SignalCore-Canonical-Endpoint": boundary.canonicalReadEndpoint,
+        },
+      },
+    );
+  }
   const access = await resolveModeAccess({
     supabase,
     userId,
-    requestedMode: url.searchParams.get("mode"),
+    requestedMode: effectiveMode.mode,
   });
   if (!access.ok) {
     return NextResponse.json(

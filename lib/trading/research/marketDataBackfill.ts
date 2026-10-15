@@ -351,20 +351,20 @@ function buildLocalCandidates(args: {
     const filename = `${args.localDataset.symbol}-1m-${label}.csv`;
     return {
       label,
-      targetPath: path.join(root, filename),
-      candidates: [path.join(root, filename)],
+      targetPath: path.join(/* turbopackIgnore: true */ root, filename),
+      candidates: [path.join(/* turbopackIgnore: true */ root, filename)],
       remoteUrl: buildBinanceMonthlyKlineZipUrl(args.localDataset.symbol, args.part),
     };
   }
 
   if (args.localDataset.format === "forex_ascii_yearly_m1") {
     const label = String(args.part.year);
-    const canonical = path.join(root, `DAT_ASCII_${args.localDataset.symbol}_M1_${args.part.year}.csv`);
+    const canonical = path.join(/* turbopackIgnore: true */ root, `DAT_ASCII_${args.localDataset.symbol}_M1_${args.part.year}.csv`);
     return {
       label,
       targetPath: canonical,
       candidates: [
-        path.join(root, `DAT_ASCII_${args.localDataset.symbol}_M1_${args.part.year}.csv.csv`),
+        path.join(/* turbopackIgnore: true */ root, `DAT_ASCII_${args.localDataset.symbol}_M1_${args.part.year}.csv.csv`),
         canonical,
       ],
       remoteUrl: buildTwelveDataHintUrl(args.instrument.dataSymbols[0]?.symbol ?? args.localDataset.symbol),
@@ -373,7 +373,7 @@ function buildLocalCandidates(args: {
 
   if (args.localDataset.format === "histdata_ascii_yearly_m1") {
     const label = String(args.part.year);
-    const targetPath = path.join(root, `DAT_ASCII_${args.localDataset.symbol}_M1_${args.part.year}.csv`);
+    const targetPath = path.join(/* turbopackIgnore: true */ root, `DAT_ASCII_${args.localDataset.symbol}_M1_${args.part.year}.csv`);
     return {
       label,
       targetPath,
@@ -383,7 +383,7 @@ function buildLocalCandidates(args: {
   }
 
   const label = String(args.part.year);
-  const targetPath = path.join(root, `${args.localDataset.symbol}_${args.part.year}.csv`);
+  const targetPath = path.join(/* turbopackIgnore: true */ root, `${args.localDataset.symbol}_${args.part.year}.csv`);
   return {
     label,
     targetPath,
@@ -406,8 +406,8 @@ function buildStagedCryptoCandidates(args: {
   const filename = `${args.symbol}-1m-${label}.csv`;
   return {
     label,
-    targetPath: path.join(args.root, filename),
-    candidates: [path.join(args.root, filename)],
+    targetPath: path.join(/* turbopackIgnore: true */ args.root, filename),
+    candidates: [path.join(/* turbopackIgnore: true */ args.root, filename)],
     remoteUrl: buildBinanceMonthlyKlineZipUrl(args.symbol, args.part),
   };
 }
@@ -562,9 +562,9 @@ async function buildStagedEntries(args: {
     }
 
     for (const part of uniqueYearParts(args.from, args.to)) {
-      const targetPath = path.join(root, `DAT_ASCII_${market.expected_symbol}_M1_${part.year}.csv`);
+      const targetPath = path.join(/* turbopackIgnore: true */ root, `DAT_ASCII_${market.expected_symbol}_M1_${part.year}.csv`);
       const existingPath = await firstExistingPath([
-        path.join(root, `DAT_ASCII_${market.expected_symbol}_M1_${part.year}.csv.csv`),
+        path.join(/* turbopackIgnore: true */ root, `DAT_ASCII_${market.expected_symbol}_M1_${part.year}.csv.csv`),
         targetPath,
       ]);
 

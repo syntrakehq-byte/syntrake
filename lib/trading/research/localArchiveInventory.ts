@@ -546,7 +546,6 @@ async function buildDatasetInventory(args: {
   root: string;
   storageTier: "canonical" | "staging";
 }): Promise<ResearchLocalArchiveInventoryDataset> {
-  const generatedAt = new Date().toISOString();
   const localDataset = args.instrument.localDataset;
   if (!localDataset) {
     return {
@@ -711,7 +710,7 @@ function buildRootSummary(args: {
     legacy: 0,
     unreferenced: 0,
   };
-  let sizeBytes = 0;
+  const sizeBytes = 0;
   const samplePaths: string[] = [];
   for (const filePath of args.files) {
     const relativePath = normalizePathSegments(path.relative(args.root, filePath));

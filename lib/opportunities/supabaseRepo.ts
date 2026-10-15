@@ -1,8 +1,9 @@
 // Legacy opportunity snapshot helpers.
 //
-// Active Investing opportunities are served by /api/daily-bundle from canonical
-// portfolio_items. Keep this file only for compatibility until the old
-// OpportunitiesPanel stack is fully removed.
+// Legacy opportunity snapshot helpers. Active Investing opportunities are served
+// by /api/investing/dashboard from investing_positions/customerDecisionProjection.
+// Keep this file only for compatibility until the old OpportunitiesPanel stack is
+// fully removed.
 import { supabaseAdmin } from "@/lib/_legacy/supabaseAdmin";
 
 export async function readUserSettingsSB(userId: string) {

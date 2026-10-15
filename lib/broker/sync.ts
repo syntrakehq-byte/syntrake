@@ -297,7 +297,8 @@ async function writePortfolioState(args: {
   };
 
   // Compatibility mirror only: portfolio_items remains the canonical holdings
-  // source for /api/daily-bundle and the Investing workspace.
+  // source for /api/daily-bundle and Trading/shared workspaces. Investing
+  // runtime holdings live in investing_positions via /api/investing/dashboard.
   const upsertBase: any = {
     user_id: userId,
     mode,

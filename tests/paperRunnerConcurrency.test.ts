@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   })),
   createCanonicalPaperTradeCycle: vi.fn(),
   readCanonicalPaperRows: vi.fn(),
+  reconcileCanonicalPaperTradeRuns: vi.fn(),
   reconcileCanonicalPaperTrades: vi.fn(),
   recordPaperTradeRun: vi.fn(),
   releasePaperTradeLock: vi.fn(),
@@ -28,6 +29,7 @@ vi.mock("@/lib/trading/bot/paperStore", () => ({
   buildPaperObservability: mocks.buildPaperObservability,
   createCanonicalPaperTradeCycle: mocks.createCanonicalPaperTradeCycle,
   readCanonicalPaperRows: mocks.readCanonicalPaperRows,
+  reconcileCanonicalPaperTradeRuns: mocks.reconcileCanonicalPaperTradeRuns,
   reconcileCanonicalPaperTrades: mocks.reconcileCanonicalPaperTrades,
   recordPaperTradeRun: mocks.recordPaperTradeRun,
   releasePaperTradeLock: mocks.releasePaperTradeLock,
@@ -62,6 +64,7 @@ describe("paper runner concurrency guards", () => {
       lockExpiresAt: "2026-07-04T08:03:00.000Z",
     });
     mocks.readCanonicalPaperRows.mockResolvedValue({ schemaReady: true, rows: [], error: null });
+    mocks.reconcileCanonicalPaperTradeRuns.mockResolvedValue({ schemaReady: true, reconciled: 0, error: null });
     mocks.reconcileCanonicalPaperTrades.mockResolvedValue({ schemaReady: true, reconciled: 0, error: null });
     mocks.settleCanonicalPaperRows.mockResolvedValue({ rows: [], repaired: 0, failures: 0 });
     mocks.getSupabaseAdmin.mockReturnValue(createJournalQueryResult([]));

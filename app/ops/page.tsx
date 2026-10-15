@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { auth } from "@clerk/nextjs/server";
 
 import { buildPremiumAuditReport } from "@/lib/billing/premiumAuditService";
@@ -165,12 +166,12 @@ export default async function OpsPage() {
             >
               Research Lab
             </a>
-            <a
+            <Link
               href="/ops/trades"
               className="rounded-full border border-amber-200/30 bg-amber-300/10 px-4 py-2 text-sm font-bold text-amber-100 transition hover:bg-amber-300/15"
             >
               Trade Ledger
-            </a>
+            </Link>
             <a
               href="/ops/investing"
               className="rounded-full border border-blue-200/30 bg-blue-300/10 px-4 py-2 text-sm font-bold text-blue-100 transition hover:bg-blue-300/15"

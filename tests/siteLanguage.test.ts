@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -12,13 +14,13 @@ import {
 describe("site language resolution", () => {
   it("normalizes supported browser locale variants", () => {
     expect(resolveSiteLang("pt-PT")).toBe("pt");
-    expect(resolveSiteLang("es-MX")).toBe("es");
     expect(resolveSiteLang("fr-CA")).toBe("fr");
-    expect(resolveSiteLang("de-AT")).toBe("de");
-    expect(resolveSiteLang("it-CH")).toBe("it");
   });
 
   it("returns null for unsupported languages before falling back", () => {
+    expect(resolveSiteLangOrNull("es-MX")).toBe(null);
+    expect(resolveSiteLangOrNull("de-AT")).toBe(null);
+    expect(resolveSiteLangOrNull("it-CH")).toBe(null);
     expect(resolveSiteLangOrNull("zh-CN")).toBe(null);
     expect(resolveBrowserSiteLang("zh-CN,zh;q=0.9")).toBe(null);
   });
@@ -26,7 +28,7 @@ describe("site language resolution", () => {
   it("uses country only for supported automatic language fallbacks", () => {
     expect(resolveCountrySiteLang("PT")).toBe("pt");
     expect(resolveCountrySiteLang("BR")).toBe("pt");
-    expect(resolveCountrySiteLang("MX")).toBe("es");
+    expect(resolveCountrySiteLang("MX")).toBe(null);
     expect(resolveCountrySiteLang("FR")).toBe("fr");
     expect(resolveCountrySiteLang("CN")).toBe(null);
   });
@@ -36,24 +38,52 @@ describe("site language resolution", () => {
       resolvePreferredSiteLang({
         query: "pt",
         stored: "fr",
-        cookie: "de",
-        browser: ["es-ES"],
-        country: "IT",
+        cookie: "en",
+        browser: ["fr-FR"],
+        country: "PT",
       }),
     ).toBe("pt");
 
     expect(
       resolvePreferredSiteLang({
         stored: "fr",
-        cookie: "de",
-        browser: ["es-ES"],
-        country: "IT",
+        cookie: "en",
+        browser: ["pt-PT"],
+        country: "PT",
       }),
     ).toBe("fr");
   });
 
+  it("keeps explicit user language preferences above detected French", () => {
+    expect(
+      resolvePreferredSiteLang({
+        cookie: "en",
+        browser: ["fr-FR"],
+        detected: "fr",
+      }),
+    ).toBe("en");
+
+    expect(
+      resolvePreferredSiteLang({
+        stored: "pt",
+        cookie: null,
+        browser: ["fr-FR"],
+        detected: "fr",
+      }),
+    ).toBe("pt");
+  });
+
+  it("does not persist the default language before hydration resolves preference", () => {
+    const source = readFileSync(join(process.cwd(), "components/SiteLanguageProvider.tsx"), "utf8");
+
+    expect(source).toContain("readPreferredSiteLangFromBrowser");
+    expect(source).toContain("hasResolvedInitialLang");
+    expect(source).toContain("if (!hasResolvedInitialLang.current) return;");
+    expect(source).toContain("persistSiteLang(normalized)");
+  });
+
   it("falls back from browser to country to English", () => {
-    expect(resolvePreferredSiteLang({ browser: ["de-DE"], country: "PT" })).toBe("de");
+    expect(resolvePreferredSiteLang({ browser: ["fr-FR"], country: "PT" })).toBe("fr");
     expect(resolvePreferredSiteLang({ browser: ["zh-CN"], country: "PT" })).toBe("pt");
     expect(resolvePreferredSiteLang({ browser: ["zh-CN"], country: "CN" })).toBe(DEFAULT_SITE_LANG);
   });

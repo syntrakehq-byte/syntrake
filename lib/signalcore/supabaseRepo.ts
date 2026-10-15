@@ -249,7 +249,8 @@ async function tryReadPortfolio(args: { userId: string; mode: Mode; modeCol: str
 /**
  * Compatibility read for legacy portfolio snapshots.
  *
- * Runtime holdings are canonical in portfolio_items via /api/portfolio-items.
+ * Trading/shared runtime holdings are canonical in portfolio_items via /api/portfolio-items.
+ * Investing runtime holdings are canonical in investing_positions via /api/investing/dashboard.
  * Keep this reader only for older plan/setup paths that still expect a compact
  * snapshot object while migration is completed.
  */

@@ -35,15 +35,9 @@ export default function LanguageSwitcher({ compact = false }: LanguageSwitcherPr
         <span>
           {lang === "pt"
             ? "Idioma"
-            : lang === "es"
-              ? "Idioma"
-              : lang === "fr"
-                ? "Langue"
-                : lang === "de"
-                  ? "Sprache"
-                  : lang === "it"
-                    ? "Lingua"
-                    : "Language"}
+            : lang === "fr"
+              ? "Langue"
+              : "Language"}
         </span>
       ) : null}
       <select

@@ -3,26 +3,22 @@ import { auth } from "@clerk/nextjs/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
 import { resolveModeAccess } from "@/lib/signalcore/modeAccess";
+import {
+  attachLegacyPortfolioBoundary,
+  legacyPortfolioBoundary,
+  legacyPortfolioBoundaryHeaders,
+} from "@/lib/signalcore/legacyPortfolioBoundary";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function deprecatedJson(body: Record<string, unknown>, status = 200) {
+function deprecatedJson(body: Record<string, unknown>, status = 200, mode?: string | null) {
+  const boundary = legacyPortfolioBoundary(mode);
   return NextResponse.json(
-    {
-      deprecated: true,
-      canonicalSource: "portfolio_items",
-      canonicalReadEndpoint: "/api/portfolio-items",
-      canonicalWriteEndpoint: "/api/portfolio-items",
-      ...body,
-    },
+    attachLegacyPortfolioBoundary(body, mode),
     {
       status,
-      headers: {
-        "Cache-Control": "no-store",
-        "X-SignalCore-Deprecated": "true",
-        "X-SignalCore-Canonical-Endpoint": "/api/portfolio-items",
-      },
+      headers: legacyPortfolioBoundaryHeaders(boundary),
     }
   );
 }
@@ -46,7 +42,8 @@ export async function GET(req: Request) {
   if (!access.ok) {
     return deprecatedJson(
       { ok: false, error: access.error, allowedMode: access.allowedMode, requestedMode: access.mode },
-      access.status
+      access.status,
+      access.mode
     );
   }
   const mode = access.mode;
@@ -58,7 +55,7 @@ export async function GET(req: Request) {
     .eq("mode", mode)
     .limit(1);
 
-  if (error) return deprecatedJson({ ok: false, error: error.message }, 500);
+  if (error) return deprecatedJson({ ok: false, error: error.message }, 500, mode);
 
   const row = (data ?? [])[0] ?? null;
   const snapshot = row.snapshot && typeof row.snapshot === "object" ? row.snapshot : {};
@@ -77,6 +74,6 @@ export async function GET(req: Request) {
     mode,
     cashEur,
     valuesBySymbol,
-  });
+  }, 200, mode);
 }
 

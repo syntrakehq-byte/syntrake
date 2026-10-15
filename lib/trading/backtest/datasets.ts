@@ -188,6 +188,87 @@ export const TRADING_BACKTEST_BASE_INSTRUMENTS: TradingHistoricalInstrumentConfi
 
 export const TRADING_BACKTEST_RESEARCH_EXPANSION_INSTRUMENTS: TradingHistoricalInstrumentConfig[] = [
   {
+    instrument: "AUDUSD",
+    dataSymbols: [{ symbol: "AUD/USD", relation: "direct" }],
+    localDataset: {
+      format: "histdata_ascii_yearly_m1",
+      symbol: "AUDUSD",
+      relation: "direct",
+      pathSegments: ["forex", "audusd"],
+    },
+    marketType: "forex",
+    sessionProfile: "forex",
+    source: "twelvedata",
+  },
+  {
+    instrument: "USDCHF",
+    dataSymbols: [{ symbol: "USD/CHF", relation: "direct" }],
+    localDataset: {
+      format: "histdata_ascii_yearly_m1",
+      symbol: "USDCHF",
+      relation: "direct",
+      pathSegments: ["forex", "usdchf"],
+    },
+    marketType: "forex",
+    sessionProfile: "forex",
+    source: "twelvedata",
+  },
+  {
+    instrument: "NZDUSD",
+    dataSymbols: [{ symbol: "NZD/USD", relation: "direct" }],
+    localDataset: {
+      format: "histdata_ascii_yearly_m1",
+      symbol: "NZDUSD",
+      relation: "direct",
+      pathSegments: ["forex", "nzdusd"],
+    },
+    marketType: "forex",
+    sessionProfile: "forex",
+    source: "twelvedata",
+  },
+  {
+    instrument: "AUDJPY",
+    dataSymbols: [{ symbol: "AUD/JPY", relation: "direct" }],
+    localDataset: {
+      format: "histdata_ascii_yearly_m1",
+      symbol: "AUDJPY",
+      relation: "direct",
+      pathSegments: ["forex", "audjpy"],
+    },
+    marketType: "forex",
+    sessionProfile: "forex",
+    source: "twelvedata",
+  },
+  {
+    instrument: "XAGUSD",
+    dataSymbols: [{ symbol: "XAG/USD", relation: "direct" }],
+    localDataset: {
+      format: "histdata_ascii_yearly_m1",
+      symbol: "XAGUSD",
+      relation: "direct",
+      pathSegments: ["metals", "xagusd"],
+    },
+    marketType: "forex",
+    sessionProfile: "forex",
+    source: "twelvedata",
+  },
+  {
+    instrument: "GER40",
+    dataSymbols: [
+      { symbol: "GDAXI", relation: "direct", label: "DAX performance index" },
+      { symbol: "GRXEUR", relation: "proxy", label: "Germany 40 HistData-compatible symbol" },
+    ],
+    localDataset: {
+      format: "histdata_ascii_yearly_m1",
+      symbol: "GRXEUR",
+      relation: "proxy",
+      pathSegments: ["indices", "ger40"],
+    },
+    marketType: "equities",
+    sessionProfile: "ny_equities",
+    source: "twelvedata",
+  },
+  {
     instrument: "SOLUSD",
     dataSymbols: [{ symbol: "SOL/USD", relation: "direct" }],
     localDataset: {

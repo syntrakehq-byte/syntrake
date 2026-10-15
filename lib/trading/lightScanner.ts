@@ -33,6 +33,7 @@ import {
   runBehaviorGuard,
   runPlaybookCheck,
 } from "@/lib/trading/playbook";
+import { TRADING_LIGHT_SCANNER_ACTIONABLE_MAX_AGE_MS } from "@/lib/trading/scannerFreshness";
 import { createSetupCore } from "@/lib/trading/setups";
 import { loadResearchConfig } from "@/lib/trading/research/config";
 import { readJsonIfExists } from "@/lib/trading/research/fs";
@@ -43,6 +44,8 @@ import type {
   TradingSignalBaselineIdentity,
   TradingSignalIdentity,
 } from "@/lib/trading/state";
+
+export { TRADING_LIGHT_SCANNER_ACTIONABLE_MAX_AGE_MS } from "@/lib/trading/scannerFreshness";
 
 type TradingScannerInstrumentConfig = {
   instrument: string;
@@ -90,7 +93,6 @@ const TRADING_LIGHT_SCANNER_TIMEFRAME_MS: Record<TradingTimeframe, number> = {
 const TRADING_LIGHT_SCANNER_CACHE_TTL_MS = 90_000;
 const TRADING_LIGHT_SCANNER_PROVIDER_CACHE_MAX_AGE_MS = 36 * 60 * 60 * 1000;
 const TRADING_LIGHT_SCANNER_FALLBACK_CATALOG_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-export const TRADING_LIGHT_SCANNER_ACTIONABLE_MAX_AGE_MS = 8 * 60 * 1000;
 const TRADING_LIGHT_SCANNER_PROVIDER_FRESH_CACHE_MAX_AGE_MS =
   TRADING_LIGHT_SCANNER_ACTIONABLE_MAX_AGE_MS;
 const TRADING_LIGHT_SCANNER_PROVIDER_PERSISTENT_CACHE_TTL_SEC =

@@ -95,7 +95,7 @@ vi.mock("@/lib/engine/events", () => ({
   writeEngineEvent: mocks.writeEngineEvent,
 }));
 
-import { POST as portfolioPost, DELETE as portfolioDelete } from "@/app/api/portfolio-items/route";
+import { GET as portfolioGet, POST as portfolioPost, DELETE as portfolioDelete } from "@/app/api/portfolio-items/route";
 import { POST as portfolioResetPost } from "@/app/api/portfolio-items/reset/route";
 import { POST as fixNowPost } from "@/app/api/fix-now/run/route";
 
@@ -105,6 +105,10 @@ function request(path: string, body?: Record<string, unknown>) {
     headers: { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+}
+
+function getRequest(path: string) {
+  return new Request(`http://localhost${path}`, { method: "GET" });
 }
 
 describe("FASE 3A legacy Investing write boundaries", () => {
@@ -131,6 +135,7 @@ describe("FASE 3A legacy Investing write boundaries", () => {
   });
 
   it.each([
+    ["portfolio GET", () => portfolioGet(getRequest("/api/portfolio-items?mode=investing"))],
     ["portfolio POST", () => portfolioPost(request("/api/portfolio-items", { items: [{ symbol: "SPY", qty: 1 }] }))],
     ["portfolio DELETE", () => portfolioDelete(request("/api/portfolio-items?id=item_1"))],
     ["portfolio reset", () => portfolioResetPost(request("/api/portfolio-items/reset", { items: [] }))],

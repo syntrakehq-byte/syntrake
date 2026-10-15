@@ -60,6 +60,7 @@ export async function writeJsonAtomic(targetPath: string, value: unknown): Promi
       const code = (error as NodeJS.ErrnoException).code;
       const isLastAttempt = attempt === maxAttempts - 1;
       const retryable =
+        code === "EBUSY" ||
         code === "EPERM" ||
         code === "EACCES" ||
         code === "ENOENT";
@@ -70,10 +71,12 @@ export async function writeJsonAtomic(targetPath: string, value: unknown): Promi
         throw error;
       }
 
-      if (code !== "ENOENT") {
-        await removeFileIfExists(targetPath);
+      if (code === "ENOENT") {
+        await delay(25 * (attempt + 1));
+        continue;
       }
-      await delay(25 * (attempt + 1));
+
+      await delay(100 * (attempt + 1));
     }
   }
 }
@@ -158,12 +161,16 @@ export async function removeFileIfExists(targetPath: string): Promise<void> {
   try {
     await rm(targetPath, { force: true });
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT" && code !== "EBUSY" && code !== "EPERM" && code !== "EACCES") {
       throw error;
     }
   }
 }
 
 export function sanitizeFileSegment(value: string): string {
-  return value.replace(/[^a-zA-Z0-9._-]+/g, "_");
+  const sanitized = value
+    .replace(/[^a-zA-Z0-9._-]+/g, "_")
+    .replace(/[ .]+$/g, "");
+  return sanitized || "_";
 }

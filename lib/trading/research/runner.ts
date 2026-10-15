@@ -1146,7 +1146,6 @@ export async function processResearchQueue(
   const cycleStartedAt = now();
   const processedRunIds: string[] = [];
   const autoEnqueuedTaskIds: string[] = [];
-  let latestOpportunityOutputs: ResearchPostCycleOpportunityOutputs | null = null;
   const executors = {
     ...buildDefaultResearchExecutorMap(),
     ...(dependencies.executors ?? {}),
@@ -1208,7 +1207,7 @@ export async function processResearchQueue(
     if (completedTask?.last_run_id) {
       processedRunIds.push(completedTask.last_run_id);
       if (dependencies.postRunOpportunityRefresh) {
-        latestOpportunityOutputs = await dependencies.postRunOpportunityRefresh(config);
+        await dependencies.postRunOpportunityRefresh(config);
       }
     }
   }

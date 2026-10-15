@@ -1,4 +1,4 @@
-export const SITE_LANGS = ["en", "pt", "es", "fr", "de", "it"] as const;
+export const SITE_LANGS = ["en", "pt", "fr"] as const;
 export type SiteLang = (typeof SITE_LANGS)[number];
 
 export const DEFAULT_SITE_LANG: SiteLang = "en";
@@ -6,43 +6,18 @@ export const SITE_LANG_COOKIE_KEY = "sc_site_lang";
 export const SITE_DETECTED_LANG_COOKIE_KEY = "sc_site_lang_detected";
 
 const COUNTRY_TO_SITE_LANG: Record<string, SiteLang> = {
-  AD: "es",
-  AR: "es",
-  AT: "de",
   BE: "fr",
-  BO: "es",
   BR: "pt",
-  CL: "es",
-  CO: "es",
-  CR: "es",
-  DE: "de",
-  DO: "es",
-  EC: "es",
-  ES: "es",
   FR: "fr",
-  GT: "es",
-  HN: "es",
-  IT: "it",
   LU: "fr",
-  MX: "es",
-  NI: "es",
-  PA: "es",
-  PE: "es",
   PT: "pt",
-  PY: "es",
-  SV: "es",
-  UY: "es",
-  VE: "es",
 };
 
 export function resolveSiteLang(input: unknown): SiteLang {
   const raw = String(input ?? "").toLowerCase().trim();
   const norm = raw.slice(0, 2);
   if (norm === "pt") return "pt";
-  if (norm === "es") return "es";
   if (norm === "fr") return "fr";
-  if (norm === "de") return "de";
-  if (norm === "it") return "it";
   return "en";
 }
 
@@ -100,21 +75,18 @@ export function resolvePreferredSiteLang(args: {
 export const SITE_LANG_LABELS: Record<SiteLang, string> = {
   en: "English",
   pt: "Portugues",
-  es: "Espanol",
   fr: "Francais",
-  de: "Deutsch",
-  it: "Italiano",
 };
 
-export type Multilingual = {
+export type Multilingual = Record<SiteLang, string> & Partial<Record<"es" | "de" | "it", string>>;
+
+export type SupportedMultilingual = {
   en: string;
   pt: string;
-  es: string;
   fr: string;
-  de: string;
-  it: string;
 };
 
-export function pickByLang(lang: SiteLang, text: Multilingual): string {
-  return text[lang] ?? text.en;
+export function pickByLang(lang: unknown, text: Multilingual): string {
+  const normalized = resolveSiteLangOrNull(lang);
+  return normalized ? text[normalized] ?? text.en : text.en;
 }

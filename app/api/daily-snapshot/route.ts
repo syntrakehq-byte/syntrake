@@ -1,27 +1,21 @@
 // app/api/daily-snapshot/route.ts
-import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { NextResponse } from "next/server";
+
 import { createExecutionId, writeEngineEvent } from "@/lib/engine/events";
 import { resolveModeAccess } from "@/lib/signalcore/modeAccess";
+import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function dayKeyUTC(d = new Date()) {
-  const y = d.getUTCFullYear();
-  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const da = String(d.getUTCDate()).padStart(2, "0");
-  return `${y}-${m}-${da}`;
+function dayKeyUTC(date = new Date()) {
+  return date.toISOString().slice(0, 10);
 }
 
-function safeNum(x: any, fallback = 0) {
-  const n = typeof x === "number" ? x : Number(String(x ?? "").replace(",", "."));
-  return Number.isFinite(n) ? n : fallback;
-}
-
-function sumHoldingsValueEUR(holdings: any[]) {
-  return (holdings ?? []).reduce((s, h) => s + safeNum(h?.valueEur ?? h?.value_eur ?? h?.value ?? 0, 0), 0);
+function safeNumber(value: unknown, fallback = 0) {
+  const number = typeof value === "number" ? value : Number(String(value ?? "").replace(",", "."));
+  return Number.isFinite(number) ? number : fallback;
 }
 
 export async function POST(req: Request) {
@@ -30,7 +24,6 @@ export async function POST(req: Request) {
   try {
     const { userId } = await auth();
     if (!userId) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-
     const body = await req.json().catch(() => ({}));
     if (String(body?.mode || "").toLowerCase() === "investing") {
       return NextResponse.json(
@@ -40,90 +33,53 @@ export async function POST(req: Request) {
     }
 
     const supabase = getSupabaseAdmin();
-    const access = await resolveModeAccess({
-      supabase,
-      userId,
-      requestedMode: body?.mode,
-    });
+    const access = await resolveModeAccess({ supabase, userId, requestedMode: body?.mode });
     if (!access.ok) {
       return NextResponse.json(
         { ok: false, error: access.error, allowedMode: access.allowedMode, requestedMode: access.mode },
-        { status: access.status }
+        { status: access.status },
       );
     }
     const mode = access.mode;
-
-    // full proof payload (audit)
     const snapshot = body?.snapshot ?? null;
-
-    // best-effort totals extraction
     const portfolio = snapshot?.portfolio ?? body?.portfolio ?? {};
-    const cash = safeNum(portfolio?.cash ?? portfolio?.cashEur ?? portfolio?.cash_eur ?? 0, 0);
-
-    const holdings =
-      Array.isArray(portfolio?.holdings) ? portfolio.holdings
-      : Array.isArray(portfolio?.items) ? portfolio.items
-      : [];
-
-    const holdingsValue = sumHoldingsValueEUR(holdings);
+    const cash = safeNumber(portfolio?.cash ?? portfolio?.cashEur ?? portfolio?.cash_eur);
+    const holdings = Array.isArray(portfolio?.holdings)
+      ? portfolio.holdings
+      : Array.isArray(portfolio?.items)
+        ? portfolio.items
+        : [];
+    const holdingsValue = holdings.reduce(
+      (sum: number, holding: any) => sum + safeNumber(holding?.valueEur ?? holding?.value_eur ?? holding?.value),
+      0,
+    );
     const total = cash + holdingsValue;
-
     const now = new Date();
-    const dk = dayKeyUTC(now);
-
-    // meta: allow client to send coveragePct, missingSymbols, etc
-    const metaFromClient = snapshot?.derived?.pricing ?? snapshot?.portfolio?.valuation ?? snapshot?.derived?.diagnostics?.pricing ?? null;
-
-    const row: any = {
+    const dayKey = dayKeyUTC(now);
+    const pricing = snapshot?.derived?.pricing ?? snapshot?.portfolio?.valuation ?? snapshot?.derived?.diagnostics?.pricing ?? null;
+    const row = {
       user_id: userId,
       mode,
-      day_key: dk,
+      day_key: dayKey,
       as_of: now.toISOString(),
       total_eur: total,
       cash_eur: cash,
       holdings,
-      meta: {
-        source: "daily_snapshot_v3",
-        holdingsCount: holdings?.length ?? 0,
-        pricing: metaFromClient ?? null,
-      },
+      meta: { source: "daily_snapshot_v3", holdingsCount: holdings.length, pricing },
       snapshot,
       created_at: now.toISOString(),
     };
+    const { error } = await supabase.from("daily_snapshots").upsert(row, { onConflict: "user_id,mode,day_key" } as any);
+    if (error) throw new Error(error.message);
 
-    const { error } = await supabase
-      .from("daily_snapshots")
-      .upsert(row, { onConflict: "user_id,mode,day_key" } as any);
-
-    if (error) {
-      await writeEngineEvent({
-        userId,
-        mode,
-        event: "daily_receipt_created",
-        status: "error",
-        source: "api.daily_snapshot",
-        executionId,
-        details: { dayKey: dk, error: error.message, duration_ms: Date.now() - startedAtMs },
-      });
-      return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-    }
-
-    // Decision receipt (server-side, retention booster)
     await supabase.from("journal_entries").insert({
       user_id: userId,
       mode,
       type: "decision_receipt",
       title: "Decision receipt",
-      details: {
-        day_key: dk,
-        total_eur: total,
-        cash_eur: cash,
-        holdingsCount: holdings?.length ?? 0,
-        pricing: metaFromClient ?? null,
-      },
+      details: { day_key: dayKey, total_eur: total, cash_eur: cash, holdingsCount: holdings.length, pricing },
       created_at: now.toISOString(),
     });
-
     await writeEngineEvent({
       userId,
       mode,
@@ -131,33 +87,10 @@ export async function POST(req: Request) {
       status: "ok",
       source: "api.daily_snapshot",
       executionId,
-      details: {
-        dayKey: dk,
-        totalEur: total,
-        cashEur: cash,
-        holdingsCount: holdings?.length ?? 0,
-        duration_ms: Date.now() - startedAtMs,
-      },
+      details: { dayKey, totalEur: total, cashEur: cash, holdingsCount: holdings.length, duration_ms: Date.now() - startedAtMs },
     });
-
-    return NextResponse.json({ ok: true, mode, executionId, dayKey: dk, totalEUR: total });
-  } catch (e: any) {
-    try {
-      const { userId } = await auth();
-      if (userId) {
-        await writeEngineEvent({
-          userId,
-          mode: "investing",
-          event: "daily_receipt_created",
-          status: "error",
-          source: "api.daily_snapshot",
-          executionId,
-          details: { error: e?.message || "unknown_error", duration_ms: Date.now() - startedAtMs },
-        });
-      }
-    } catch {
-      // ignore
-    }
-    return NextResponse.json({ ok: false, error: e?.message || "Unknown error" }, { status: 500 });
+    return NextResponse.json({ ok: true, mode, executionId, dayKey, totalEUR: total });
+  } catch (error: any) {
+    return NextResponse.json({ ok: false, error: error?.message || "Unknown error" }, { status: 500 });
   }
 }

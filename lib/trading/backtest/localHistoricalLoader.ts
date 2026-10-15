@@ -84,8 +84,8 @@ export async function resolveLocalHistoricalFiles(args: {
   if (args.config.format === "forex_ascii_yearly_m1") {
     for (const year of buildYearRange(args.from, args.to)) {
       const candidateFiles = [
-        path.join(root, `DAT_ASCII_${args.config.symbol}_M1_${year}.csv.csv`),
-        path.join(root, `DAT_ASCII_${args.config.symbol}_M1_${year}.csv`),
+        path.join(/* turbopackIgnore: true */ root, `DAT_ASCII_${args.config.symbol}_M1_${year}.csv.csv`),
+        path.join(/* turbopackIgnore: true */ root, `DAT_ASCII_${args.config.symbol}_M1_${year}.csv`),
       ];
 
       for (const filePath of candidateFiles) {
@@ -97,7 +97,7 @@ export async function resolveLocalHistoricalFiles(args: {
     }
   } else if (args.config.format === "histdata_ascii_yearly_m1") {
     for (const year of buildYearRange(args.from, args.to)) {
-      const filePath = path.join(root, `DAT_ASCII_${args.config.symbol}_M1_${year}.csv`);
+      const filePath = path.join(/* turbopackIgnore: true */ root, `DAT_ASCII_${args.config.symbol}_M1_${year}.csv`);
 
       if (await fileExists(filePath)) {
         files.push(filePath);
@@ -105,7 +105,7 @@ export async function resolveLocalHistoricalFiles(args: {
     }
   } else if (args.config.format === "indices_csv_yearly_m1") {
     for (const year of buildYearRange(args.from, args.to)) {
-      const filePath = path.join(root, `${args.config.symbol}_${year}.csv`);
+      const filePath = path.join(/* turbopackIgnore: true */ root, `${args.config.symbol}_${year}.csv`);
 
       if (await fileExists(filePath)) {
         files.push(filePath);
@@ -114,7 +114,7 @@ export async function resolveLocalHistoricalFiles(args: {
   } else {
     for (const part of buildMonthRange(args.from, args.to)) {
       const filePath = path.join(
-        root,
+        /* turbopackIgnore: true */ root,
         `${args.config.symbol}-1m-${part.year}-${String(part.month).padStart(2, "0")}.csv`,
       );
 

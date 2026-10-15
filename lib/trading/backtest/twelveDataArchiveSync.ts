@@ -31,7 +31,7 @@ function resolveLocalHistoricalBaseDir(): string {
     return path.resolve(configuredDir);
   }
 
-  return path.join(process.cwd(), "Data", "historical");
+  return path.join(/* turbopackIgnore: true */ process.cwd(), "Data", "historical");
 }
 
 async function fileExists(targetPath: string): Promise<boolean> {
@@ -51,14 +51,14 @@ function buildYearlyLocalPath(instrument: string, year: number): string {
     throw new Error(`No local dataset configured for ${instrument}.`);
   }
 
-  const root = path.join(resolveLocalHistoricalBaseDir(), ...localDataset.pathSegments);
+  const root = path.join(/* turbopackIgnore: true */ resolveLocalHistoricalBaseDir(), ...localDataset.pathSegments);
 
   if (localDataset.format === "forex_ascii_yearly_m1" || localDataset.format === "histdata_ascii_yearly_m1") {
-    return path.join(root, `DAT_ASCII_${localDataset.symbol}_M1_${year}.csv`);
+    return path.join(/* turbopackIgnore: true */ root, `DAT_ASCII_${localDataset.symbol}_M1_${year}.csv`);
   }
 
   if (localDataset.format === "indices_csv_yearly_m1") {
-    return path.join(root, `${localDataset.symbol}_${year}.csv`);
+    return path.join(/* turbopackIgnore: true */ root, `${localDataset.symbol}_${year}.csv`);
   }
 
   throw new Error(`Unsupported Twelve Data yearly sync format '${localDataset.format}' for ${instrument}.`);

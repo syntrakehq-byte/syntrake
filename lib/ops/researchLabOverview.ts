@@ -18,6 +18,7 @@ import {
 import { buildResearchMetricSummary } from "@/lib/trading/research/metrics";
 import { readResearchQueue } from "@/lib/trading/research/queue";
 import { canonicalizeResearchRunSnapshot } from "@/lib/trading/research/runCanonicalization";
+import type { TwelveDataArchiveReport } from "@/lib/trading/research/twelveDataFullArchive";
 import {
   buildResearchLatestReportsOverview,
   buildResearchPromotionReadinessOverview,
@@ -129,6 +130,46 @@ export type ResearchLabOverview = {
       missingRemote: number;
       candleCount: number;
       latestPeriodLabel: string | null;
+    }>;
+  };
+  twelveDataArchive: {
+    available: boolean;
+    generatedAt: string | null;
+    archiveRoot: string | null;
+    markets: string[];
+    instrumentsRequested: string[];
+    timeframesRequested: string[];
+    fullHistory: boolean;
+    totalInstruments: number;
+    totalTimeframes: number;
+    scopeEntries: number;
+    availableScopes: number;
+    restrictedScopes: number;
+    missingRemoteScopes: number;
+    localArchiveFiles: number;
+    pendingYears: number;
+    downloaded: number;
+    existing: number;
+    failed: number;
+    instruments: Array<{
+      instrument: string;
+      market: string;
+      providerSymbol: string | null;
+      providerRelation: string | null;
+      localArchiveFiles: number;
+      pendingYears: number;
+      availableTimeframes: number;
+      restrictedTimeframes: number;
+      missingRemoteTimeframes: number;
+      timeframes: Array<{
+        timeframe: string;
+        earliestAvailableAt: string | null;
+        localArchiveFiles: number;
+        localArchiveYears: number[];
+        pendingYears: number[];
+        restrictionReason: string | null;
+        note: string | null;
+      }>;
     }>;
   };
   operatorActions: Array<{
@@ -412,6 +453,86 @@ async function readTwelveDataTransferSummary(config: ResearchConfig): Promise<Re
   };
 }
 
+async function readTwelveDataArchiveSummary(config: ResearchConfig): Promise<ResearchLabOverview["twelveDataArchive"]> {
+  const reportPath = path.join(config.paths.reportsDir, "datasets", "twelvedata-full-archive-latest.json");
+  const report = await readJsonIfExists<TwelveDataArchiveReport>(reportPath);
+
+  if (!report) {
+    return {
+      available: false,
+      generatedAt: null,
+      archiveRoot: null,
+      markets: [],
+      instrumentsRequested: [],
+      timeframesRequested: [],
+      fullHistory: false,
+      totalInstruments: 0,
+      totalTimeframes: 0,
+      scopeEntries: 0,
+      availableScopes: 0,
+      restrictedScopes: 0,
+      missingRemoteScopes: 0,
+      localArchiveFiles: 0,
+      pendingYears: 0,
+      downloaded: 0,
+      existing: 0,
+      failed: 0,
+      instruments: [],
+    };
+  }
+
+  return {
+    available: true,
+    generatedAt: report.generatedAt,
+    archiveRoot: report.storage.archiveRoot,
+    markets: report.scope.markets,
+    instrumentsRequested: report.scope.instruments,
+    timeframesRequested: report.scope.timeframes,
+    fullHistory: report.scope.fullHistory,
+    totalInstruments: report.summary.instruments,
+    totalTimeframes: report.summary.timeframes,
+    scopeEntries: report.summary.scopeEntries,
+    availableScopes: report.summary.available,
+    restrictedScopes: report.summary.restricted,
+    missingRemoteScopes: report.summary.missingRemote,
+    localArchiveFiles: report.summary.localArchiveFiles,
+    pendingYears: report.summary.pendingYears,
+    downloaded: report.summary.downloaded,
+    existing: report.summary.existing,
+    failed: report.summary.failed,
+    instruments: report.instruments
+      .map((entry) => ({
+        instrument: entry.instrument,
+        market: entry.market,
+        providerSymbol: entry.providerSymbol,
+        providerRelation: entry.providerRelation,
+        localArchiveFiles: entry.localArchiveFiles,
+        pendingYears: entry.pendingYears,
+        availableTimeframes: entry.availableTimeframes,
+        restrictedTimeframes: entry.restrictedTimeframes,
+        missingRemoteTimeframes: entry.missingRemoteTimeframes,
+        timeframes: entry.timeframes.map((timeframe) => ({
+          timeframe: timeframe.timeframe,
+          earliestAvailableAt: timeframe.earliestAvailableAt,
+          localArchiveFiles: timeframe.localArchiveFiles,
+          localArchiveYears: timeframe.localArchiveYears,
+          pendingYears: timeframe.pendingYears,
+          restrictionReason: timeframe.restrictionReason,
+          note: timeframe.note,
+        })),
+      }))
+      .sort((left, right) => {
+        if (right.pendingYears !== left.pendingYears) {
+          return right.pendingYears - left.pendingYears;
+        }
+        if (right.localArchiveFiles !== left.localArchiveFiles) {
+          return right.localArchiveFiles - left.localArchiveFiles;
+        }
+        return left.instrument.localeCompare(right.instrument);
+      }),
+  };
+}
+
 function queueFromRemote(value: any): ResearchLabOverview["queue"] {
   const counts = emptyTaskCounts();
   for (const [status, count] of Object.entries((value?.counts ?? {}) as Record<string, unknown>)) {
@@ -513,10 +634,11 @@ export async function buildResearchLabOverview(args: {
 } = {}): Promise<ResearchLabOverview> {
   const config = args.config ?? await loadResearchConfig();
   const generatedAt = (args.now ?? new Date()).toISOString();
-  const [datasetRequirements, dataAcquisitionPlan, twelveDataTransfer] = await Promise.all([
+  const [datasetRequirements, dataAcquisitionPlan, twelveDataTransfer, twelveDataArchive] = await Promise.all([
     buildResearchDatasetRequirementsReport(config),
     buildResearchDataAcquisitionPlan(config),
     readTwelveDataTransferSummary(config),
+    readTwelveDataArchiveSummary(config),
   ]);
 
   const baselinePath = path.join(
@@ -640,6 +762,7 @@ export async function buildResearchLabOverview(args: {
         datasetRequirements: remotePayload.datasetRequirements ?? datasetRequirements,
         dataAcquisitionPlan: remotePayload.dataAcquisitionPlan ?? dataAcquisitionPlan,
         twelveDataTransfer: remotePayload.twelveDataTransfer ?? twelveDataTransfer,
+        twelveDataArchive: remotePayload.twelveDataArchive ?? twelveDataArchive,
         operatorActions: operatorActions(),
         storage: {
           localArtifactBacked: false,
@@ -684,6 +807,7 @@ export async function buildResearchLabOverview(args: {
     datasetRequirements,
     dataAcquisitionPlan,
     twelveDataTransfer,
+    twelveDataArchive,
     operatorActions: operatorActions(),
     storage: {
       localArtifactBacked,

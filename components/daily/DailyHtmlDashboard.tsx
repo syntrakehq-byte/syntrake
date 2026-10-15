@@ -184,17 +184,22 @@ export default function DailyHtmlDashboard({
   const watchItems = Array.isArray(dailyLoop?.watchItems) ? dailyLoop.watchItems : [];
   const timelineItems = Array.isArray(dailyLoop?.timeline) ? dailyLoop.timeline : [];
   const sparkPath = buildSparkPath(marketItems.map((item) => item.value));
+  const freshnessValue = /live/i.test(lastEvaluationLabel) ? "Updating" : lastEvaluationLabel.replace(/^LAST EVALUATION\s*/i, "Updated ");
+  const coverageValue = decisionStats.find((item) => /coverage|quality/i.test(item.label))?.value || "See evidence";
+  const reviewValue = decisionSideCards.find((item) => /review|path/i.test(item.title))?.detail || "See decision window";
+  const systemState = decision.title === "HOLD" ? "Stable · no capital action" : "Attention · review required";
 
   return (
     <main className="w-full">
-      <div className="mb-[18px] flex items-end justify-between gap-[18px] max-[980px]:flex-col max-[980px]:items-start">
+      <div className="mb-[18px] flex items-end justify-between gap-[18px] max-[980px]:items-start">
         <div>
-          <h1 className="m-0 text-[30px] font-black leading-none tracking-[-0.06em] text-[#e7effc]">Today&apos;s Decision</h1>
+          <div className="mb-2 text-[11px] font-bold uppercase tracking-[.16em] text-[#7f91ad]">Today · Investing</div>
+          <h1 className="m-0 text-[30px] font-black leading-none tracking-[-0.06em] text-[#e7effc]">Your capital, at a glance</h1>
           <p className="mt-2 text-sm text-[#95a6c2]">
-            Institutional daily operating system with directive, market context, execution priority, and loop discipline.
+            One verified state. One next action. Full evidence when you need it.
           </p>
         </div>
-        <div className="rounded-[10px] border border-[#223250] bg-[#0f1a2d] px-3 py-[10px] font-mono text-xs text-[#9fb1cc]">
+        <div className="shrink-0 rounded-[10px] border border-[#28436d] bg-[#10213d] px-3 py-[10px] font-mono text-xs text-[#b9cff2]" aria-label={`Data freshness: ${lastEvaluationLabel}`}>
           {lastEvaluationLabel}
         </div>
       </div>
@@ -202,12 +207,21 @@ export default function DailyHtmlDashboard({
       <section className={cx("relative mb-[18px] overflow-hidden", heroPanelClass)}>
         <div className="absolute right-[-80px] top-[-80px] h-[240px] w-[240px] rounded-full bg-[radial-gradient(circle,_rgba(243,164,59,.10)_0%,_rgba(243,164,59,0)_70%)]" />
 
+        <div className="mb-6 grid gap-3 border-b border-[#23314c] pb-5 sm:grid-cols-2 xl:grid-cols-5">
+          {[{label:"System",value:systemState},{label:"Data",value:freshnessValue},{label:"Coverage",value:coverageValue},{label:"Next review",value:reviewValue},{label:"Authority",value:"Approval required"}].map((item) => (
+            <div key={item.label} className="min-w-0">
+              <div className="text-[10px] font-bold uppercase tracking-[.1em] text-[#7f91ad]">{item.label}</div>
+              <div className="mt-1 truncate text-[13px] font-bold text-[#e7effc]">{item.value}</div>
+            </div>
+          ))}
+        </div>
+
         <div className="grid items-start gap-5 xl:grid-cols-[1.55fr_1fr]">
           <div>
-            <div className="mb-[10px] text-[10px] font-extrabold uppercase tracking-[.12em] text-[#93a4bf]">Directive</div>
+            <div className="mb-[10px] text-[10px] font-extrabold uppercase tracking-[.12em] text-[#93a4bf]">Next best action</div>
             <h2
               className={cx(
-                "m-0 text-[66px] font-black leading-[.9] tracking-[-.09em] max-[980px]:text-[46px] max-[640px]:text-[38px]",
+                "m-0 text-[50px] font-black leading-[.94] tracking-[-.07em] max-[980px]:text-[40px] max-[640px]:text-[34px]",
                 decision.titleTone === "blue" ? "text-[#7cc4ff]" : "text-[#f3a43b]"
               )}
             >
@@ -246,7 +260,7 @@ export default function DailyHtmlDashboard({
             </div>
 
             <div className="mt-[18px] rounded-[14px] border border-[#233453] bg-[#0d182d] p-4">
-              <strong className="mb-[7px] block text-[13px] text-[#e7effc]">Why now</strong>
+              <strong className="mb-[7px] block text-[13px] text-[#e7effc]">Why this is recommended</strong>
               <span className="block text-sm leading-[1.65] text-[#a2b4cd]">{decision.whyNow}</span>
             </div>
           </div>
@@ -275,15 +289,14 @@ export default function DailyHtmlDashboard({
 
           <div className="flex flex-wrap gap-[10px]">
             <DashboardButton action={decision.primaryAction} />
-            {decision.secondaryAction ? <DashboardButton action={decision.secondaryAction} /> : null}
           </div>
         </div>
       </section>
 
       <section className="mb-[18px] grid gap-[18px] xl:grid-cols-3">
         <section className={panelClass}>
-          <h3 className="m-0 text-[21px] font-extrabold leading-[1.02] tracking-[-.05em] text-[#e7effc]">Market State</h3>
-          <p className="mt-2 text-[13px] leading-[1.6] text-[#91a3bc]">High-level read of current market structure and internal conditions.</p>
+          <h3 className="m-0 text-[21px] font-extrabold leading-[1.02] tracking-[-.05em] text-[#e7effc]">What changed</h3>
+          <p className="mt-2 text-[13px] leading-[1.6] text-[#91a3bc]">Only changes that can affect your plan or next decision.</p>
 
           <div className="mt-[18px] grid gap-[14px]">
             {marketItems.map((item) => (
@@ -312,7 +325,7 @@ export default function DailyHtmlDashboard({
         </section>
 
         <section className={panelClass}>
-          <h3 className="m-0 text-[21px] font-extrabold leading-[1.02] tracking-[-.05em] text-[#e7effc]">Scenario Model</h3>
+          <h3 className="m-0 text-[21px] font-extrabold leading-[1.02] tracking-[-.05em] text-[#e7effc]">Evidence range</h3>
           <p className="mt-2 text-[13px] leading-[1.6] text-[#91a3bc]">Probability-weighted paths derived from current market state and signal quality.</p>
 
           <div className="mt-[18px] grid gap-3">
@@ -336,8 +349,8 @@ export default function DailyHtmlDashboard({
         </section>
 
         <section className={panelClass}>
-          <h3 className="m-0 text-[21px] font-extrabold leading-[1.02] tracking-[-.05em] text-[#e7effc]">Risk Temperature</h3>
-          <p className="mt-2 text-[13px] leading-[1.6] text-[#91a3bc]">Quick read of how dangerous the environment is for adding fresh exposure.</p>
+          <h3 className="m-0 text-[21px] font-extrabold leading-[1.02] tracking-[-.05em] text-[#e7effc]">Mandate distance</h3>
+          <p className="mt-2 text-[13px] leading-[1.6] text-[#91a3bc]">Current risk pressure compared with the limits in your plan.</p>
 
           <div className="mt-[18px] rounded-[14px] border border-[#243553] bg-[#0d182d] p-[18px_16px_14px]">
             <div className="relative h-4 rounded-full bg-[linear-gradient(90deg,#4f8dff_0%,#4ab8ff_24%,#2bcf96_50%,#f3a43b_76%,#ef5d5d_100%)]">

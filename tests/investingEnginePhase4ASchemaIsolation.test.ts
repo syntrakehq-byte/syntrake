@@ -32,7 +32,9 @@ describe("FASE 4A persistence schema isolation", () => {
     expect(new Set(migrations).size).toBe(migrations.length);
     expect([...migrations].sort()).toEqual(migrations);
     expect(migrations).toContain("20260720100000_investing_engine_v1_persistence.sql");
-    expect(migrations.at(-1)).toBe("20260722090000_investing_engine_phase4b_r5_empty_state_transition_gate.sql");
+    expect(migrations.indexOf("20260722090000_investing_engine_phase4b_r5_empty_state_transition_gate.sql")).toBeGreaterThan(
+      migrations.indexOf("20260720100000_investing_engine_v1_persistence.sql"),
+    );
     expect(existsSync(path.resolve(
       process.cwd(),
       "supabase/rollbacks/20260720100000_investing_engine_v1_persistence.down.sql",

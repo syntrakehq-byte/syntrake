@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { track } from "@/lib/analytics/client";
 import {
   DEFAULT_SITE_LANG,
@@ -32,44 +32,59 @@ function syncLangInUrl(lang: SiteLang) {
   }
 }
 
+function readCookieValue(name: string) {
+  if (typeof document === "undefined") return null;
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const cookieMatch = document.cookie.match(new RegExp(`(?:^|; )${escapedName}=([^;]*)`));
+  return cookieMatch?.[1] ? decodeURIComponent(cookieMatch[1]) : null;
+}
+
+function readPreferredSiteLangFromBrowser() {
+  if (typeof window === "undefined") return DEFAULT_SITE_LANG;
+  const qp = new URLSearchParams(window.location.search);
+  const browserLanguages = Array.isArray(navigator.languages) && navigator.languages.length > 0
+    ? navigator.languages
+    : [navigator.language].filter(Boolean);
+  return resolvePreferredSiteLang({
+    query: qp.get("lang"),
+    stored: window.localStorage.getItem(SITE_LANG_KEY),
+    cookie: readCookieValue(SITE_LANG_COOKIE_KEY),
+    browser: browserLanguages,
+    detected: readCookieValue(SITE_DETECTED_LANG_COOKIE_KEY),
+  });
+}
+
+function persistSiteLang(lang: SiteLang) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(SITE_LANG_KEY, lang);
+  document.cookie = `${SITE_LANG_COOKIE_KEY}=${encodeURIComponent(lang)}; Path=/; Max-Age=31536000; SameSite=Lax`;
+  document.documentElement.lang = lang;
+  syncLangInUrl(lang);
+}
+
 export function SiteLanguageProvider({ children }: { children: React.ReactNode }) {
-  const [lang, setLangState] = useState<SiteLang>(DEFAULT_SITE_LANG);
+  const [lang, setLangState] = useState<SiteLang>(() => readPreferredSiteLangFromBrowser());
+  const hasResolvedInitialLang = useRef(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const cookieMatch = document.cookie.match(new RegExp(`(?:^|; )${SITE_LANG_COOKIE_KEY}=([^;]*)`));
-    const rawCookie = cookieMatch?.[1] ? decodeURIComponent(cookieMatch[1]) : null;
-    const detectedCookieMatch = document.cookie.match(new RegExp(`(?:^|; )${SITE_DETECTED_LANG_COOKIE_KEY}=([^;]*)`));
-    const rawDetectedCookie = detectedCookieMatch?.[1] ? decodeURIComponent(detectedCookieMatch[1]) : null;
-    const qp = new URLSearchParams(window.location.search);
-    const rawQuery = qp.get("lang");
-    const rawStored = window.localStorage.getItem(SITE_LANG_KEY);
-    const browserLanguages = Array.isArray(navigator.languages) && navigator.languages.length > 0
-      ? navigator.languages
-      : [navigator.language].filter(Boolean);
-    // Sync initial language preference once after hydration.
+    const resolved = readPreferredSiteLangFromBrowser();
+    hasResolvedInitialLang.current = true;
+    persistSiteLang(resolved);
+    // Sync browser preference once after hydration without first writing the default language.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setLangState(
-      resolvePreferredSiteLang({
-        query: rawQuery,
-        stored: rawStored,
-        cookie: rawCookie,
-        browser: browserLanguages,
-        detected: rawDetectedCookie,
-      }),
-    );
+    setLangState((current) => (current === resolved ? current : resolved));
   }, []);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem(SITE_LANG_KEY, lang);
-    document.cookie = `${SITE_LANG_COOKIE_KEY}=${encodeURIComponent(lang)}; Path=/; Max-Age=31536000; SameSite=Lax`;
-    document.documentElement.lang = lang;
-    syncLangInUrl(lang);
+    if (!hasResolvedInitialLang.current) return;
+    persistSiteLang(lang);
   }, [lang]);
 
   function setLang(next: SiteLang) {
     const normalized = resolveSiteLang(next);
+    hasResolvedInitialLang.current = true;
+    persistSiteLang(normalized);
     setLangState(normalized);
     track("site_language_changed", { lang: normalized });
   }

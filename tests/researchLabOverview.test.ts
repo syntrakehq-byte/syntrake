@@ -274,6 +274,81 @@ describe("research lab overview", () => {
         ],
       },
     });
+    await writeJsonAtomic(path.join(config.paths.reportsDir, "datasets", "twelvedata-full-archive-latest.json"), {
+      reportId: "td-archive-local",
+      generatedAt: "2026-05-17T12:46:00.000Z",
+      scope: {
+        instruments: [],
+        markets: ["forex"],
+        timeframes: ["1m", "1d"],
+        fullHistory: true,
+        targetFromYear: 2020,
+        targetToYear: 2025,
+        download: false,
+        force: false,
+      },
+      storage: {
+        archiveRoot: path.join(rootDir, "data", "historical-twelvedata"),
+        reportsDir: path.join(config.paths.reportsDir, "datasets"),
+      },
+      summary: {
+        instruments: 1,
+        timeframes: 2,
+        scopeEntries: 2,
+        available: 2,
+        restricted: 0,
+        missingRemote: 0,
+        localArchiveFiles: 4,
+        pendingYears: 8,
+        downloaded: 0,
+        existing: 0,
+        failed: 0,
+      },
+      instruments: [
+        {
+          instrument: "EURUSD",
+          market: "forex",
+          providerSymbol: "EUR/USD",
+          providerRelation: "direct",
+          localArchiveFiles: 4,
+          pendingYears: 8,
+          availableTimeframes: 2,
+          restrictedTimeframes: 0,
+          missingRemoteTimeframes: 0,
+          timeframes: [
+            {
+              timeframe: "1m",
+              earliestAvailableAt: "2020-04-07T16:54:00.000Z",
+              earliestAvailableYear: 2020,
+              localArchiveFiles: 2,
+              localArchiveYears: [2020, 2021],
+              targetFromYear: 2020,
+              targetToYear: 2025,
+              pendingYears: [2022, 2023, 2024, 2025],
+              restrictionReason: null,
+              note: "Pending years can be downloaded into the dedicated Twelve Data archive root without touching the canonical archive.",
+            },
+            {
+              timeframe: "1d",
+              earliestAvailableAt: "2020-04-07T16:54:00.000Z",
+              earliestAvailableYear: 2020,
+              localArchiveFiles: 2,
+              localArchiveYears: [2020, 2021],
+              targetFromYear: 2020,
+              targetToYear: 2025,
+              pendingYears: [2022, 2023, 2024, 2025],
+              restrictionReason: null,
+              note: "Pending years can be downloaded into the dedicated Twelve Data archive root without touching the canonical archive.",
+            },
+          ],
+        },
+      ],
+      sync: [],
+      outputs: {
+        jsonPath: path.join(config.paths.reportsDir, "datasets", "twelvedata-full-archive-latest.json"),
+        markdownPath: path.join(config.paths.reportsDir, "datasets", "twelvedata-full-archive-latest.md"),
+      },
+    });
 
     const overview = await buildResearchLabOverview({
       config,
@@ -294,6 +369,13 @@ describe("research lab overview", () => {
     expect(overview.promotionReadiness.opportunity?.bundleStatus).toBe("insufficient_candidates");
     expect(overview.datasetRequirements.summary.officialGapCount).toBe(1);
     expect(overview.dataAcquisitionPlan.summary.manualCount).toBe(1);
+    expect(overview.twelveDataArchive.available).toBe(true);
+    expect(overview.twelveDataArchive.localArchiveFiles).toBe(4);
+    expect(overview.twelveDataArchive.pendingYears).toBe(8);
+    expect(overview.twelveDataArchive.fullHistory).toBe(true);
+    expect(overview.twelveDataArchive.timeframesRequested).toEqual(["1m", "1d"]);
+    expect(overview.twelveDataArchive.instruments[0]?.instrument).toBe("EURUSD");
+    expect(overview.twelveDataArchive.instruments[0]?.timeframes).toHaveLength(2);
     expect(overview.researchIntelligence.source).toBe("canonical_artifacts");
     expect(overview.researchIntelligence.evidence.decisionEvents).toBe(1);
     expect(overview.researchIntelligence.evidence.baselineAnnualizedTrades).toBeCloseTo(40.5, 1);

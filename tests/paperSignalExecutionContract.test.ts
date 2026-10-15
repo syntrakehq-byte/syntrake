@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   createCanonicalPaperTradeCycle: vi.fn(),
   recordPaperTradeRun: vi.fn(),
   readCanonicalPaperRows: vi.fn(),
+  reconcileCanonicalPaperTradeRuns: vi.fn(),
   reconcileCanonicalPaperTrades: vi.fn(),
   releasePaperTradeLock: vi.fn(),
   settleCanonicalPaperRows: vi.fn(),
@@ -64,6 +65,7 @@ vi.mock("@/lib/trading/bot/paperStore", () => ({
   buildPaperObservability: mocks.buildPaperObservability,
   createCanonicalPaperTradeCycle: mocks.createCanonicalPaperTradeCycle,
   readCanonicalPaperRows: mocks.readCanonicalPaperRows,
+  reconcileCanonicalPaperTradeRuns: mocks.reconcileCanonicalPaperTradeRuns,
   reconcileCanonicalPaperTrades: mocks.reconcileCanonicalPaperTrades,
   recordPaperTradeRun: mocks.recordPaperTradeRun,
   releasePaperTradeLock: mocks.releasePaperTradeLock,
@@ -258,6 +260,11 @@ describe("paper signal execution contract", () => {
       lockExpiresAt: "2026-07-04T08:03:01.000Z",
     });
     mocks.releasePaperTradeLock.mockResolvedValue(true);
+    mocks.reconcileCanonicalPaperTradeRuns.mockResolvedValue({
+      schemaReady: true,
+      error: null,
+      reconciled: 0,
+    });
     mocks.reconcileCanonicalPaperTrades.mockResolvedValue({
       schemaReady: true,
       error: null,

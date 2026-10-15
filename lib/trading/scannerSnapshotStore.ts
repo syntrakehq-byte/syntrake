@@ -1,5 +1,5 @@
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-import { TRADING_LIGHT_SCANNER_ACTIONABLE_MAX_AGE_MS } from "@/lib/trading/lightScanner";
+import { TRADING_LIGHT_SCANNER_ACTIONABLE_MAX_AGE_MS } from "@/lib/trading/scannerFreshness";
 import type { ComposeTradingLiveDecisionInput } from "@/lib/trading/state";
 
 export const TRADING_SCANNER_SNAPSHOT_TABLE = "trading_scanner_snapshots";

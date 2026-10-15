@@ -2,8 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
+import { SITE_LANGS } from "@/lib/i18n/siteLanguage";
 
-const REQUIRED_LANGS = ["en", "pt", "es", "fr", "de", "it"] as const;
+const REQUIRED_LANGS = SITE_LANGS;
 const SOURCE_ROOTS = ["app", "components", "lib"] as const;
 
 function walkSourceFiles(dir: string, out: string[] = []): string[] {

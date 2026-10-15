@@ -3,28 +3,22 @@ import { auth } from "@clerk/nextjs/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
 import { resolveModeAccess } from "@/lib/signalcore/modeAccess";
+import {
+  attachLegacyPortfolioBoundary,
+  legacyPortfolioBoundary,
+  legacyPortfolioBoundaryHeaders,
+} from "@/lib/signalcore/legacyPortfolioBoundary";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function deprecatedJson(body: Record<string, unknown>, status = 200) {
+function deprecatedJson(body: Record<string, unknown>, status = 200, mode?: string | null) {
+  const boundary = legacyPortfolioBoundary(mode);
   return NextResponse.json(
-    {
-      deprecated: true,
-      canonicalSource: "portfolio_items",
-      canonicalReadEndpoint: "/api/portfolio-items",
-      canonicalWriteEndpoint: "/api/portfolio-items",
-      note:
-        "This endpoint is legacy (portfolios snapshot/value map). Prefer /api/portfolio-items for canonical holdings writes.",
-      ...body,
-    },
+    attachLegacyPortfolioBoundary(body, mode),
     {
       status,
-      headers: {
-        "Cache-Control": "no-store",
-        "X-SignalCore-Deprecated": "true",
-        "X-SignalCore-Canonical-Endpoint": "/api/portfolio-items",
-      },
+      headers: legacyPortfolioBoundaryHeaders(boundary),
     }
   );
 }
@@ -48,7 +42,8 @@ export async function POST(req: Request) {
   if (!access.ok) {
     return deprecatedJson(
       { ok: false, error: access.error, allowedMode: access.allowedMode, requestedMode: access.mode },
-      access.status
+      access.status,
+      access.mode
     );
   }
   const mode = access.mode;
@@ -64,7 +59,7 @@ export async function POST(req: Request) {
     .eq("mode", mode)
     .limit(1);
 
-  if (readErr) return deprecatedJson({ ok: false, error: readErr.message }, 500);
+  if (readErr) return deprecatedJson({ ok: false, error: readErr.message }, 500, mode);
 
   const existing = (existingRows ?? [])[0] ?? null;
   const existingSnapshot = (existing.snapshot && typeof existing.snapshot === "object") ? existing.snapshot : {};
@@ -103,7 +98,7 @@ export async function POST(req: Request) {
   });
 
   if (!writeErr) {
-    return deprecatedJson({ ok: true, mode, saved: true, cashEur: nextSnapshot.cashEur ?? 0 });
+    return deprecatedJson({ ok: true, mode, saved: true, cashEur: nextSnapshot.cashEur ?? 0 }, 200, mode);
   }
 
   // Fallback: remove cash_eur and retry
@@ -116,7 +111,7 @@ export async function POST(req: Request) {
       onConflict: "user_id,mode",
     });
 
-    if (fallbackErr) return deprecatedJson({ ok: false, error: fallbackErr.message }, 500);
+    if (fallbackErr) return deprecatedJson({ ok: false, error: fallbackErr.message }, 500, mode);
 
     return deprecatedJson({
       ok: true,
@@ -124,9 +119,9 @@ export async function POST(req: Request) {
       saved: true,
       cashEur: nextSnapshot.cashEur ?? 0,
       note: "Saved cashEur inside portfolios.snapshot (cash_eur column missing).",
-    });
+    }, 200, mode);
   }
 
-  return deprecatedJson({ ok: false, error: writeErr.message }, 500);
+  return deprecatedJson({ ok: false, error: writeErr.message }, 500, mode);
 }
 

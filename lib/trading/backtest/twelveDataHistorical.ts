@@ -23,6 +23,11 @@ type TwelveDataEarliestTimestampResponse = {
   message?: string;
 };
 
+type ParsedTwelveDataBody<T> = {
+  rawText: string | null;
+  json: T | null;
+};
+
 export class TwelveDataAccessRestrictedError extends Error {
   constructor(message: string) {
     super(message);
@@ -59,6 +64,7 @@ const HISTORICAL_PROBE_WINDOW_MS: Record<TradingTimeframe, number> = {
 };
 const TWELVEDATA_RETRY_LIMIT = 3;
 const TWELVEDATA_RATE_LIMIT_WAIT_MS = 65_000;
+const TWELVEDATA_TRANSIENT_RETRY_WAIT_MS = 2_000;
 
 let nextAllowedTwelveDataRequestAt = 0;
 const earliestTimestampCache = new Map<string, string | null>();
@@ -135,6 +141,21 @@ function isRateLimitMessage(message: string | undefined): boolean {
   return (message ?? "").includes("run out of API credits for the current minute");
 }
 
+function isHttpRateLimited(args: {
+  status: number;
+  message?: string;
+}): boolean {
+  return args.status === 429 || isRateLimitMessage(args.message);
+}
+
+function redactApiKey(requestUrl: string): string {
+  const url = new URL(requestUrl);
+  if (url.searchParams.has("apikey")) {
+    url.searchParams.set("apikey", "[redacted]");
+  }
+  return url.toString();
+}
+
 export function isTwelveDataAccessRestrictedMessage(message: string | undefined): boolean {
   const normalized = (message ?? "").toLowerCase();
 
@@ -168,6 +189,51 @@ async function waitForTwelveDataRequestWindow(): Promise<void> {
 
 function markTwelveDataRequestComplete(): void {
   nextAllowedTwelveDataRequestAt = Date.now() + resolveRequestIntervalMs();
+}
+
+async function waitForTwelveDataRateLimitReset(): Promise<void> {
+  nextAllowedTwelveDataRequestAt = Math.max(
+    nextAllowedTwelveDataRequestAt,
+    Date.now() + TWELVEDATA_RATE_LIMIT_WAIT_MS,
+  );
+  await wait(TWELVEDATA_RATE_LIMIT_WAIT_MS);
+}
+
+async function parseTwelveDataBody<T>(response: Response): Promise<ParsedTwelveDataBody<T>> {
+  const responseWithText = response as Response & { text?: () => Promise<string> };
+  const responseWithJson = response as Response & { json?: () => Promise<unknown> };
+
+  if (typeof responseWithText.text !== "function") {
+    const json = typeof responseWithJson.json === "function"
+      ? (await responseWithJson.json().catch(() => null)) as T | null
+      : null;
+
+    return {
+      rawText: json ? JSON.stringify(json) : null,
+      json,
+    };
+  }
+
+  const rawText = await responseWithText.text().catch(() => null);
+
+  if (!rawText) {
+    return {
+      rawText,
+      json: null,
+    };
+  }
+
+  try {
+    return {
+      rawText,
+      json: JSON.parse(rawText) as T,
+    };
+  } catch {
+    return {
+      rawText,
+      json: null,
+    };
+  }
 }
 
 function parseNumber(value: string | undefined): number | null {
@@ -226,6 +292,7 @@ function normalizeHistoricalCandles(
 
 async function fetchHistoricalTimeframe(args: {
   symbol: string;
+  micCode?: string | null;
   timeframe: TradingTimeframe;
   from: string;
   to: string;
@@ -235,6 +302,9 @@ async function fetchHistoricalTimeframe(args: {
 
     const url = new URL("https://api.twelvedata.com/time_series");
     url.searchParams.set("symbol", args.symbol);
+    if (args.micCode) {
+      url.searchParams.set("mic_code", args.micCode);
+    }
     url.searchParams.set("interval", TWELVEDATA_INTERVAL_MAP[args.timeframe]);
     url.searchParams.set("start_date", toProviderDateTime(args.from));
     url.searchParams.set("end_date", toProviderDateTime(args.to));
@@ -246,13 +316,43 @@ async function fetchHistoricalTimeframe(args: {
     );
     url.searchParams.set("apikey", apiKey());
 
-    const response = await fetch(url.toString(), {
+    const requestUrl = url.toString();
+    const response = await fetch(requestUrl, {
       cache: "no-store",
     });
     markTwelveDataRequestComplete();
-    const json = (await response.json().catch(() => null)) as TwelveDataHistoricalResponse | null;
+    const body = await parseTwelveDataBody<TwelveDataHistoricalResponse>(response);
+    const json = body.json;
 
-    if (!response.ok || !json) {
+    if (
+      isHttpRateLimited({
+        status: response.status,
+        message: json?.message,
+      })
+      && attempt < TWELVEDATA_RETRY_LIMIT - 1
+    ) {
+      await waitForTwelveDataRateLimitReset();
+      continue;
+    }
+
+    if (response.ok && !json && attempt < TWELVEDATA_RETRY_LIMIT - 1) {
+      await wait(TWELVEDATA_TRANSIENT_RETRY_WAIT_MS * (attempt + 1));
+      continue;
+    }
+
+    if (!response.ok) {
+      if (isNoDataMessage(json?.message) || isNoDataMessage(body.rawText ?? undefined)) {
+        return [];
+      }
+
+      throw new Error(
+        json?.message || body.rawText
+          ? `Historical time series request failed (${response.status}) for ${redactApiKey(requestUrl)}: ${json?.message ?? body.rawText}`
+          : `Historical time series request failed (${response.status}) for ${redactApiKey(requestUrl)}.`,
+      );
+    }
+
+    if (!json) {
       throw new Error(`Historical time series request failed (${response.status}).`);
     }
 
@@ -266,7 +366,7 @@ async function fetchHistoricalTimeframe(args: {
       }
 
       if (isRateLimitMessage(json.message) && attempt < TWELVEDATA_RETRY_LIMIT - 1) {
-        await wait(TWELVEDATA_RATE_LIMIT_WAIT_MS);
+        await waitForTwelveDataRateLimitReset();
         continue;
       }
 
@@ -296,9 +396,10 @@ function normalizeEarliestTimestamp(value: string | number | undefined): string 
 
 async function fetchEarliestTimestamp(args: {
   symbol: string;
+  micCode?: string | null;
   timeframe: TradingTimeframe;
 }): Promise<string | null> {
-  const cacheKey = `${args.symbol}::${args.timeframe}`;
+  const cacheKey = `${args.symbol}::${args.micCode ?? ""}::${args.timeframe}`;
 
   if (earliestTimestampCache.has(cacheKey)) {
     return earliestTimestampCache.get(cacheKey) ?? null;
@@ -309,6 +410,9 @@ async function fetchEarliestTimestamp(args: {
 
     const url = new URL("https://api.twelvedata.com/earliest_timestamp");
     url.searchParams.set("symbol", args.symbol);
+    if (args.micCode) {
+      url.searchParams.set("mic_code", args.micCode);
+    }
     url.searchParams.set("interval", TWELVEDATA_INTERVAL_MAP[args.timeframe]);
     url.searchParams.set("apikey", apiKey());
 
@@ -316,7 +420,19 @@ async function fetchEarliestTimestamp(args: {
       cache: "no-store",
     });
     markTwelveDataRequestComplete();
-    const json = (await response.json().catch(() => null)) as TwelveDataEarliestTimestampResponse | null;
+    const body = await parseTwelveDataBody<TwelveDataEarliestTimestampResponse>(response);
+    const json = body.json;
+
+    if (
+      isHttpRateLimited({
+        status: response.status,
+        message: json?.message,
+      })
+      && attempt < TWELVEDATA_RETRY_LIMIT - 1
+    ) {
+      await waitForTwelveDataRateLimitReset();
+      continue;
+    }
 
     if (!response.ok || !json) {
       break;
@@ -333,7 +449,7 @@ async function fetchEarliestTimestamp(args: {
       }
 
       if (isRateLimitMessage(json.message) && attempt < TWELVEDATA_RETRY_LIMIT - 1) {
-        await wait(TWELVEDATA_RATE_LIMIT_WAIT_MS);
+        await waitForTwelveDataRateLimitReset();
         continue;
       }
 
@@ -351,8 +467,17 @@ async function fetchEarliestTimestamp(args: {
   return null;
 }
 
+export async function fetchTwelveDataEarliestAvailableTimestamp(args: {
+  symbol: string;
+  micCode?: string | null;
+  timeframe: TradingTimeframe;
+}): Promise<string | null> {
+  return fetchEarliestTimestamp(args);
+}
+
 async function probeFirstAvailableSegment(args: {
   symbol: string;
+  micCode?: string | null;
   timeframe: TradingTimeframe;
   from: string;
   to: string;
@@ -377,6 +502,7 @@ async function probeFirstAvailableSegment(args: {
     const probeEnd = Math.min(endMs, probeStart + probeWindowMs);
     const candles = await fetchHistoricalTimeframe({
       symbol: args.symbol,
+      micCode: args.micCode,
       timeframe: args.timeframe,
       from: new Date(probeStart).toISOString(),
       to: new Date(probeEnd).toISOString(),
@@ -436,12 +562,14 @@ function mergeChunkedCandles(chunks: TradingCandleInput[][]): TradingCandleInput
 
 export async function fetchTwelveDataHistoricalRange(args: {
   symbol: string;
+  micCode?: string | null;
   timeframe: TradingTimeframe;
   from: string;
   to: string;
 }): Promise<TradingCandleInput[]> {
   const earliestTimestamp = await fetchEarliestTimestamp({
     symbol: args.symbol,
+    micCode: args.micCode,
     timeframe: args.timeframe,
   });
   const requestedStartMs = new Date(args.from).getTime();
@@ -467,6 +595,7 @@ export async function fetchTwelveDataHistoricalRange(args: {
       const chunkEnd = Math.min(requestedEndMs, cursor + chunkDurationMs);
       const candles = await fetchHistoricalTimeframe({
         symbol: adjustedArgs.symbol,
+        micCode: adjustedArgs.micCode,
         timeframe: adjustedArgs.timeframe,
         from: new Date(cursor).toISOString(),
         to: new Date(chunkEnd).toISOString(),
@@ -500,6 +629,7 @@ export async function fetchTwelveDataHistoricalRange(args: {
     const chunkEnd = Math.min(endMs, cursor + chunkDurationMs);
     const candles = await fetchHistoricalTimeframe({
       symbol: args.symbol,
+      micCode: args.micCode,
       timeframe: args.timeframe,
       from: new Date(cursor).toISOString(),
       to: new Date(chunkEnd).toISOString(),

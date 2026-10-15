@@ -382,6 +382,114 @@ function TwelveDataTransferPanel({ lab }: { lab: Awaited<ReturnType<typeof build
   );
 }
 
+function TwelveDataArchivePanel({ lab }: { lab: Awaited<ReturnType<typeof buildResearchLabOverview>> }) {
+  const archive = lab.twelveDataArchive;
+
+  return (
+    <section className="mt-7 rounded-[30px] border border-white/10 bg-white/[0.045] p-6 shadow-2xl shadow-black/20">
+      <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <p className="text-xs font-black uppercase tracking-[0.28em] text-cyan-200/60">Twelve Data full archive</p>
+          <h2 className="mt-2 text-2xl font-black text-white">Dedicated remote-history vault</h2>
+          <p className="mt-3 max-w-4xl text-sm text-slate-300">
+            Separate from the canonical lab archive. This is the raw Twelve Data vault used to prove what the provider
+            makes available, what was already downloaded, and what years are still pending before any future promotion.
+          </p>
+        </div>
+        <div className="rounded-full border border-white/15 bg-slate-950/45 px-4 py-2 text-sm font-black uppercase tracking-[0.18em] text-slate-100">
+          Report {time(archive.generatedAt)}
+        </div>
+      </div>
+
+      <div className="mt-5 grid gap-3 md:grid-cols-5">
+        <Metric label="Archive files" value={archive.localArchiveFiles} />
+        <Metric label="Pending years" value={archive.pendingYears} />
+        <Metric label="Instruments" value={archive.totalInstruments} />
+        <Metric label="Timeframes" value={archive.totalTimeframes} />
+        <Metric label="Provider available" value={archive.availableScopes} />
+        <Metric label="Restricted" value={archive.restrictedScopes} />
+        <Metric label="Missing remote" value={archive.missingRemoteScopes} />
+        <Metric label="Downloaded now" value={archive.downloaded} />
+        <Metric label="Existing now" value={archive.existing} />
+        <Metric label="Failed now" value={archive.failed} />
+        <Metric label="Markets" value={archive.markets.join(", ") || "all"} />
+        <Metric label="Requested scope" value={archive.instrumentsRequested.join(", ") || "all"} />
+        <Metric label="Requested TFs" value={archive.timeframesRequested.join(", ") || "all"} />
+        <Metric label="History mode" value={archive.fullHistory ? "1980 -> provider max" : "manual / detected"} />
+      </div>
+
+      {!archive.available ? (
+        <div className="mt-4 rounded-2xl border border-amber-300/30 bg-amber-400/10 p-4 text-sm text-amber-100">
+          No dedicated Twelve Data full-archive report exists yet in this runtime.
+        </div>
+      ) : (
+        <>
+          <div className="mt-4 rounded-2xl border border-white/10 bg-slate-950/35 p-4 text-sm text-slate-300">
+            <p>
+              <span className="font-bold text-white">Archive root:</span>{" "}
+              <span className="break-all">{archive.archiveRoot ?? "n/a"}</span>
+            </p>
+          </div>
+          <div className="mt-4 overflow-x-auto rounded-2xl border border-white/10 bg-slate-950/35">
+            <table className="min-w-full text-left text-sm text-slate-200">
+              <thead className="bg-white/5 text-xs uppercase tracking-[0.18em] text-slate-400">
+                <tr>
+                  <th className="px-4 py-3">Instrument</th>
+                  <th className="px-4 py-3">Market</th>
+                  <th className="px-4 py-3">Provider</th>
+                  <th className="px-4 py-3">Local files</th>
+                  <th className="px-4 py-3">Pending years</th>
+                  <th className="px-4 py-3">TF ready</th>
+                  <th className="px-4 py-3">TF restricted</th>
+                  <th className="px-4 py-3">Per timeframe</th>
+                </tr>
+              </thead>
+              <tbody>
+                {archive.instruments.map((entry) => (
+                  <tr key={entry.instrument} className="border-t border-white/5 align-top">
+                    <td className="px-4 py-3 font-bold text-white">{entry.instrument}</td>
+                    <td className="px-4 py-3">{entry.market}</td>
+                    <td className="px-4 py-3 text-slate-300">
+                      {entry.providerSymbol ?? "n/a"}
+                      {entry.providerRelation ? ` (${entry.providerRelation})` : ""}
+                    </td>
+                    <td className="px-4 py-3">{entry.localArchiveFiles}</td>
+                    <td className="px-4 py-3">{entry.pendingYears}</td>
+                    <td className="px-4 py-3">
+                      {entry.availableTimeframes}/{entry.timeframes.length}
+                    </td>
+                    <td className="px-4 py-3">{entry.restrictedTimeframes}</td>
+                    <td className="px-4 py-3 text-xs text-slate-400">
+                      <div className="space-y-2">
+                        {entry.timeframes.map((timeframe) => (
+                          <div key={`${entry.instrument}-${timeframe.timeframe}`} className="rounded-xl border border-white/10 bg-black/20 p-2">
+                            <p className="font-bold text-white">
+                              {timeframe.timeframe} · earliest {time(timeframe.earliestAvailableAt)}
+                            </p>
+                            <p>
+                              files {timeframe.localArchiveFiles}
+                              {" · "}
+                              years {timeframe.localArchiveYears.length > 0 ? timeframe.localArchiveYears.join(", ") : "none"}
+                            </p>
+                            <p>
+                              pending {timeframe.pendingYears.length > 0 ? timeframe.pendingYears.join(", ") : "0"}
+                            </p>
+                            <p>{timeframe.restrictionReason ?? timeframe.note ?? "n/a"}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
 function PromotionReadinessPanel({ lab }: { lab: Awaited<ReturnType<typeof buildResearchLabOverview>> }) {
   const promotion = lab.promotionReadiness;
   const board = promotion.board;
@@ -626,6 +734,8 @@ export default async function ResearchLabPage({
         <DatasetRequirementsPanel lab={lab} />
 
         <DataAcquisitionAgentPanel lab={lab} />
+
+        <TwelveDataArchivePanel lab={lab} />
 
         <TwelveDataTransferPanel lab={lab} />
 

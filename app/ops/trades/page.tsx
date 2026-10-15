@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { auth } from "@clerk/nextjs/server";
 
 import { isOwnerUserId } from "@/lib/signalcore/owner";
@@ -283,9 +284,9 @@ export default async function TradeLedgerPage({
               <button type="submit" className="rounded-xl bg-cyan-300 px-4 py-2 text-sm font-black text-slate-950">
                 Apply filters
               </button>
-              <a href="/ops/trades" className="rounded-xl border border-white/10 px-4 py-2 text-sm font-bold text-white">
+              <Link href="/ops/trades" className="rounded-xl border border-white/10 px-4 py-2 text-sm font-bold text-white">
                 Reset
-              </a>
+              </Link>
             </div>
           </form>
         </section>
