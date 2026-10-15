@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY || 'pk_test_Y2xlcmsuY2kuZHVtbXkk' }}
+      NEXT_TELEMETRY_DISABLED: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Verify
+        run: npm run verify:ci
+
+      - name: Prod dependency audit
+        run: npm run audit:prod
+
+      - name: Post-deploy production smoke
+        env:
+          QA_BASE_URL: ${{ secrets.QA_BASE_URL || 'https://www.syntrake.com' }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          ENGINE_LOOP_SECRET: ${{ secrets.ENGINE_LOOP_SECRET }}
+        run: |
+          if [ -z "$QA_BASE_URL" ]; then
+            echo "Post-deploy smoke cannot run: QA_BASE_URL is not configured."
+            exit 1
+          fi
+          if [ -z "$CRON_SECRET" ] && [ -z "$ENGINE_LOOP_SECRET" ]; then
+            echo "Post-deploy smoke cannot run: refresh secret is not configured."
+            exit 1
+          fi
+          npm run qa:post-deploy
+
+      - name: Trading production audit
+        env:
+          QA_BASE_URL: ${{ secrets.QA_BASE_URL || 'https://www.syntrake.com' }}
+          QA_SIGN_IN_URL: ${{ secrets.QA_SIGN_IN_URL }}
+          QA_CLERK_USER_ID: ${{ secrets.QA_CLERK_USER_ID }}
+          QA_CLERK_EMAIL: ${{ secrets.QA_CLERK_EMAIL }}
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+        run: |
+          if [ -z "$QA_SIGN_IN_URL" ] && { [ -z "$CLERK_SECRET_KEY" ] || { [ -z "$QA_CLERK_USER_ID" ] && [ -z "$QA_CLERK_EMAIL" ]; }; }; then
+            echo "Trading production audit cannot run: QA auth is not configured."
+            exit 1
+          fi
+          npm run qa:trading:prod
+
+      - name: Investing production audit
+        env:
+          QA_BASE_URL: ${{ secrets.QA_BASE_URL || 'https://www.syntrake.com' }}
+          QA_SIGN_IN_URL: ${{ secrets.QA_SIGN_IN_URL }}
+          QA_CLERK_USER_ID: ${{ secrets.QA_CLERK_USER_ID }}
+          QA_CLERK_EMAIL: ${{ secrets.QA_CLERK_EMAIL }}
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+          SC_OWNER_USER_ID: ${{ secrets.SC_OWNER_USER_ID }}
+          SC_OWNER_USER_IDS: ${{ secrets.SC_OWNER_USER_IDS }}
+        run: |
+          OWNER_FALLBACK="${SC_OWNER_USER_ID:-${SC_OWNER_USER_IDS%%,*}}"
+          if [ -z "$QA_SIGN_IN_URL" ] && { [ -z "$CLERK_SECRET_KEY" ] || { [ -z "$QA_CLERK_USER_ID" ] && [ -z "$QA_CLERK_EMAIL" ] && [ -z "$OWNER_FALLBACK" ]; }; }; then
+            echo "Investing production audit cannot run: QA auth is not configured."
+            exit 1
+          fi
+          npm run qa:investing:prod
+
+      - name: Billing entitlement audit
+        env:
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          SC_OWNER_USER_ID: ${{ secrets.SC_OWNER_USER_ID }}
+          SC_OWNER_USER_IDS: ${{ secrets.SC_OWNER_USER_IDS }}
+        run: |
+          if [ -z "$CLERK_SECRET_KEY" ]; then
+            echo "Billing audit cannot run: CLERK_SECRET_KEY is not configured."
+            exit 1
+          fi
+          npm run qa:billing:strict
+
