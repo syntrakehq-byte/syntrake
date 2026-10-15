@@ -1,0 +1,39 @@
+/node_modules/
+/.next/
+/.next-*/
+/out/
+/coverage/
+/.vercel/
+
+# local env
+/.env
+/.env.local
+/.env.*.local
+/.env.vercel*
+
+# local runtime / research / historical data
+/Data/
+/artifacts/
+/.cache/
+
+# local browser/runtime profiles
+/.codex-chrome-profile/
+/.codex-chrome-profile-runtime/
+/.qa-chrome-userdata/
+
+# local logs and caches
+/*.log
+/tsconfig.tsbuildinfo
+
+# local QA assets and reports
+/qa_*
+/tmp_*
+/daily_current.png
+/__live_syntrake.html
+/AUDITORIA_TOTAL_SIGNALCORE.md
+/AUDITORIA_TECNICA_SYNTRAKE_2026-07-10.md
+/RELATORIO_HARDENING_SYNTRAKE_2026-07-11.md
+/Build
+/build
+/undefined/
+
