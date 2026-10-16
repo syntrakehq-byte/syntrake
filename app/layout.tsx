@@ -123,7 +123,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             })();
           `}
         </Script>
-        <ClerkProvider proxyUrl={process.env.NEXT_PUBLIC_CLERK_PROXY_URL}>
+        <ClerkProvider domain={process.env.NEXT_PUBLIC_CLERK_DOMAIN}>
           <SiteLanguageProvider>
             {children}
             {GTM_ENABLED ? (
