@@ -10,6 +10,10 @@ async function forward(request: NextRequest, context: { params: Promise<{ path?:
   const headers = new Headers(request.headers);
   headers.delete("host");
   headers.delete("content-length");
+  headers.delete("origin");
+  headers.delete("referer");
+  headers.delete("x-forwarded-host");
+  headers.delete("x-forwarded-proto");
   headers.set("accept-encoding", "identity");
 
   const body = request.method === "GET" || request.method === "HEAD" ? undefined : await request.arrayBuffer();
