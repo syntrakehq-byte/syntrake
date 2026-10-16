@@ -15,7 +15,7 @@ function attachDetectedLanguageCookie(req: NextRequest, res: NextResponse) {
   return res;
 }
 
-export default clerkMiddleware({ frontendApiProxy: { enabled: true } }, (_auth, req) => {
+export default clerkMiddleware((_auth, req) => {
   const host = req.nextUrl.host.trim().toLowerCase();
   if (host === "syntrake.com") {
     const canonicalUrl = new URL(req.url);
@@ -24,7 +24,7 @@ export default clerkMiddleware({ frontendApiProxy: { enabled: true } }, (_auth, 
     return NextResponse.redirect(canonicalUrl, 308);
   }
   return attachDetectedLanguageCookie(req, NextResponse.next());
-});
+}, { frontendApiProxy: { enabled: true } });
 
 export const config = {
   matcher: [
