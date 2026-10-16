@@ -10,6 +10,7 @@ async function forward(request: NextRequest, context: { params: Promise<{ path?:
   const headers = new Headers(request.headers);
   headers.delete("host");
   headers.delete("content-length");
+  headers.set("accept-encoding", "identity");
 
   const body = request.method === "GET" || request.method === "HEAD" ? undefined : await request.arrayBuffer();
   const response = await fetch(target, {
@@ -19,10 +20,14 @@ async function forward(request: NextRequest, context: { params: Promise<{ path?:
     redirect: "manual",
   });
 
+  const responseHeaders = new Headers(response.headers);
+  responseHeaders.delete("content-encoding");
+  responseHeaders.delete("content-length");
+
   return new NextResponse(response.body, {
     status: response.status,
     statusText: response.statusText,
-    headers: response.headers,
+    headers: responseHeaders,
   });
 }
 
