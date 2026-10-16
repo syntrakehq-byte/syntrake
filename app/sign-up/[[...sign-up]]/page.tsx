@@ -12,7 +12,7 @@ function safeRelativeRedirect(input: string | null) {
 }
 
 function resolveAuthRedirect() {
-  if (typeof window === "undefined") return "/app";
+  if (typeof window === "undefined") return "/start";
   const params = new URLSearchParams(window.location.search);
   const explicit = safeRelativeRedirect(
     params.get("redirect_url") ?? params.get("redirectUrl") ?? params.get("returnTo"),
@@ -24,7 +24,7 @@ function resolveAuthRedirect() {
     return `/pricing?intent=${encodeURIComponent(intent)}&source=auth_return`;
   }
 
-  return "/app";
+  return "/start";
 }
 
 export default function Page() {

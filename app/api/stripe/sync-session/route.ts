@@ -1,7 +1,6 @@
 import Stripe from "stripe";
 import { NextResponse } from "next/server";
 import { auth, clerkClient } from "@clerk/nextjs/server";
-import { logConversionEvent } from "@/lib/signalcore/conversion";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -145,20 +144,6 @@ export async function POST(req: Request) {
       utmContent: session.metadata?.utm_content,
       utmTerm: session.metadata?.utm_term,
     });
-
-    if (isPaid && !transition.previousPaid) {
-      void logConversionEvent({
-        userId,
-        event: "paid_activated",
-        source: "stripe_sync_session",
-        details: {
-          sessionId,
-          stripeSubscriptionId: subId,
-          status: stripeStatus || session.payment_status || session.status,
-          billingCycle: session.metadata?.billingCycle || null,
-        },
-      });
-    }
 
     return json(200, {
       ok: true,

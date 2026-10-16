@@ -24,7 +24,7 @@ export default async function StartPage({
   const { userId } = await auth();
   const lang = await resolveRequestSiteLang(params);
   const link = (href: string) => withLangQuery(href, lang);
-  const onboardingHref = link("/app?tab=planning&offlineSetup=1");
+  const onboardingHref = link("/start");
   const openSetupHref = userId ? onboardingHref : link(`/sign-in?redirect_url=${encodeURIComponent(onboardingHref)}`);
 
   return (

@@ -1,7 +1,6 @@
 import Stripe from "stripe";
 import { NextResponse } from "next/server";
 import { clerkClient } from "@clerk/nextjs/server";
-import { logConversionEvent } from "@/lib/signalcore/conversion";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -140,18 +139,6 @@ export async function POST(req: Request) {
           utmContent: session.metadata.utm_content,
           utmTerm: session.metadata.utm_term,
         });
-        if (!transition.previousPaid) {
-          void logConversionEvent({
-            userId,
-            event: "paid_activated",
-            source: "stripe_webhook_checkout",
-            details: {
-              stripeEvent: event.type,
-              stripeSubscriptionId: session.subscription || null,
-              billingCycle: session.metadata.billingCycle || null,
-            },
-          });
-        }
         break;
       }
 
@@ -178,18 +165,6 @@ export async function POST(req: Request) {
           utmContent: sub.metadata.utm_content,
           utmTerm: sub.metadata.utm_term,
         });
-        if (nextPaid && !transition.previousPaid) {
-          void logConversionEvent({
-            userId,
-            event: "paid_activated",
-            source: "stripe_webhook_subscription",
-            details: {
-              stripeEvent: event.type,
-              stripeSubscriptionId: sub.id,
-              status: sub.status,
-            },
-          });
-        }
         break;
       }
 

@@ -36,7 +36,7 @@ export function resolveAppUrl(rawAppUrl?: string, fallbackAbsoluteUrl?: string) 
 export function resolvePortalReturnUrl(raw: unknown, rawAppUrl?: string, fallbackAbsoluteUrl?: string) {
   const appUrl = resolveAppUrl(rawAppUrl, fallbackAbsoluteUrl);
   const candidate = toCleanString(raw, 300);
-  if (!candidate) return `${appUrl}/app`;
+  if (!candidate) return `${appUrl}/start`;
 
   if (/^https?:\/\//i.test(candidate)) {
     try {
@@ -46,7 +46,7 @@ export function resolvePortalReturnUrl(raw: unknown, rawAppUrl?: string, fallbac
     } catch {
       // ignore and fallback
     }
-    return `${appUrl}/app`;
+    return `${appUrl}/start`;
   }
 
   const path = candidate.startsWith("/") ? candidate : `/${candidate}`;

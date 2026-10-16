@@ -6,7 +6,7 @@ export default function manifest(): MetadataRoute.Manifest {
     short_name: "Syntrake",
     description:
       "Goal-based investing with institutional discipline, explainable actions, and risk-aware execution.",
-    start_url: "/app",
+    start_url: "/",
     display: "standalone",
     background_color: "#ffffff",
     theme_color: "#0f172a",

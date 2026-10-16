@@ -1,7 +1,6 @@
 import Stripe from "stripe";
 import { NextResponse } from "next/server";
 import { auth, clerkClient } from "@clerk/nextjs/server";
-import { logConversionEvent } from "@/lib/signalcore/conversion";
 import { resolveAppUrl } from "@/lib/server/urlSafety";
 import { resolvePublicPricing } from "@/lib/pricing";
 import { selectStripeCheckoutPrice, type BillingCycle } from "@/lib/server/stripePriceCatalog";
@@ -133,7 +132,7 @@ export async function POST(req: Request) {
     })();
     const isCreateCheckoutSessionAlias = reqPath.endsWith("/api/stripe/create-checkout-session");
     const successUrl = isCreateCheckoutSessionAlias
-      ? new URL("/app?checkout=success", `${appUrl}/`).toString()
+      ? new URL("/start?checkout=success", `${appUrl}/`).toString()
       : new URL(`/pricing?success=1&session_id={CHECKOUT_SESSION_ID}`, `${appUrl}/`).toString();
     const cancelUrl = isCreateCheckoutSessionAlias
       ? new URL("/pricing", `${appUrl}/`).toString()
@@ -161,19 +160,6 @@ export async function POST(req: Request) {
       metadata,
       subscription_data: {
         metadata,
-      },
-    });
-
-    void logConversionEvent({
-      userId,
-      event: "checkout_session_created",
-      source: "stripe_checkout_api",
-      details: {
-        variant,
-        billingCycle,
-        priceTier: selected.tier,
-        priceSource: selected.reason,
-        stripeSessionId: session.id,
       },
     });
 

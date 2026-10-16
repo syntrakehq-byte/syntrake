@@ -1,7 +1,6 @@
 import Stripe from "stripe";
 import { NextResponse } from "next/server";
 import { auth, clerkClient } from "@clerk/nextjs/server";
-import { logConversionEvent } from "@/lib/signalcore/conversion";
 import { resolvePortalReturnUrl, toCleanString } from "@/lib/server/urlSafety";
 
 export const runtime = "nodejs";
@@ -85,13 +84,6 @@ export async function POST(req: Request) {
     const session = await stripe.billingPortal.sessions.create({
       customer: stripeCustomerId,
       return_url: resolvePortalReturnUrl(body?.returnUrl, process.env.NEXT_PUBLIC_APP_URL, req.url),
-    });
-
-    void logConversionEvent({
-      userId,
-      event: "portal_open",
-      source: "stripe_customer_portal",
-      details: { returnUrl: body?.returnUrl || "/app" },
     });
 
     if (!session.url) return NextResponse.json({ error: "Could not create portal session." }, { status: 500 });

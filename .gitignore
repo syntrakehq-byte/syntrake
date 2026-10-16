@@ -23,16 +23,7 @@ coverage/
 .qa-*/
 .next-dev.log
 artifacts/
-Data/historical/
-Data/historical-twelvedata/
-Data/historical-twelvedata-syntrake/
-Data/historical-twelvedata-universe/
-data/historical/
-data/historical-staging/
-data/historical-twelvedata/
-data/historical-twelvedata-syntrake/
-data/historical-twelvedata-universe/
-supabase/.temp/
+Data/
 qa_*.json
 qa_*.mjs
 qa_*.png

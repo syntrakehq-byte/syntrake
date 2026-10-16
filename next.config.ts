@@ -2,22 +2,6 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   distDir: process.env.NEXT_DIST_DIR || ".next",
-  outputFileTracingExcludes: {
-    "/*": [
-      "Data/**",
-      "data/**",
-      "artifacts/**",
-      ".cache/**",
-      ".codex-chrome-profile/**",
-      ".codex-chrome-profile-runtime/**",
-      ".next-*/**",
-      ".qa-*/**",
-      "undefined/**",
-      "*.log",
-      "qa_*",
-      "tmp_*",
-    ],
-  },
   turbopack: {
     root: process.cwd(),
   },
