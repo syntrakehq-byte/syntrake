@@ -24,7 +24,7 @@ export default clerkMiddleware((_auth, req) => {
     return NextResponse.redirect(canonicalUrl, 308);
   }
   return attachDetectedLanguageCookie(req, NextResponse.next());
-}, { frontendApiProxy: { enabled: true } });
+});
 
 export const config = {
   matcher: [
