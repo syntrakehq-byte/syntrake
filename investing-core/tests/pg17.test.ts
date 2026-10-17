@@ -12,8 +12,8 @@ test("PG17 integration is explicit and never silently mocked", async (t) => {
   const client = new pg.Client({ connectionString: url });
   await client.connect();
   try {
-    await client.query("do $ begin create role anon noinherit; exception when duplicate_object then null; end $;");
-    await client.query("do $ begin create role authenticated noinherit; exception when duplicate_object then null; end $;");
+    await client.query("create role anon noinherit");
+    await client.query("create role authenticated noinherit");
     await client.query("create schema if not exists auth");
     await client.query("create or replace function auth.jwt() returns jsonb language sql stable as $$ select coalesce(nullif(current_setting('request.jwt.claims', true), ''), '{}')::jsonb $$");
     const version = await client.query<{ version: string }>("select version() as version");
