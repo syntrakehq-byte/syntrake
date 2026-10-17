@@ -88,7 +88,7 @@ create table investing.ledger_entries (
   ledger_account_id uuid not null,
   direction text not null check (direction in ('debit', 'credit')),
   currency char(3) not null,
-  amount_minor numeric(38,0) not null check (amount_minor > 0),
+  amount_minor numeric not null check (amount_minor > 0 and amount_minor = trunc(amount_minor) and amount_minor < power(10::numeric, 38)),
   created_at timestamptz not null default now(),
   foreign key (transaction_id, investment_account_id)
     references investing.ledger_transactions(id,investment_account_id),

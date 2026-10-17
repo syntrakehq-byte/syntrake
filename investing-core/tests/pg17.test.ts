@@ -214,6 +214,26 @@ test("PostgreSQL 17 isolated ledger/ownership/integrity contract", async (t) => 
       assert.equal((await admin.query("select * from investing.ledger_integrity_issues()")).rowCount,0);
     });
 
+    await t.test("ledger refuses fractional or oversized minor units at SQL boundary", async () => {
+      await admin.query("begin");
+      try {
+        await reserve(admin,"clerk_user_a",A,"precision-denial-00001");
+        const tx=await header(admin,"clerk_user_a",A,"precision-denial-00001");
+        await assert.rejects(entry(admin,tx,A,CASH_A,"debit","1.5"),/check constraint/);
+      } finally {
+        await admin.query("rollback");
+      }
+
+      await admin.query("begin");
+      try {
+        await reserve(admin,"clerk_user_a",A,"overflow-denial-00001");
+        const tx=await header(admin,"clerk_user_a",A,"overflow-denial-00001");
+        await assert.rejects(entry(admin,tx,A,CASH_A,"debit",(10n ** 38n).toString()),/check constraint/);
+      } finally {
+        await admin.query("rollback");
+      }
+    });
+
     await t.test("server transaction: owner-only user-reported contribution, replay and conflicting keys", async () => {
       const pool = new Pool({ connectionString: DB_URL, max: 5 });
       const actorA = { userId: "clerk_user_a", sessionId: "synthetic_clerk_session_a" };
