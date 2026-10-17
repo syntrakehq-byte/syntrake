@@ -1,14 +1,20 @@
 import { z } from "zod";
 
-export const currencyCode = z.string().regex(/^[A-Z]{3}$/, "currency must be ISO-4217 uppercase");
-export const minorAmount = z.bigint().refine((value) => value >= 0n, "amount must be non-negative");
+/** Explicit supported subset of ISO 4217; no implied support for every A-Z code. */
+export const currencyCode = z.enum(["EUR", "USD", "GBP", "CHF", "JPY", "KWD"]);
+export type CurrencyCode = z.infer<typeof currencyCode>;
 
-export type Money = Readonly<{ currency: string; minor: bigint }>;
+export const currencyMinorDigits: Readonly<Record<CurrencyCode, 0 | 2 | 3>> = Object.freeze({
+  EUR: 2, USD: 2, GBP: 2, CHF: 2, JPY: 0, KWD: 3,
+});
+
+export const minorAmount = z.bigint().refine((value) => value >= 0n, "amount must be non-negative");
+export type Money = Readonly<{ currency: CurrencyCode; minor: bigint }>;
 
 export function money(currency: string, minor: bigint): Money {
   const parsed = currencyCode.parse(currency);
-  if (minor < 0n) throw new Error("amount must be non-negative");
-  return Object.freeze({ currency: parsed, minor });
+  const parsedMinor = minorAmount.parse(minor);
+  return Object.freeze({ currency: parsed, minor: parsedMinor });
 }
 
 export function addMoney(left: Money, right: Money): Money {
