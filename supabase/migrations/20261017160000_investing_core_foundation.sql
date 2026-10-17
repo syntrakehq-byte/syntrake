@@ -192,7 +192,11 @@ declare
   journal_status text;
   invalid_group_count bigint;
 begin
-  target_tx := case when TG_TABLE_NAME = 'ledger_transactions' then new.id else new.transaction_id end;
+  if TG_TABLE_NAME = 'ledger_transactions' then
+    target_tx := new.id;
+  else
+    target_tx := new.transaction_id;
+  end if;
   select t.status into journal_status from investing.ledger_transactions t where t.id = target_tx;
   if journal_status is distinct from 'posted' then
     raise exception 'journal % must be posted before commit', target_tx using errcode = '23514';
