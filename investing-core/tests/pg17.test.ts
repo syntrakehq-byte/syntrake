@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
-import { Client } from "pg";
+import { Client, Pool } from "pg";
+import { recordUserReportedContribution, ContributionBlocked } from "../server/recordUserReportedContribution";
 
 const DB_URL = process.env.INVESTING_PG17_URL;
 const A = "00000000-0000-4000-8000-000000000011";
@@ -211,6 +212,83 @@ test("PostgreSQL 17 isolated ledger/ownership/integrity contract", async (t) => 
         await admin.query("rollback");
       }
       assert.equal((await admin.query("select * from investing.ledger_integrity_issues()")).rowCount,0);
+    });
+
+    await t.test("server transaction: owner-only user-reported contribution, replay and conflicting keys", async () => {
+      const pool = new Pool({ connectionString: DB_URL, max: 5 });
+      const actorA = { userId: "clerk_user_a", sessionId: "synthetic_clerk_session_a" };
+      const actorB = { userId: "clerk_user_b", sessionId: "synthetic_clerk_session_b" };
+      const contribution = {
+        accountId: A,
+        idempotencyKey: "declared-cash-0000001",
+        currency: "EUR",
+        amountMinor: 123n,
+        externalReference: "fixture-bank-deposit-0001",
+      };
+      try {
+        const before = await admin.query<{n:number}>("select count(*)::int as n from investing.ledger_transactions where investment_account_id=$1", [A]);
+        const created = await recordUserReportedContribution(pool, actorA, contribution);
+        assert.equal(created.evidenceStatus, "USER_REPORTED");
+        assert.equal(created.amountMinor, "123");
+        assert.equal(created.externalReference, contribution.externalReference);
+        const replay = await recordUserReportedContribution(pool, actorA, contribution);
+        assert.deepEqual(replay, created);
+        const after = await admin.query<{n:number}>("select count(*)::int as n from investing.ledger_transactions where investment_account_id=$1", [A]);
+        assert.equal(after.rows[0].n, before.rows[0].n + 1);
+        const recorded = await admin.query<{provenance:{verifiedByBroker:boolean,kind:string};status:string}>("select provenance,status from investing.ledger_transactions where id=$1",[created.transactionId]);
+        assert.equal(recorded.rows[0].status,"posted");
+        assert.equal(recorded.rows[0].provenance.kind,"USER_REPORTED");
+        assert.equal(recorded.rows[0].provenance.verifiedByBroker,false);
+        await assert.rejects(
+          recordUserReportedContribution(pool, actorA, { ...contribution, amountMinor: 999n }),
+          (e: unknown) => e instanceof ContributionBlocked && e.code==="IDEMPOTENCY_CONFLICT",
+        );
+        await assert.rejects(
+          recordUserReportedContribution(pool, actorA, {...contribution, idempotencyKey:"declared-cash-0000002"}),
+          (e: unknown) => e instanceof ContributionBlocked && e.code==="EXTERNAL_REFERENCE_CONFLICT",
+        );
+        await assert.rejects(
+          recordUserReportedContribution(pool, actorB, { ...contribution, idempotencyKey:"unauthorized-b-00001" }),
+          (e: unknown) => e instanceof ContributionBlocked && e.code==="ACCOUNT_NOT_AUTHORIZED",
+        );
+        await assert.rejects(
+          recordUserReportedContribution(pool, actorA, { ...contribution, idempotencyKey:"missing-subledger-001",currency:"GBP", externalReference:"other-ref-001" }),
+          (e: unknown) => e instanceof ContributionBlocked && e.code==="ACCOUNT_NOT_READY",
+        );
+        await assert.rejects(
+          recordUserReportedContribution(pool, actorA, { ...contribution, idempotencyKey:"invalid-currency-001", currency:"ZZZ", externalReference:"other-ref-002" }),
+        );
+        assert.equal((await admin.query("select * from investing.ledger_integrity_issues()")).rowCount,0);
+      } finally {
+        await pool.end();
+      }
+    });
+
+    await t.test("server transaction concurrent same-key replay is exactly once", async () => {
+      const pool = new Pool({ connectionString: DB_URL, max: 5 });
+      const actor = { userId: "clerk_user_a", sessionId: "synthetic_clerk_session_a" };
+      const input = {
+        accountId: A,
+        idempotencyKey: "parallel-cash-0000001",
+        currency: "EUR",
+        amountMinor: 987n,
+        externalReference: "fixture-parallel-0001",
+      };
+      try {
+        const [a,b] = await Promise.all([
+          recordUserReportedContribution(pool, actor, input),
+          recordUserReportedContribution(pool, actor, input),
+        ]);
+        assert.equal(a.transactionId,b.transactionId);
+        const count = await admin.query<{n:number}>(
+          "select count(*)::int n from investing.ledger_transactions where investment_account_id=$1 and idempotency_user_id=$2 and idempotency_key=$3",
+          [A,actor.userId,input.idempotencyKey],
+        );
+        assert.equal(count.rows[0].n,1);
+        assert.equal((await admin.query("select * from investing.ledger_integrity_issues()")).rowCount,0);
+      } finally {
+        await pool.end();
+      }
     });
   } finally {
     await admin.end();

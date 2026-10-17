@@ -75,6 +75,12 @@ create table investing.ledger_transactions (
     references investing.operation_idempotency_keys(investment_account_id,user_id,key)
 );
 
+-- A user-reported external reference identifies one declared movement per
+-- account, even if a caller mistakenly retries with a different idempotency key.
+create unique index ledger_user_reported_external_ref_uniq
+on investing.ledger_transactions (investment_account_id, (provenance->>'externalReference'))
+where provenance->>'kind' = 'USER_REPORTED';
+
 create table investing.ledger_entries (
   id bigint generated always as identity primary key,
   transaction_id uuid not null,

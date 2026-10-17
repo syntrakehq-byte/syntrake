@@ -12,7 +12,7 @@ export const contributionSchema = z.object({
   accountId: accountIdSchema,
   idempotencyKey: z.string().min(16).max(128),
   currency: currencyCode,
-  amountMinor: z.bigint().positive(),
+  amountMinor: z.bigint().positive().refine((n) => n < (10n ** 38n), 'amount exceeds ledger numeric(38,0)'),
   externalReference: z.string().trim().min(1).max(180),
 });
 
