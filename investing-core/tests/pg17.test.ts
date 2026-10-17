@@ -104,6 +104,26 @@ test("PostgreSQL 17 isolated ledger/ownership/integrity contract", async (t) => 
       }
     });
 
+    await t.test("missing JWT subject and anon role cannot read Investing tables",async()=>{
+      await admin.query("set role anon");
+      try {
+        await assert.rejects(admin.query("select id from investing.investment_accounts"),/permission denied/);
+      } finally {
+        await admin.query("reset role");
+      }
+
+      await admin.query("set role authenticated");
+      try {
+        // No JWT at all: the policy MUST NOT infer a user from a query parameter.
+        assert.equal((await admin.query("select id from investing.investment_accounts")).rowCount,0);
+        await admin.query("select set_config('request.jwt.claims', $1, false)", [JSON.stringify({ role:"authenticated" })]);
+        assert.equal((await admin.query("select id from investing.investment_accounts")).rowCount,0);
+      } finally {
+        await admin.query("reset role");
+        await admin.query("reset request.jwt.claims");
+      }
+    });
+
     await t.test("one atomic posted journal, internal cash/clearing accounts, and reconciliation",async()=>{
       await admin.query("begin");
       await reserve(admin,"clerk_user_a",A,"successful-post-0001");

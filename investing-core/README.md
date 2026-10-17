@@ -12,3 +12,11 @@ This bounded context is independent from Trading, Research Lab and Billing. It i
 - Supabase service_role is capability, never user authorization. A future constrained privileged DB writer, real external auth validation and operational auditing must be separately gated.
 
 Outstanding BLOCKED gates: verified Clerk/Supabase deployment, authorized backend database configuration with least privilege and operational safeguards, real ledger reconciliation, broker adapter (Paper before Live), site build regression and vulnerability triage. No service in this slice may move real money.
+
+## Read-only Clerk → Supabase transport candidate
+
+- The server-only entry **loadOwnInvestingAccountsFromClerk** obtains `userId`, `sessionId`, and `getToken()` exclusively from Clerk's server-side `auth()` context. It has **no public route** in R0-A.
+- **readOwnInvestingAccounts** uses an auditable, narrowly scoped PostgREST GET for investment account summaries, setting `Accept-Profile: investing`, a **publishable** key and the session's bearer token. No dynamic user/account filter, privileged fallback, client-supplied JWT, cash balance, or trading authority.
+- Production callers MUST never construct the lower-level transport's session argument from client data. A valid-looking JWT is not verified by regex: verification is done by the Supabase gateway. The simulated transport tests CANNOT establish real Clerk/Supabase JWT signature validation.
+- Unit tests cover missing session/token, wrong hosts, secret keys, synthetic gateway 401/403, network errors, malformed responses and two isolated **synthetic** sessions. PostgreSQL 17 tests additionally exercise mocked RLS A/B, unauthorized anon, missing `sub` and read-only access.
+- The live tenant-isolation gate remains **BLOCKED** until the candidate migration is approved and deployed in a controlled manner, the `investing` schema is explicitly enabled in the Supabase REST API, and real signed Clerk tokens from two test identities are used for read-only, negative, and cross-tenant evidence. Neither provider activation alone nor an isolated DB fixture proves the live gate.
