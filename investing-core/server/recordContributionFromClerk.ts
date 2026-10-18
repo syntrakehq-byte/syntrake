@@ -1,5 +1,6 @@
 import { requireVerifiedClerkActor } from "./requireVerifiedClerkActor";
 import { parseUserReportedContributionJson } from "./contributionJsonContract";
+import { createRehearsalWriterPool } from "./privateWriterPool";
 import {
   recordUserReportedContribution,
   type ContributionWriterDB,
@@ -26,4 +27,30 @@ export async function recordUserReportedContributionFromClerk(
   // Validate untrusted JSON after Clerk verification, before opening SQL.
   const canonicalInput = parseUserReportedContributionJson(untrustedInput);
   return recordUserReportedContribution(serverDatabase, verifiedActor, canonicalInput);
+}
+
+/**
+ * Not a Next.js route. A future protected Node-only caller can use this
+ * rehearsal-only composition without accepting pool URLs, Clerk identity or
+ * database roles from a request. There is deliberately NO global pool.
+ *
+ * The database pool is not created until AFTER Clerk authentication and strict
+ * JSON validation succeed. Every invocation closes its own pool; a bounded
+ * lifecycle manager is required before enabling any HTTP endpoint.
+ *
+ * This path fails closed unless an operator has explicitly enabled a pinned
+ * rehearsal-only private PostgreSQL configuration and granted the exact SQL
+ * NOLOGIN capability to the dedicated private LOGIN.
+ */
+export async function recordUserReportedContributionInRehearsal(
+  untrustedInput: unknown,
+): Promise<DeclaredContributionResult> {
+  const verifiedActor = await requireVerifiedClerkActor();
+  const canonicalInput = parseUserReportedContributionJson(untrustedInput);
+  const privatePool = createRehearsalWriterPool();
+  try {
+    return await recordUserReportedContribution(privatePool, verifiedActor, canonicalInput);
+  } finally {
+    await privatePool.end();
+  }
 }
