@@ -44,8 +44,12 @@ function canonicalRequestHash(userId: string, input: {
 
 /**
  * Atomic ownership check, idempotency reservation, balanced journal, replay
- * result. Account row lock serializes competing writes on the same account.
- * Requires an internal, privately configured, privileged PostgreSQL pool.
+ * result. Transaction-scoped advisory lock serializes cooperating operations
+ * per account. A FOR SHARE lock stabilizes the account row against concurrent
+ * ownership updates without granting UPDATE on investment_accounts.
+ * Requires an internal, privately configured, narrowly privileged PG pool.
+ * This does NOT grant authority: server-verified Clerk actor + ownership
+ * checks remain mandatory; untrusted DB connections cannot invoke the writer.
  * This function is not currently exposed through an HTTP route.
  */
 export async function recordUserReportedContribution(
@@ -63,8 +67,16 @@ export async function recordUserReportedContribution(
     await client.query("begin");
     inTransaction = true;
 
+    // Hash collisions cause only unnecessary serialization, never cross-account
+    // authorization; advisory locks are NOT the basis of financial authority.
+    // Advisory locks serialize concurrent cooperative writers without table DML.
+    await client.query(
+      "select pg_advisory_xact_lock(hashtextextended('syntrake.investing.account:' || $1::text, 20261018))",
+      [input.accountId],
+    );
+
     const authorized = await client.query<{ id: string }>(
-      "select a.id from investing.investment_accounts a join investing.account_memberships m on m.investment_account_id=a.id where a.id=$1 and a.owner_user_id=$2 and m.user_id=$2 and m.role='owner' for update of a",
+      "select a.id from investing.investment_accounts a join investing.account_memberships m on m.investment_account_id=a.id where a.id=$1 and a.owner_user_id=$2 and m.user_id=$2 and m.role='owner' for share of a",
       [input.accountId, actor.userId],
     );
     if (authorized.rowCount !== 1) throw new ContributionBlocked("ACCOUNT_NOT_AUTHORIZED");
