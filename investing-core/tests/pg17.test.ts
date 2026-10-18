@@ -109,6 +109,11 @@ test("PostgreSQL 17 isolated ledger/ownership/integrity contract", async (t) => 
       await rejectedCommit(async () => {
         await admin.query("update investing.investment_accounts set owner_user_id='clerk_user_b' where id=$1",[A]);
       });
+      await rejectedCommit(async () => {
+        // Moving an owner's membership to another account as a viewer
+        // must still validate the account it was removed from.
+        await admin.query("update investing.account_memberships set investment_account_id=$1, role='viewer' where investment_account_id=$2 and user_id='clerk_user_a'",[B,A]);
+      });
 
       // Legitimate viewer membership remains permitted, but cannot become
       // a second owner. No tenant fixture rows persist after this rollback.
