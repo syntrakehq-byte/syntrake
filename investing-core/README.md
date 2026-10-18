@@ -49,9 +49,14 @@ Read the [integration acceptance matrix](./audits/r0a-writer-authority-contract.
 The `pg` package has now been promoted into production dependencies with a
 version-consistent lockfile. GitHub CI verifies `npm ci --omit=dev` and a
 successful Node `require('pg')`, as well as a lazy, fail-closed rehearsal-only
-private PostgreSQL pool configuration. The server-only
+private PostgreSQL pool configuration **pinned at compile time to the verified
+non-default branch `zkqgpejlkgootkvkebhd`** (not the production project),
+with a negative test using a production ref and matching production host. The server-only
 `recordUserReportedContributionInRehearsal()` now composes Clerk authentication,
 strict JSON input and the private pool without enabling a request handler.
+Standalone Node 20 tests can load the Clerk-bound server entry module
+without credentials or database connections; no signed Clerk session is
+executed by that smoke test.
 Global Next.js compilation still excludes `investing-core/**/*.ts`, so actual
 Next runtime bundling is **not proved**. There is no server-held constrained
 LOGIN, new remote writer-capability migration, REST writer endpoint or broker
