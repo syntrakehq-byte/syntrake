@@ -67,25 +67,13 @@ test("PostgreSQL 17 isolated ledger/ownership/integrity contract", async (t) => 
     const ownerGuardMigration=await readFile(new URL("../../supabase/migrations/20261018070000_investing_owner_membership_guard.sql",import.meta.url),"utf8");
     await admin.query(ownerGuardMigration);
 
-    // CI-only, NOLOGIN and NO BYPASSRLS. Not part of a deployable migration:
-    // these grants model the exact minimum capability needed by a future
-    // server-held writer. A verified Clerk actor remains external authority.
-    await admin.query("create role investing_test_writer noinherit nologin");
-    await admin.query("grant usage on schema investing to investing_test_writer");
-    await admin.query("grant select on investing.investment_accounts,investing.account_memberships,investing.ledger_accounts,investing.operation_idempotency_keys,investing.ledger_transactions,investing.ledger_entries to investing_test_writer");
-    await admin.query("grant insert on investing.operation_idempotency_keys,investing.ledger_transactions,investing.ledger_entries to investing_test_writer");
-    await admin.query("grant update(result) on investing.operation_idempotency_keys to investing_test_writer");
-    await admin.query("grant update(status) on investing.ledger_transactions to investing_test_writer");
-    await admin.query("grant usage on sequence investing.ledger_entries_id_seq to investing_test_writer");
-    for (const table of ["investment_accounts","account_memberships","ledger_accounts","operation_idempotency_keys","ledger_transactions","ledger_entries"]) {
-      await admin.query(`create policy fixture_writer_read_${table} on investing.${table} for select to investing_test_writer using (true)`);
-    }
-    for (const table of ["operation_idempotency_keys","ledger_transactions","ledger_entries"]) {
-      await admin.query(`create policy fixture_writer_insert_${table} on investing.${table} for insert to investing_test_writer with check (true)`);
-    }
-    for (const table of ["operation_idempotency_keys","ledger_transactions"]) {
-      await admin.query(`create policy fixture_writer_update_${table} on investing.${table} for update to investing_test_writer using (true) with check (true)`);
-    }
+    // Execute the real versioned least-privilege SQL capability contract.
+    // NOLOGIN and no connection/credentials are provisioned in this CI DB.
+    const writerCapabilityMigration=await readFile(
+      new URL("../../supabase/migrations/20261018074500_investing_contribution_writer_capability.sql",import.meta.url),
+      "utf8",
+    );
+    await admin.query(writerCapabilityMigration);
     const tables=await admin.query<{n:string}>("select count(*)::text n from pg_tables where schemaname='investing'");
     assert.equal(Number(tables.rows[0].n),9);
 
@@ -384,12 +372,12 @@ test("PostgreSQL 17 isolated ledger/ownership/integrity contract", async (t) => 
     });
 
     await t.test("NOLOGIN non-bypass restricted writer: atomic replay, cross-tenant denial, zero account UPDATE privilege", async () => {
-      const roles=await admin.query<{rolcanlogin:boolean;rolbypassrls:boolean}>("select rolcanlogin,rolbypassrls from pg_roles where rolname='investing_test_writer'");
+      const roles=await admin.query<{rolcanlogin:boolean;rolbypassrls:boolean}>("select rolcanlogin,rolbypassrls from pg_roles where rolname='investing_contribution_writer'");
       assert.equal(roles.rowCount,1);
       assert.equal(roles.rows[0].rolcanlogin,false);
       assert.equal(roles.rows[0].rolbypassrls,false);
       const acl=await admin.query<{can_update:boolean;can_delete:boolean;can_insert:boolean;can_read:boolean}>(
-        "select has_table_privilege('investing_test_writer','investing.investment_accounts','UPDATE') can_update,has_table_privilege('investing_test_writer','investing.investment_accounts','DELETE') can_delete,has_table_privilege('investing_test_writer','investing.investment_accounts','INSERT') can_insert,has_table_privilege('investing_test_writer','investing.investment_accounts','SELECT') can_read",
+        "select has_table_privilege('investing_contribution_writer','investing.investment_accounts','UPDATE') can_update,has_table_privilege('investing_contribution_writer','investing.investment_accounts','DELETE') can_delete,has_table_privilege('investing_contribution_writer','investing.investment_accounts','INSERT') can_insert,has_table_privilege('investing_contribution_writer','investing.investment_accounts','SELECT') can_read",
       );
       assert.equal(acl.rows[0].can_update,false);
       assert.equal(acl.rows[0].can_delete,false);
@@ -401,7 +389,7 @@ test("PostgreSQL 17 isolated ledger/ownership/integrity contract", async (t) => 
         async connect() {
           const client=await restrictedPool.connect();
           try {
-            await client.query("set role investing_test_writer");
+            await client.query("set role investing_contribution_writer");
             return client;
           } catch(error) {
             client.release(true);
@@ -429,8 +417,14 @@ test("PostgreSQL 17 isolated ledger/ownership/integrity contract", async (t) => 
           recordUserReportedContribution(restrictedDB,actorB,{...input,idempotencyKey:"restricted-denial-b-00001",externalReference:"restricted-denial-b-0001"}),
           (error:unknown)=>error instanceof ContributionBlocked && error.code==="ACCOUNT_NOT_AUTHORIZED",
         );
-        await admin.query("set role investing_test_writer");
+        await admin.query("set role investing_contribution_writer");
         try {
+          const unscoped=await admin.query<{id:string}>("select id from investing.investment_accounts");
+          assert.equal(unscoped.rowCount,0, "no actor GUC must see zero financial accounts");
+          await assert.rejects(
+            admin.query("insert into investing.operation_idempotency_keys(investment_account_id,user_id,key,request_hash) values ($1,'clerk_user_a','missing-actor-context-0001',$2)",[A,HASH_A]),
+            /row-level security policy/,
+          );
           await assert.rejects(
             admin.query("update investing.investment_accounts set name='forbidden' where id=$1",[A]),
             /permission denied/,
