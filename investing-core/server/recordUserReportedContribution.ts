@@ -97,7 +97,7 @@ export async function recordUserReportedContribution(
     }
 
     const ledgers = await client.query<{ id: string; code: string }>(
-      "select id,code from investing.ledger_accounts where investment_account_id=$1 and currency=$2 and code in ('cash','external_clearing') for share",
+      "select id,code from investing.ledger_accounts where investment_account_id=$1 and currency=$2 and code in ('cash','external_clearing')",
       [input.accountId, input.currency],
     );
     const cash = ledgers.rows.find((r) => r.code === "cash")?.id;
