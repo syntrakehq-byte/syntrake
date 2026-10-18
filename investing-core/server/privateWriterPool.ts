@@ -16,6 +16,12 @@ export class InvestingWriterConfigurationBlocked extends Error {
 
 type WriterEnvironment = Readonly<Record<string, string | undefined>>;
 
+// Deliberately compiled and pinned to the VERIFIED nonproduction branch.
+// The production/main Supabase project ref is NEVER a permitted writer
+// target, even when an operator accidentally sets MODE=rehearsal.
+// Changes require exact SHA review and new isolated gate.
+export const APPROVED_R0A_REHEARSAL_REF = "zkqgpejlkgootkvkebhd" as const;
+
 export function parseRehearsalWriterPoolConfig(env: WriterEnvironment): PoolConfig {
   // A server-side flag is NOT user financial authorization. This gate only
   // prevents accidental activation by a non-rehearsal deployment.
@@ -24,7 +30,7 @@ export function parseRehearsalWriterPoolConfig(env: WriterEnvironment): PoolConf
   }
   const projectRef = env.INVESTING_WRITER_PROJECT_REF;
   const rawUrl = env.INVESTING_WRITER_DATABASE_URL;
-  if (!projectRef || !/^[a-z]{20}$/.test(projectRef) || !rawUrl) {
+  if (projectRef !== APPROVED_R0A_REHEARSAL_REF || !rawUrl) {
     throw new InvestingWriterConfigurationBlocked();
   }
 
