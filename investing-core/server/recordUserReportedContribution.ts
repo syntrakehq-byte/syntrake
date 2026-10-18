@@ -83,6 +83,13 @@ export async function recordUserReportedContribution(
       throw new ContributionBlocked("WRITER_NOT_CONFIGURED");
     }
 
+    // Fail closed under blocked/slow SQL. All settings are transaction-local;
+    // lock waits longer than 1.5s and statements longer than 5s abort the
+    // operation, causing the catch block to ROLLBACK and release the client.
+    await client.query(
+      "select set_config('lock_timeout','1500ms',true), set_config('statement_timeout','5000ms',true), set_config('idle_in_transaction_session_timeout','7000ms',true)",
+    );
+
     // Transaction-local RLS scope. Actor MUST be server-derived from Clerk.
     // The DB GUC is not a substitute for identity verification: holders of
     // privileged SQL credentials can set it, hence NOLOGIN role isolation.
