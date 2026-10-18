@@ -105,3 +105,32 @@ jobs:
             process.exitCode = 1;
           }
           NODE
+
+  nonbreaking-remediation:
+    name: Isolated compatible lockfile remediation rehearsal
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Try compatible lockfile-only repairs (temporary runner, no push)
+        shell: bash
+        run: |
+          npm audit fix --package-lock-only --ignore-scripts || true
+          git diff --stat -- package-lock.json
+          if git diff --quiet -- package-lock.json; then
+            echo "No compatible lockfile-only dependency updates were proposed."
+          else
+            echo "Compatible lockfile updates were proposed in this ephemeral runner only."
+          fi
+      - run: npm ci
+      - run: npm run test:investing
+      - run: npx tsc -p tsconfig.investing.json --noEmit
+      - name: Re-evaluate runtime critical/high after temporary compatible updates
+        run: npm audit --omit=dev --audit-level=high
