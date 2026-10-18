@@ -115,11 +115,16 @@ not an R0-A financial isolation gate.
    least-privilege PostgreSQL role, strict DML/RLS permissions, retries,
    failure recovery, reconciliation, timeouts and account ownership
    lifecycle are not yet proved in deployed runtime.
-2. **Role concurrency:** the current writer's `SELECT ... FOR UPDATE`
-   needs UPDATE privilege on the account relation. Any alternative
-   locking design must preserve serialization, denial of unauthorized
-   accounts, and tenant A/B isolation *without giving a financial
-   writer blanket account-update authority*.
+2. **Role concurrency:** the restricted PG17 candidate now uses
+   a transaction-scoped account advisory lock for writer operations,
+   with a matching deferred guard on privileged owner/membership commits.
+   Synthetic PostgreSQL17 CI proves authorization, replay, same-account
+   concurrency and owner-revocation conflict under a NOLOGIN, non-BYPASSRLS
+   fixture role that has **no UPDATE privilege** on `investment_accounts`.
+   This is not proof of a provisioned production writer, deployed DB grants,
+   remote RLS correctness after the corrective migration, or complete
+   broker reconciliation. Verify the actual role and concurrency semantics
+   independently in a separately authorized nonproduction rehearsal.
 3. **PR #4 forward-only owner guard:** isolated PG17 test passed. It
    has **not** been applied to the remote rehearsal branch. New
    two-tenant HTTP tests are not to be represented as proof of this
