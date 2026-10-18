@@ -19,7 +19,7 @@ export type DeclaredContributionResult = Readonly<{
 export type ContributionWriterDB = Pick<Pool, "connect">;
 
 export class ContributionBlocked extends Error {
-  constructor(public readonly code: "ACCOUNT_NOT_AUTHORIZED" | "ACCOUNT_NOT_READY" | "IDEMPOTENCY_CONFLICT" | "EXTERNAL_REFERENCE_CONFLICT" | "INCOMPLETE_RECORD") {
+  constructor(public readonly code: "ACCOUNT_NOT_AUTHORIZED" | "ACCOUNT_NOT_READY" | "IDEMPOTENCY_CONFLICT" | "EXTERNAL_REFERENCE_CONFLICT" | "INCOMPLETE_RECORD" | "WRITER_NOT_CONFIGURED") {
     super(code);
     this.name = "ContributionBlocked";
   }
@@ -67,6 +67,21 @@ export async function recordUserReportedContribution(
   try {
     await client.query("begin");
     inTransaction = true;
+
+    // Assume only the SQL capability explicitly granted to the private DB
+    // login. SET LOCAL is transaction-scoped and automatically resets on
+    // COMMIT/ROLLBACK; a misconfigured login fails closed before any DML.
+    try {
+      await client.query("set local role investing_contribution_writer");
+    } catch {
+      throw new ContributionBlocked("WRITER_NOT_CONFIGURED");
+    }
+    const selectedRole=await client.query<{ role: string }>(
+      "select current_user as role",
+    );
+    if (selectedRole.rows[0]?.role !== "investing_contribution_writer") {
+      throw new ContributionBlocked("WRITER_NOT_CONFIGURED");
+    }
 
     // Transaction-local RLS scope. Actor MUST be server-derived from Clerk.
     // The DB GUC is not a substitute for identity verification: holders of
