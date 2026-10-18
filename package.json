@@ -11,7 +11,7 @@
     "verify:ci": "npm run lint && npx tsc --noEmit && npm run build",
     "audit": "npm audit",
     "audit:prod": "npm audit --omit=dev",
-    "test:investing": "tsx --test investing-core/tests/invariants.test.ts investing-core/tests/supabaseReadTransport.test.ts",
+    "test:investing": "tsx --test investing-core/tests/invariants.test.ts investing-core/tests/supabaseReadTransport.test.ts investing-core/tests/serverEntry.test.ts",
     "test:investing:pg17": "tsx --test investing-core/tests/pg17.test.ts"
   },
   "overrides": {
