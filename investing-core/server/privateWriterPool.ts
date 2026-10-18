@@ -57,7 +57,7 @@ export function parseRehearsalWriterPoolConfig(env: WriterEnvironment): PoolConf
     parsed.hostname === `db.${projectRef}.supabase.co` &&
     parsed.port === "5432" &&
     login === "investing_writer_runtime" &&
-    env.INVESTING_WRITER_CONNECTION_MODE !== "session-pooler"
+    (env.INVESTING_WRITER_CONNECTION_MODE === undefined || env.INVESTING_WRITER_CONNECTION_MODE === "direct")
   );
   const sessionPooler = (
     env.INVESTING_WRITER_CONNECTION_MODE === "session-pooler" &&
