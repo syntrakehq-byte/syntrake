@@ -41,33 +41,36 @@ export function parseRehearsalWriterPoolConfig(env: WriterEnvironment): PoolConf
     throw new InvestingWriterConfigurationBlocked();
   }
 
-  // Only a single explicitly pinned Supabase rehearsal direct DB host.
-  // Pooler URLs, arbitrary host overrides, SSL downgrades and URL query
-  // parameters are not accepted by this R0-A rehearsal adapter.
+  // Direct Supabase PG is IPv6-only unless a paid IPv4 add-on is enabled.
+  // Vercel's IPv4-only outbound traffic requires Supavisor. In the
+  // session-mode pooler, SET LOCAL ROLE and transaction-local RLS settings
+  // remain on the same backend for the duration of the transaction.
+  //
+  // Never allow a generic pooler hostname from an untrusted request, role,
+  // region, project ref, or arbitrary credentials. Both modes pin project
+  // identity and the dedicated LOGIN. Region is independently verified as
+  // eu-west-3 and the AWS gateway index is intentionally limited to 0 or 1.
+  // The exact host still requires comparison to the Supabase Connect panel
+  // before any Preview env is armed.
+  const login = decodeURIComponent(parsed.username);
+  const direct = (
+    parsed.hostname === `db.${projectRef}.supabase.co` &&
+    parsed.port === "5432" &&
+    login === "investing_writer_runtime" &&
+    env.INVESTING_WRITER_CONNECTION_MODE !== "session-pooler"
+  );
+  const sessionPooler = (
+    env.INVESTING_WRITER_CONNECTION_MODE === "session-pooler" &&
+    /^aws-[01]-eu-west-3\\.pooler\\.supabase\\.com$/.test(parsed.hostname) &&
+    parsed.port === "5432" &&
+    login === `investing_writer_runtime.${projectRef}`
+  );
   if (
-    parsed.protocol !== "postgresql:" &&
-    parsed.protocol !== "postgres:"
-  ) {
-    throw new InvestingWriterConfigurationBlocked();
-  }
-  if (
-    parsed.hostname !== `db.${projectRef}.supabase.co` ||
-    parsed.port !== "5432" ||
+    (!direct && !sessionPooler) ||
     parsed.pathname !== "/postgres" ||
     parsed.search !== "" ||
     parsed.hash !== "" ||
-    !parsed.username ||
     !parsed.password
-  ) {
-    throw new InvestingWriterConfigurationBlocked();
-  }
-
-  // Distinct private LOGIN, NOT postgres, service_role or NOLOGIN capability.
-  const login = decodeURIComponent(parsed.username);
-  if (
-    !/^investing_[a-z0-9_]{3,60}$/.test(login) ||
-    login === "investing_contribution_writer" ||
-    login.startsWith("investing_ci_")
   ) {
     throw new InvestingWriterConfigurationBlocked();
   }
