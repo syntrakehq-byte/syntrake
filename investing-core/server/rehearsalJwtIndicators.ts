@@ -1,5 +1,4 @@
 import { Buffer } from "node:buffer";
-import { INVESTING_R0A_AB_PREVIEW_REF } from "./rehearsalReadGate";
 
 /**
  * Rehearsal-only inspection of the JWT CLAIMS sent by Clerk's server auth().
@@ -43,6 +42,3 @@ export function inspectRehearsalJwtClaims(token: string | null): RehearsalJwtInd
   }
 }
 
-// A stable compile-time reference keeps the preview-only helper coupled
-// to the existing gate without relying on caller-provided issuer URLs.
-export const PREVIEW_REF_FOR_DIAGNOSTIC = INVESTING_R0A_AB_PREVIEW_REF;
