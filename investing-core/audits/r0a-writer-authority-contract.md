@@ -17,7 +17,38 @@ Any SQL caller holding a privileged role can potentially set `syntrake.actor_use
 
 A dedicated *login role* with a credential stored solely in an approved server-side secret manager, minimal membership of `investing_contribution_writer`, and a pinned connection to the correct rehearsal database still requires a separate auditable provisioning slice. A NOLOGIN role cannot connect directly. Do not reuse `postgres`, `service_role`, a general-purpose Supabase key, or a cross-tenant pool from another bounded context.
 
-The `pg` package currently resides in development dependencies, not runtime dependencies. Before exposing a Node.js runtime route, promote it in a tested, lockfile-pinned follow-up candidate and validate the build/runtime bundling. **Do not enable HTTP writes now.**
+The `pg` package currently resides in development dependencies, not runtime dependencies. The Next.js site build excludes `investing-core/**/*.ts` from its global TypeScript project and has no live writer route, so the successful site build does not prove production server bundling of this module. Before exposing a Node.js runtime route, promote `pg` to a tested, lockfile-pinned runtime dependency and validate server-only bundling and secret injection. **Do not enable HTTP writes now.**
+
+## Prepared tests (isolated CI, not remote)
+
+- Versioned RLS role DDL is executed by an isolated PostgreSQL 17 instance, with separate synthetic LOGIN identities: one permitted to `SET LOCAL ROLE investing_contribution_writer`, another denied. This proves genuine privilege isolation rather than impersonation from the superuser role.
+- Tests create declared contributions and verify strict per-account authorization, no direct user/account mutations, replay/idempotency, ownership-transfer contention, lock timeout and full rollback.
+- A single real `pg.Pool` connection with `max: 1` is reused in the order **A success → B attempting A denied → B success → B replay**. After every operation, the idle connection has its original login role and no residual transaction-local actor. There is no financial row from the rejected attempt.
+- `contributionJsonContract.ts` parses future request JSON only. `amountMinor` MUST be a canonical positive base-10 **string** to avoid JavaScript precision loss (no JSON numbers, floats, leading zeros, or exponents), and it rejects all unknown identity/authority fields. This strict parser is invoked **after** server Clerk auth and **before** SQL by the existing server-only wrapper. It cannot prove JWT validity.
+- Rejected invalid input is checked to fail before `database.connect()`, preventing SQL side effects.
+
+## Real-identity A/B integration test plan — NOT YET EXECUTED
+
+Execute only after explicitly authorized rehearsal writer DDL and separately approved private LOGIN and server-side connection configuration, with real signed Clerk sessions (never copy JWTs, keys, or passwords into Git logs). Each HTTP response/status listed is a **future acceptance expectation**, not a currently implemented endpoint:
+
+| Request/session | Required future result | Independent database proof |
+| --- | --- | --- |
+| No signed Clerk session | 401 / denied | No SQL role assumption or new financial row |
+| A session, account B | 403 or nondisclosing 404 | No cross-account journal/key/entry |
+| B session, account A | 403 or nondisclosing 404 | Same denial in opposite direction |
+| A, valid JSON decimal minor-units | Explicit USER_REPORTED only | One exactly balanced posted internal journal and provenance `verifiedByBroker=false` |
+| Same A actor/key/same payload replay | Same transaction ID/result | Exactly one idempotency key and journal |
+| Same A actor/key/different payload | 409 conflict | Original financial rows unmodified |
+| Invalid or numeric JSON amount | 400 validation rejection | Connection-free denial before SQL |
+| Lock wait exceeds permitted timeout | Bounded 409/503 error | Whole transaction rolled back, zero partial rows |
+| Login lacks exact writer role | 503 fail closed | No privileged insert, no fallback to postgres/service_role |
+| Rotate from A to B on one server pool | No session crossover | No retained actor/role after commit or rollback |
+
+No test may publish a broker-confirmed or investable balance from USER_REPORTED. The tests must record exact Git SHA, migration versions, branch ref, timestamps, masked identity references and redacted evidence, with no user monetary data; test-account fixtures must be explicitly identified and cleaned. Production remains completely out of scope.
+
+## Independent audit finding: SQL actor setting is not authoritative
+
+`syntrake.actor_user_id` is a transaction-local PostgreSQL setting. A holder of login credentials sufficient to assume `investing_contribution_writer` could set it to another user's ID and operate across tenants. The RLS policies are **defense in depth** but not proof of the actual Clerk user. Real authority requires a server-secret boundary, verified Clerk session, nonexported pool and strict no-cross-tenant service isolation. Never provision this credential into client or general server contexts; a deployed role without verified runtime linkage remains **BLOCKED**.
 
 ## Proof requirements before acceptance
 
