@@ -52,6 +52,10 @@ export function parseRehearsalWriterPoolConfig(env: WriterEnvironment): PoolConf
   // eu-west-3 and the AWS gateway index is intentionally limited to 0 or 1.
   // The exact host still requires comparison to the Supabase Connect panel
   // before any Preview env is armed.
+  if (parsed.protocol !== "postgresql:" && parsed.protocol !== "postgres:") {
+    throw new InvestingWriterConfigurationBlocked();
+  }
+
   const login = decodeURIComponent(parsed.username);
   const direct = (
     parsed.hostname === `db.${projectRef}.supabase.co` &&
@@ -61,7 +65,7 @@ export function parseRehearsalWriterPoolConfig(env: WriterEnvironment): PoolConf
   );
   const sessionPooler = (
     env.INVESTING_WRITER_CONNECTION_MODE === "session-pooler" &&
-    /^aws-[01]-eu-west-3\\.pooler\\.supabase\\.com$/.test(parsed.hostname) &&
+    /^aws-[01]-eu-west-3[.]pooler[.]supabase[.]com$/.test(parsed.hostname) &&
     parsed.port === "5432" &&
     login === `investing_writer_runtime.${projectRef}`
   );
