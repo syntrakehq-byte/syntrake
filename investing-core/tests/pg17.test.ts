@@ -64,14 +64,68 @@ test("PostgreSQL 17 isolated ledger/ownership/integrity contract", async (t) => 
     assert.match(version.rows[0].v, /^17\./);
     const migration=await readFile(new URL("../../supabase/migrations/20261017160000_investing_core_foundation.sql",import.meta.url),"utf8");
     await admin.query(migration);
+    const ownerGuardMigration=await readFile(new URL("../../supabase/migrations/20261018070000_investing_owner_membership_guard.sql",import.meta.url),"utf8");
+    await admin.query(ownerGuardMigration);
     const tables=await admin.query<{n:string}>("select count(*)::text n from pg_tables where schemaname='investing'");
     assert.equal(Number(tables.rows[0].n),9);
 
-    await admin.query("insert into investing.identity_accounts(user_id) values ('clerk_user_a'),('clerk_user_b')");
-    await admin.query("insert into investing.investment_accounts(id,owner_user_id,name,base_currency) values ($1,'clerk_user_a','A','EUR'),($2,'clerk_user_b','B','EUR')",[A,B]);
-    await admin.query("insert into investing.portfolios(investment_account_id,name) values ($1,'Portfolio A'),($2,'Portfolio B')",[A,B]);
-    await admin.query("insert into investing.account_memberships(investment_account_id,user_id,role) values ($1,'clerk_user_a','owner'),($2,'clerk_user_b','owner')",[A,B]);
-    await admin.query("insert into investing.ledger_accounts(id,investment_account_id,code,currency) values ($1,$5,'cash','EUR'),($2,$5,'external_clearing','EUR'),($3,$6,'cash','EUR'),($4,$6,'external_clearing','EUR')",[CASH_A,CLEAR_A,CASH_B,CLEAR_B,A,B]);
+    await admin.query("begin");
+    try {
+      await admin.query("insert into investing.identity_accounts(user_id) values ('clerk_user_a'),('clerk_user_b')");
+      await admin.query("insert into investing.investment_accounts(id,owner_user_id,name,base_currency) values ($1,'clerk_user_a','A','EUR'),($2,'clerk_user_b','B','EUR')",[A,B]);
+      await admin.query("insert into investing.portfolios(investment_account_id,name) values ($1,'Portfolio A'),($2,'Portfolio B')",[A,B]);
+      await admin.query("insert into investing.account_memberships(investment_account_id,user_id,role) values ($1,'clerk_user_a','owner'),($2,'clerk_user_b','owner')",[A,B]);
+      await admin.query("insert into investing.ledger_accounts(id,investment_account_id,code,currency) values ($1,$5,'cash','EUR'),($2,$5,'external_clearing','EUR'),($3,$6,'cash','EUR'),($4,$6,'external_clearing','EUR')",[CASH_A,CLEAR_A,CASH_B,CLEAR_B,A,B]);
+      await admin.query("commit");
+    } catch(error) {
+      await admin.query("rollback");
+      throw error;
+    }
+
+    await t.test("deferred canonical owner/member integrity rejects inconsistent privileged writes", async () => {
+      async function rejectedCommit(work: () => Promise<unknown>): Promise<void> {
+        await admin.query("begin");
+        try {
+          await work();
+          await assert.rejects(admin.query("commit"),/canonical owner membership invariant violated/);
+        } finally {
+          await admin.query("rollback");
+        }
+      }
+
+      const strayAccount="00000000-0000-4000-8000-000000000099";
+      await rejectedCommit(async () => {
+        await admin.query("insert into investing.investment_accounts(id,owner_user_id,name,base_currency) values ($1,'clerk_user_a','Orphan','EUR')",[strayAccount]);
+      });
+      await rejectedCommit(async () => {
+        await admin.query("insert into investing.account_memberships(investment_account_id,user_id,role) values ($1,'clerk_user_b','owner')",[A]);
+      });
+      await rejectedCommit(async () => {
+        await admin.query("update investing.account_memberships set role='viewer' where investment_account_id=$1 and user_id='clerk_user_a'",[A]);
+      });
+      await rejectedCommit(async () => {
+        await admin.query("delete from investing.account_memberships where investment_account_id=$1 and user_id='clerk_user_a'",[A]);
+      });
+      await rejectedCommit(async () => {
+        await admin.query("update investing.investment_accounts set owner_user_id='clerk_user_b' where id=$1",[A]);
+      });
+
+      // Legitimate viewer membership remains permitted, but cannot become
+      // a second owner. No tenant fixture rows persist after this rollback.
+      await admin.query("begin");
+      try {
+        await admin.query("insert into investing.account_memberships(investment_account_id,user_id,role) values ($1,'clerk_user_b','viewer')",[A]);
+        await admin.query("set constraints all immediate");
+      } finally {
+        await admin.query("rollback");
+      }
+      const accounts=await admin.query<{n:number}>("select count(*)::int n from investing.investment_accounts");
+      const members=await admin.query<{n:number}>("select count(*)::int n from investing.account_memberships");
+      assert.equal(accounts.rows[0].n,2);
+      assert.equal(members.rows[0].n,2);
+      const privileges=await admin.query<{allowed:boolean}>("select has_function_privilege('authenticated','investing.assert_canonical_owner_membership()','EXECUTE') as allowed");
+      assert.equal(privileges.rows[0].allowed,false);
+    });
 
     await t.test("verified PG17, currency metadata and rejection of unsupported ISO-looking codes",async()=>{
       const currencies=await admin.query("select code,minor_digits from investing.supported_currencies order by code");
