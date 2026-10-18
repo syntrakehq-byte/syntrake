@@ -46,7 +46,13 @@ before acquiring SQL, and lock contention aborts without partial journals.
 These are real PG17 CI fixtures, **not** Clerk-provider end-to-end tests.
 Read the [integration acceptance matrix](./audits/r0a-writer-authority-contract.md).
 
-The `pg` runtime dependency and Node build linkage remain unproven: today
-`pg` is a development dependency and global Next.js compilation excludes
-`investing-core/**/*.ts`. There is no server-held constrained LOGIN,
-production DB migration, REST writer endpoint or broker confirmation.
+The `pg` package has now been promoted into production dependencies with a
+version-consistent lockfile. GitHub CI verifies `npm ci --omit=dev` and a
+successful Node `require('pg')`, as well as a lazy, fail-closed rehearsal-only
+private PostgreSQL pool configuration. The server-only
+`recordUserReportedContributionInRehearsal()` now composes Clerk authentication,
+strict JSON input and the private pool without enabling a request handler.
+Global Next.js compilation still excludes `investing-core/**/*.ts`, so actual
+Next runtime bundling is **not proved**. There is no server-held constrained
+LOGIN, new remote writer-capability migration, REST writer endpoint or broker
+confirmation.
