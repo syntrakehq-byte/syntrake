@@ -452,6 +452,46 @@ test("PostgreSQL 17 isolated ledger/ownership/integrity contract", async (t) => 
       }
     });
 
+    await t.test("owner guard coordinates membership revocation with writer advisory lock", async () => {
+      const ownerWriter=new Client({connectionString:DB_URL});
+      const membershipAdmin=new Client({connectionString:DB_URL});
+      await Promise.all([ownerWriter.connect(),membershipAdmin.connect()]);
+      try {
+        await ownerWriter.query("begin");
+        await ownerWriter.query(
+          "select pg_advisory_xact_lock(hashtextextended('syntrake.investing.account:' || $1::text, 20261018))",
+          [A],
+        );
+        await membershipAdmin.query("begin");
+        await membershipAdmin.query(
+          "update investing.account_memberships set role='viewer' where investment_account_id=$1 and user_id='clerk_user_a'",
+          [A],
+        );
+        const unavailable=await membershipAdmin.query<{locked:boolean}>(
+          "select pg_try_advisory_xact_lock(hashtextextended('syntrake.investing.account:' || $1::text, 20261018)) as locked",
+          [A],
+        );
+        assert.equal(unavailable.rows[0].locked,false);
+        // The deferred guard must wait for this transaction-scoped writer
+        // lock and then reject the invalid owner state at COMMIT.
+        const denied=assert.rejects(
+          membershipAdmin.query("commit"),
+          /canonical owner membership invariant violated/,
+        );
+        await ownerWriter.query("commit");
+        await denied;
+        await membershipAdmin.query("rollback");
+        const stillValid=await admin.query<{role:string}>(
+          "select role from investing.account_memberships where investment_account_id=$1 and user_id='clerk_user_a'",
+          [A],
+        );
+        assert.equal(stillValid.rows[0].role,"owner");
+      } finally {
+        await Promise.allSettled([ownerWriter.query("rollback"),membershipAdmin.query("rollback")]);
+        await Promise.allSettled([ownerWriter.end(),membershipAdmin.end()]);
+      }
+    });
+
     await t.test("server transaction concurrent same-key replay is exactly once", async () => {
       const pool = new Pool({ connectionString: DB_URL, max: 5 });
       const actor = { userId: "clerk_user_a", sessionId: "synthetic_clerk_session_a" };
