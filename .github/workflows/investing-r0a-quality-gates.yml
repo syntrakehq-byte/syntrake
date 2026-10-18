@@ -123,8 +123,10 @@ jobs:
         shell: bash
         run: |
           npm audit fix --package-lock-only --ignore-scripts || true
-          git diff --stat -- package-lock.json
-          if git diff --quiet -- package-lock.json; then
+          npm pkg set devDependencies.postcss=8.5.30 overrides.postcss=8.5.30
+          npm install --package-lock-only --ignore-scripts
+          git diff --stat -- package.json package-lock.json
+          if git diff --quiet -- package.json package-lock.json; then
             echo "No compatible lockfile-only dependency updates were proposed."
           else
             echo "Compatible lockfile updates were proposed in this ephemeral runner only."
