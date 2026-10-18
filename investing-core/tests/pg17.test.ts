@@ -494,6 +494,42 @@ test("PostgreSQL 17 isolated ledger/ownership/integrity contract", async (t) => 
       assert.equal(absent.rows[0].n,0);
     });
 
+    await t.test("writer lock contention times out and rolls back without financial rows", async () => {
+      const lockHolder=new Client({connectionString:writerUrl.toString()});
+      const waitingPool=new Pool({connectionString:writerUrl.toString(),max:1});
+      const idemKey="timeout-rollback-00001";
+      await lockHolder.connect();
+      try {
+        await lockHolder.query("begin");
+        await lockHolder.query("set local role investing_contribution_writer");
+        await lockHolder.query(
+          "select pg_advisory_xact_lock(hashtextextended('syntrake.investing.account:' || $1::text, 20261018))",
+          [A],
+        );
+        await assert.rejects(
+          recordUserReportedContribution(waitingPool,
+            {userId:"clerk_user_a",sessionId:"synthetic_timeout_session"},
+            {accountId:A,idempotencyKey:idemKey,currency:"EUR",amountMinor:42n,
+              externalReference:"timeout-rollback-ref-0001"},
+          ),
+          (error:unknown)=>typeof error==="object" && error!==null
+            && "code" in error && error.code==="55P03",
+        );
+      } finally {
+        await lockHolder.query("rollback");
+        await Promise.allSettled([lockHolder.end(),waitingPool.end()]);
+      }
+      const observed=await admin.query<{n:number}>(
+        "select count(*)::int n from investing.operation_idempotency_keys where investment_account_id=$1 and key=$2",
+        [A,idemKey],
+      );
+      assert.equal(observed.rows[0].n,0);
+      assert.equal((await admin.query(
+        "select count(*)::int n from investing.ledger_transactions where investment_account_id=$1 and idempotency_key=$2",
+        [A,idemKey],
+      )).rows[0].n,0);
+    });
+
     await t.test("owner guard coordinates membership revocation with writer advisory lock", async () => {
       const ownerWriter=new Client({connectionString:DB_URL});
       const membershipAdmin=new Client({connectionString:DB_URL});
