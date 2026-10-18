@@ -2,16 +2,16 @@
 
 This bounded context is independent from Trading, Research Lab and Billing. It is not a functioning investing product or broker integration.
 
-- Clerk is the identity provider. An authorized Supabase integration must verify Clerk third-party JWTs before PostgreSQL RLS reads auth.jwt()->>'sub'. The real external Supabase/Clerk integration has NOT been verified. The isolated server actor adapter calls Clerk auth() but is NOT exposed on an HTTP route.
+- Clerk is the identity provider. Supabase JWT verification must precede PostgreSQL RLS reads of `auth.jwt()->>'sub'`. A real tenant A/B Clerk→REST/RLS rehearsal PASS is **audit-reported** from the user's earlier independent-audit summary; redacted source transcript/signature details were not attached and therefore are not independently attested in this repo. The isolated server actor adapter calls Clerk `auth()` but is NOT exposed on an HTTP write route.
 - Accounting uses exact bigint minor units and an explicit supported subset of ISO 4217 currencies, including JPY (0 minor digits) and KWD (3 minor digits). The SQL currency registry must match the domain registry. Three uppercase letters alone do not validate ISO currencies.
 - Double-entry journals post between different internal ledger accounts within one investment account. Every currency independently balances. Journal state moves from draft to posted before COMMIT and cannot subsequently be changed. Corrections require compensating journals.
-- The server-side recordUserReportedContribution service checks ownership and the owner membership in PostgreSQL, serializes writes using a locked investment-account row, hashes normalized input, rejects idempotency-key conflicts and prevents duplicate external references. Reservation, journal and replay result are committed atomically. The service takes a private server DB pool; it has NO runtime wiring or public HTTP route.
+- The server-side `recordUserReportedContribution` checks ownership and the owner membership in PostgreSQL, serializes cooperating operations with a transaction-scoped advisory account lock, hashes normalized input, rejects idempotency-key conflicts and prevents duplicate external references. The forward-only owner-guard candidate uses the **same advisory key at COMMIT** to coordinate owner/membership changes. Reservation, journal and replay result commit atomically. PG17 CI proves a NOLOGIN/NO-BYPASSRLS restricted role can execute and replay a contribution **without UPDATE permission on investment_accounts**; this CI-only role/policy fixture is NOT a provisioned operational writer. There is NO runtime wiring or public HTTP write route.
 - USER_REPORTED is a NON-VERIFIED financial declaration. Its journal is internal bookkeeping only; it is NOT proof of a deposit, broker-confirmed cash, performance, investable balance or available trading authority. Future investment/execution logic MUST NOT promote this evidence to broker-confirmed truth without independent reconciliation.
 - PostgreSQL tests use synthetic fixtures, admin setup, and simulation of JWT claims at database level, NOT genuine signed Clerk JWT verification.
-- The migration is candidate-only and has not been applied remotely. Rewriting a migration after applying it to any persistent environment is forbidden.
+- The original foundation SQL was applied to the nonproduction Supabase `investing-r0a-rehearsal` branch under a separately named migration (`20261017191352_investing_core_r0a_foundation_f0a9c5c5`), with exact SQL contents matched to the GitHub foundation file at `f0a9c5c5...`. It was **not** applied to the main Supabase project. The PR #4 owner-guard migration `20261018070000_investing_owner_membership_guard.sql` is **CI-only**, not remotely applied. Rewriting either previously applied migration or silently reconciling version drift is prohibited.
 - Supabase service_role is capability, never user authorization. A future constrained privileged DB writer, real external auth validation and operational auditing must be separately gated.
 
-Outstanding BLOCKED gates: verified Clerk/Supabase deployment, authorized backend database configuration with least privilege and operational safeguards, real ledger reconciliation, broker adapter (Paper before Live), site build regression and vulnerability triage. No service in this slice may move real money.
+Outstanding BLOCKED gates: independently retain the redacted genuine Clerk/Supabase A/B rehearsal transcript if available, provision/test a strictly authorized server-held PostgreSQL writer role and its RLS/DDL in an explicitly authorized nonproduction rehearsal, operational auth-to-write/timeout/retry/failure/reconciliation, and dev/build-tool vulnerability assessment. Site build, PG17 tests and npm **runtime** audit passed on the current candidate ancestry; those successes do NOT authorize merge, production migrations, live execution or real deposits. No service in this slice may move real money.
 
 ## Read-only Clerk → Supabase transport candidate
 
@@ -19,4 +19,15 @@ Outstanding BLOCKED gates: verified Clerk/Supabase deployment, authorized backen
 - **readOwnInvestingAccounts** uses an auditable, narrowly scoped PostgREST GET for investment account summaries, setting `Accept-Profile: investing`, a **publishable** key and the session's bearer token. No dynamic user/account filter, privileged fallback, client-supplied JWT, cash balance, or trading authority.
 - Production callers MUST never construct the lower-level transport's session argument from client data. A valid-looking JWT is not verified by regex: verification is done by the Supabase gateway. The simulated transport tests CANNOT establish real Clerk/Supabase JWT signature validation.
 - Unit tests cover missing session/token, wrong hosts, secret keys, synthetic gateway 401/403, network errors, malformed responses and two isolated **synthetic** sessions. PostgreSQL 17 tests additionally exercise mocked RLS A/B, unauthorized anon, missing `sub` and read-only access.
-- The live tenant-isolation gate remains **BLOCKED** until the candidate migration is approved and deployed in a controlled manner, the `investing` schema is explicitly enabled in the Supabase REST API, and real signed Clerk tokens from two test identities are used for read-only, negative, and cross-tenant evidence. Neither provider activation alone nor an isolated DB fixture proves the live gate.
+- The rehearsal JWT/REST/RLS A/B test is **AUDIT-REPORTED PASS** for the foundation schema, including negative cross-tenant checks. Its original signed-token assertions were not recovered here. This evidence does not demonstrate the newer owner-guard schema, production rollout, or authorized financial writes. The exact test environment and actor-to-tenant authority remain essential.
+
+## Supabase Advisor disposition (rehearsal, 2026-10-18)
+
+See [the scoped audit evidence](./audits/r0a-rehearsal-20261018.md).
+The private `operation_idempotency_keys` table has FORCE RLS,
+**no public policies**, and no anonymous/authenticated grants. This is
+intentional deny-by-default, not a reason to add an externally callable
+policy. Seven RLS-initplan warnings persist despite existing
+`(SELECT auth.jwt()->>'sub')` wrappers. Seven FK index-coverage warnings
+are performance questions, not proof of a correctness or auth defect;
+benchmark with real workload evidence before adding speculative indexes.
