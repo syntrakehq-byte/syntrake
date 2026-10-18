@@ -74,3 +74,36 @@ writer path and associated adverse-case tests are independently proved.
 eventually merged; its production safety depends on its fail-closed
 configuration gate. Production deployment of this candidate is
 not approved.
+
+## Temporary claim diagnostic (same PR, pending CI and preview deployment)
+
+`GET /api/investing/rehearsal/claim-check` is active **only** when the same
+exact gated Preview configuration as `auth-check` holds. It derives its
+token via server-side Clerk `auth().getToken()`; no query, JSON, user ID,
+token, API key or account is accepted from the request. Unsigned or
+malformed input does not grant access. With no verified Clerk session it
+returns HTTP 401; with missing token HTTP 503. When a session is present
+it returns exactly:
+
+```json
+{"issuerMatchesPreview":true,"roleIsAuthenticated":true}
+```
+
+The two fields are **boolean indicators of decoded token claims only**.
+They do not verify JWT signatures and may never be used for authorization
+or RLS. Real authority remains Clerk server authentication plus the
+Supabase signature/issuer validation and PostgreSQL RLS. The diagnostic
+never returns the token, subject, session, email, account, password or
+secret, nor logs the claims. No response caching.
+
+After verification, remove this temporary endpoint and re-audit the diff.
+Any A/B isolation or financial-write gate remains BLOCKED until proven
+using the real authenticated user sessions and independent Supabase logs.
+
+Observed before this change on preview (18 Oct 2026): `READ_UNAVAILABLE`,
+PostgREST 42501, and PostgreSQL "permission denied for schema investing".
+The Preview Clerk integration points at the correct development issuer,
+and the Clerk dashboard shows the managed `role=authenticated` claim,
+but that does **not** prove the emitted current session token includes
+it. The diagnostic is intended only to distinguish missing/stale role
+claim from later authorization errors.
