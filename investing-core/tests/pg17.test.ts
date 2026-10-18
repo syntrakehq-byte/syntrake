@@ -494,6 +494,102 @@ test("PostgreSQL 17 isolated ledger/ownership/integrity contract", async (t) => 
       assert.equal(absent.rows[0].n,0);
     });
 
+    await t.test("single reused login connection never leaks SQL role or RLS actor across A/B transactions", async () => {
+      // A single physical PG session is reused intentionally, including after
+      // a denial. The previous Clerk actor and SET LOCAL ROLE must never
+      // survive COMMIT/ROLLBACK on that pooled session.
+      const pool=new Pool({connectionString:writerUrl.toString(),max:1});
+      const actorA={userId:"clerk_user_a",sessionId:"synthetic_reuse_a"};
+      const actorB={userId:"clerk_user_b",sessionId:"synthetic_reuse_b"};
+      const declarationA={
+        accountId:A,idempotencyKey:"reuse-pool-a-00000001",
+        currency:"EUR",amountMinor:123n,externalReference:"reuse-pool-a-ref-0001",
+      };
+      const declarationB={
+        accountId:B,idempotencyKey:"reuse-pool-b-00000001",
+        currency:"EUR",amountMinor:456n,externalReference:"reuse-pool-b-ref-0001",
+      };
+      async function assertUnscopedPool() {
+        const lease=await pool.connect();
+        try {
+          const q=await lease.query<{role:string;actor:string|null}>(
+            "select current_user as role, nullif(current_setting('syntrake.actor_user_id',true),'') as actor",
+          );
+          assert.equal(q.rows[0]?.role,"investing_ci_writer_login");
+          assert.equal(q.rows[0]?.actor,null);
+          await assert.rejects(
+            lease.query("select id from investing.investment_accounts"),
+            /permission denied/,
+          );
+        } finally {
+          lease.release();
+        }
+      }
+      try {
+        const first=await recordUserReportedContribution(pool,actorA,declarationA);
+        assert.equal(first.evidenceStatus,"USER_REPORTED");
+        await assertUnscopedPool();
+
+        // Any client-supplied identity fields must be ignored, not treated
+        // as proof that B may write to account A.
+        await assert.rejects(
+          recordUserReportedContribution(pool,actorB,{
+            ...declarationA,
+            idempotencyKey:"reuse-pool-spoof-00001",
+            externalReference:"reuse-pool-spoof-ref-0001",
+            userId:actorA.userId,
+            sessionId:actorA.sessionId,
+            actor:actorA,
+          }),
+          (e:unknown)=>e instanceof ContributionBlocked && e.code==="ACCOUNT_NOT_AUTHORIZED",
+        );
+        await assertUnscopedPool();
+
+        const second=await recordUserReportedContribution(pool,actorB,declarationB);
+        assert.equal(second.evidenceStatus,"USER_REPORTED");
+        await assertUnscopedPool();
+        const replay=await recordUserReportedContribution(pool,actorB,declarationB);
+        assert.deepEqual(replay,second);
+        await assertUnscopedPool();
+
+        const own=await admin.query<{investment_account_id:string,n:number}>(
+          "select investment_account_id,count(*)::int n from investing.ledger_transactions where id = any($1::uuid[]) group by investment_account_id",
+          [[first.transactionId,second.transactionId]],
+        );
+        assert.deepEqual(
+          own.rows.map(r=>[r.investment_account_id,r.n]).sort((a,b)=>String(a[0]).localeCompare(String(b[0]))),
+          [[A,1],[B,1]],
+        );
+        const spoof=await admin.query<{n:number}>(
+          "select count(*)::int n from investing.operation_idempotency_keys where key='reuse-pool-spoof-00001'",
+        );
+        assert.equal(spoof.rows[0].n,0);
+        assert.equal((await admin.query("select * from investing.ledger_integrity_issues()")).rowCount,0);
+      } finally {
+        await pool.end();
+      }
+    });
+
+    await t.test("invalid declaration fails before database access and creates no journal", async () => {
+      const unreachable={
+        connect:async ():Promise<never>=>{throw new Error("DATABASE_MUST_NOT_BE_ACCESSED");},
+      };
+      const actor={userId:"clerk_user_a",sessionId:"synthetic_invalid_input"};
+      const bad={
+        accountId:A,idempotencyKey:"invalid-form-00000001",
+        currency:"EUR",amountMinor:"100",
+        externalReference:"invalid-form-ref-0001",
+      };
+      await assert.rejects(
+        recordUserReportedContribution(unreachable,actor,bad),
+        (e:unknown)=>e instanceof Error && e.message!=="DATABASE_MUST_NOT_BE_ACCESSED",
+      );
+      await assert.rejects(
+        recordUserReportedContribution(unreachable,actor,{...bad,amountMinor:-1n}),
+        (e:unknown)=>e instanceof Error && e.message!=="DATABASE_MUST_NOT_BE_ACCESSED",
+      );
+    });
+
     await t.test("writer lock contention times out and rolls back without financial rows", async () => {
       const lockHolder=new Client({connectionString:writerUrl.toString()});
       const waitingPool=new Pool({connectionString:writerUrl.toString(),max:1});
