@@ -27,11 +27,18 @@ The entire route is 404 unless **all** conditions pass:
 1. `VERCEL_ENV=preview` and exact branch
    `candidate/investing-r0a-writer-e2e-preview-20261018`.
 2. Preview-only `INVESTING_R0A_WRITER_HTTP_MODE=rehearsal-armed`.
-3. Existing writer's private `INVESTING_WRITER_MODE=rehearsal`,
-   `INVESTING_WRITER_PROJECT_REF=zkqgpejlkgootkvkebhd` and
-   `INVESTING_WRITER_DATABASE_URL` point exclusively to
-   `db.zkqgpejlkgootkvkebhd.supabase.co:5432/postgres`,
-   login `investing_writer_runtime`, verified TLS.
+3. Existing writer's private `INVESTING_WRITER_MODE=rehearsal` and
+   `INVESTING_WRITER_PROJECT_REF=zkqgpejlkgootkvkebhd`. With
+   `INVESTING_WRITER_CONNECTION_MODE=session-pooler`, the private
+   `INVESTING_WRITER_DATABASE_URL` uses only an independently verified
+   `aws-0-eu-west-3.pooler.supabase.com:5432` or
+   `aws-1-eu-west-3.pooler.supabase.com:5432` **session-mode** host,
+   username `investing_writer_runtime.zkqgpejlkgootkvkebhd` and verified TLS.
+   The exact host and username must be copied from the Preview's Supabase
+   **Connect** panel; neither gateway index is presumed correct. Direct
+   `db.zkqgpejlkgootkvkebhd.supabase.co:5432` with username
+   `investing_writer_runtime` remains available only if the deployment has
+   supported IPv6 or a separately approved IPv4 ingress add-on.
 4. The application uses **Development Clerk keys** (`pk_test_` and `sk_test_`).
 5. Request host equals the exact Vercel deployment host (`VERCEL_URL`),
    HTTPS, same-origin `Origin`, JSON content type, no query string.
@@ -72,8 +79,8 @@ A fixed-amount request C->A must return 403 and produce zero new journals.
 - Reconcile four subledger rows and zero journaling rows; independently
   verify all owner/currency/role constraints before enabling the HTTP route.
 - The PostgreSQL login password is known only to the operator. Configure
-  `INVESTING_WRITER_DATABASE_URL` as an encrypted **branch-scoped Preview**
-  Vercel environment variable, never in chat, GitHub, CI logs, public envs,
+  `INVESTING_WRITER_DATABASE_URL` and `INVESTING_WRITER_CONNECTION_MODE`
+  as encrypted **branch-scoped Preview** Vercel environment variables, never in chat, GitHub, CI logs, public envs,
   or general Preview or production settings.
 - Enforce Vercel Deployment Protection.
 - Arm the HTTP route **only** after a reviewed Preview candidate deployment
@@ -101,3 +108,16 @@ A fixed-amount request C->A must return 403 and produce zero new journals.
 
 Until these steps are complete the writer end-to-end and global R0-A gates
 are **BLOCKED**. CI fixtures are **not** production/external proof.
+
+## Network gate — Vercel IPv4
+
+Supabase's default direct database host is IPv6-only, and Vercel does not
+support outbound IPv6. Therefore the direct host from the earlier writer
+adapter is **not assumed usable** in Vercel. The candidate now supports
+only the IPv4 Supavisor **session** mode on port 5432 with a dedicated login
+qualified by the preview project ref. Transaction mode (6543), arbitrary
+regions, other users, and arbitrary poolers are rejected. An actual Supabase
+Connect-panel screenshot / independent connection proof is required before
+configuring secrets or arming this path. Do not purchase IPv4 ingress or
+weaken TLS settings as a shortcut. Pooler support is pending actual login,
+SET LOCAL ROLE, transaction consistency and reconciliation proof.
