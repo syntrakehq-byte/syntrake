@@ -1,4 +1,5 @@
 import { requireVerifiedClerkActor } from "./requireVerifiedClerkActor";
+import { parseUserReportedContributionJson } from "./contributionJsonContract";
 import {
   recordUserReportedContribution,
   type ContributionWriterDB,
@@ -22,5 +23,7 @@ export async function recordUserReportedContributionFromClerk(
   untrustedInput: unknown,
 ): Promise<DeclaredContributionResult> {
   const verifiedActor = await requireVerifiedClerkActor();
-  return recordUserReportedContribution(serverDatabase, verifiedActor, untrustedInput);
+  // Validate untrusted JSON after Clerk verification, before opening SQL.
+  const canonicalInput = parseUserReportedContributionJson(untrustedInput);
+  return recordUserReportedContribution(serverDatabase, verifiedActor, canonicalInput);
 }
