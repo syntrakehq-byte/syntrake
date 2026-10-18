@@ -136,3 +136,9 @@ jobs:
       - run: npx tsc -p tsconfig.investing.json --noEmit
       - name: Re-evaluate runtime critical/high after temporary compatible updates
         run: npm audit --omit=dev --audit-level=high
+      - name: Export tested manifest changes for independent review (no secrets)
+        shell: bash
+        run: |
+          echo SYNTRAKE_DEP_DIFF_BEGIN
+          git diff --no-ext-diff -- package.json package-lock.json
+          echo SYNTRAKE_DEP_DIFF_END
