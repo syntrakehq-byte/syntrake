@@ -34,6 +34,15 @@ begin
   end if;
 
   foreach target_account in array account_ids loop
+    -- Coordinate with the server-only contribution writer. Both use exactly
+    -- the same transaction-scoped key before checking financial authority.
+    -- This prevents an owner/membership COMMIT from overtaking a writer that
+    -- has already established its verified-actor authorization, without
+    -- granting UPDATE on the investment_accounts table to that writer.
+    perform pg_catalog.pg_advisory_xact_lock(
+      pg_catalog.hashtextextended('syntrake.investing.account:' || target_account::text, 20261018)
+    );
+
     -- Serialize competing account ownership/membership transitions. This
     -- guard runs deferred so provisioning must be one atomic transaction.
     select a.owner_user_id into canonical_owner
