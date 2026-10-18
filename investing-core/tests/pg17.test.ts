@@ -66,6 +66,26 @@ test("PostgreSQL 17 isolated ledger/ownership/integrity contract", async (t) => 
     await admin.query(migration);
     const ownerGuardMigration=await readFile(new URL("../../supabase/migrations/20261018070000_investing_owner_membership_guard.sql",import.meta.url),"utf8");
     await admin.query(ownerGuardMigration);
+
+    // CI-only, NOLOGIN and NO BYPASSRLS. Not part of a deployable migration:
+    // these grants model the exact minimum capability needed by a future
+    // server-held writer. A verified Clerk actor remains external authority.
+    await admin.query("create role investing_test_writer noinherit nologin");
+    await admin.query("grant usage on schema investing to investing_test_writer");
+    await admin.query("grant select on investing.investment_accounts,investing.account_memberships,investing.ledger_accounts,investing.operation_idempotency_keys,investing.ledger_transactions,investing.ledger_entries to investing_test_writer");
+    await admin.query("grant insert on investing.operation_idempotency_keys,investing.ledger_transactions,investing.ledger_entries to investing_test_writer");
+    await admin.query("grant update(result) on investing.operation_idempotency_keys to investing_test_writer");
+    await admin.query("grant update(status) on investing.ledger_transactions to investing_test_writer");
+    await admin.query("grant usage on sequence investing.ledger_entries_id_seq to investing_test_writer");
+    for (const table of ["investment_accounts","account_memberships","ledger_accounts","operation_idempotency_keys","ledger_transactions","ledger_entries"]) {
+      await admin.query(`create policy fixture_writer_read_${table} on investing.${table} for select to investing_test_writer using (true)`);
+    }
+    for (const table of ["operation_idempotency_keys","ledger_transactions","ledger_entries"]) {
+      await admin.query(`create policy fixture_writer_insert_${table} on investing.${table} for insert to investing_test_writer with check (true)`);
+    }
+    for (const table of ["operation_idempotency_keys","ledger_transactions"]) {
+      await admin.query(`create policy fixture_writer_update_${table} on investing.${table} for update to investing_test_writer using (true) with check (true)`);
+    }
     const tables=await admin.query<{n:string}>("select count(*)::text n from pg_tables where schemaname='investing'");
     assert.equal(Number(tables.rows[0].n),9);
 
@@ -360,6 +380,75 @@ test("PostgreSQL 17 isolated ledger/ownership/integrity contract", async (t) => 
         assert.equal((await admin.query("select * from investing.ledger_integrity_issues()")).rowCount,0);
       } finally {
         await pool.end();
+      }
+    });
+
+    await t.test("NOLOGIN non-bypass restricted writer: atomic replay, cross-tenant denial, zero account UPDATE privilege", async () => {
+      const roles=await admin.query<{rolcanlogin:boolean;rolbypassrls:boolean}>("select rolcanlogin,rolbypassrls from pg_roles where rolname='investing_test_writer'");
+      assert.equal(roles.rowCount,1);
+      assert.equal(roles.rows[0].rolcanlogin,false);
+      assert.equal(roles.rows[0].rolbypassrls,false);
+      const acl=await admin.query<{can_update:boolean;can_delete:boolean;can_insert:boolean;can_read:boolean}>(
+        "select has_table_privilege('investing_test_writer','investing.investment_accounts','UPDATE') can_update,has_table_privilege('investing_test_writer','investing.investment_accounts','DELETE') can_delete,has_table_privilege('investing_test_writer','investing.investment_accounts','INSERT') can_insert,has_table_privilege('investing_test_writer','investing.investment_accounts','SELECT') can_read",
+      );
+      assert.equal(acl.rows[0].can_update,false);
+      assert.equal(acl.rows[0].can_delete,false);
+      assert.equal(acl.rows[0].can_insert,false);
+      assert.equal(acl.rows[0].can_read,true);
+
+      const restrictedPool=new Pool({connectionString:DB_URL,max:5});
+      const restrictedDB={
+        async connect() {
+          const client=await restrictedPool.connect();
+          try {
+            await client.query("set role investing_test_writer");
+            return client;
+          } catch(error) {
+            client.release(true);
+            throw error;
+          }
+        },
+      };
+      const input={
+        accountId:A,
+        idempotencyKey:"restricted-actor-key-00001",
+        currency:"EUR",
+        amountMinor:200n,
+        externalReference:"restricted-user-reported-0001",
+      };
+      const actorA={userId:"clerk_user_a",sessionId:"synthetic_test_restricted_a"};
+      const actorB={userId:"clerk_user_b",sessionId:"synthetic_test_restricted_b"};
+      try {
+        const [first,replay]=await Promise.all([
+          recordUserReportedContribution(restrictedDB,actorA,input),
+          recordUserReportedContribution(restrictedDB,actorA,input),
+        ]);
+        assert.equal(first.transactionId,replay.transactionId);
+        assert.equal(first.evidenceStatus,"USER_REPORTED");
+        await assert.rejects(
+          recordUserReportedContribution(restrictedDB,actorB,{...input,idempotencyKey:"restricted-denial-b-00001",externalReference:"restricted-denial-b-0001"}),
+          (error:unknown)=>error instanceof ContributionBlocked && error.code==="ACCOUNT_NOT_AUTHORIZED",
+        );
+        await admin.query("set role investing_test_writer");
+        try {
+          await assert.rejects(
+            admin.query("update investing.investment_accounts set name='forbidden' where id=$1",[A]),
+            /permission denied/,
+          );
+          await assert.rejects(
+            admin.query("delete from investing.ledger_entries"),
+            /permission denied/,
+          );
+        } finally {
+          await admin.query("reset role");
+        }
+        const count=await admin.query<{n:number}>(
+          "select count(*)::int n from investing.ledger_transactions where investment_account_id=$1 and idempotency_key=$2",[A,input.idempotencyKey],
+        );
+        assert.equal(count.rows[0].n,1);
+        assert.equal((await admin.query("select * from investing.ledger_integrity_issues()")).rowCount,0);
+      } finally {
+        await restrictedPool.end();
       }
     });
 
