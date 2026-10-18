@@ -446,6 +446,61 @@ test("PostgreSQL 17 isolated ledger/ownership/integrity contract", async (t) => 
       }
     });
 
+    await t.test("writer role: no authority without explicit role membership, no cross-tenant SQL access", async () => {
+      await admin.query("create role investing_writer_denied nologin noinherit nobypassrls");
+      const deniedPool=new Pool({connectionString:DB_URL,max:1});
+      const deniedDB={
+        async connect() {
+          const client=await deniedPool.connect();
+          try {
+            await client.query("set role investing_writer_denied");
+            return client;
+          } catch(error) {
+            client.release(true);
+            throw error;
+          }
+        },
+      };
+      const actor={userId:"clerk_user_a",sessionId:"synthetic_denied_session"};
+      const input={
+        accountId:A,
+        idempotencyKey:"role-assumption-denied-001",
+        currency:"EUR",
+        amountMinor:1n,
+        externalReference:"role-assumption-denied-ref",
+      };
+      try {
+        await assert.rejects(
+          recordUserReportedContribution(deniedDB,actor,input),
+          (e:unknown)=>e instanceof ContributionBlocked && e.code==="WRITER_NOT_CONFIGURED",
+        );
+      } finally {
+        await deniedPool.end();
+      }
+
+      await admin.query("set role investing_contribution_writer");
+      try {
+        await admin.query("begin");
+        await admin.query("select set_config('syntrake.actor_user_id','clerk_user_a',true)");
+        const owned=await admin.query<{id:string}>("select id from investing.investment_accounts order by id");
+        assert.deepEqual(owned.rows.map(r=>r.id),[A]);
+        const otherAccount=await admin.query<{id:string}>("select id from investing.investment_accounts where id=$1",[B]);
+        assert.equal(otherAccount.rowCount,0);
+        await assert.rejects(
+          admin.query("insert into investing.operation_idempotency_keys(investment_account_id,user_id,key,request_hash) values ($1,'clerk_user_a','deny-other-tenant-000001',$2)",[B,HASH_A]),
+          /row-level security policy/,
+        );
+        await admin.query("rollback");
+      } finally {
+        await admin.query("rollback");
+        await admin.query("reset role");
+      }
+      const absent=await admin.query<{n:number}>(
+        "select count(*)::int n from investing.operation_idempotency_keys where investment_account_id=$1 and key='deny-other-tenant-000001'",[B],
+      );
+      assert.equal(absent.rows[0].n,0);
+    });
+
     await t.test("owner guard coordinates membership revocation with writer advisory lock", async () => {
       const ownerWriter=new Client({connectionString:DB_URL});
       const membershipAdmin=new Client({connectionString:DB_URL});
