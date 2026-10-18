@@ -23,9 +23,18 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npx tsc --noEmit
+      - name: Verify build-only public Clerk configuration
+        env:
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ vars.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+        run: |
+          if [ -z "$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" ]; then
+            echo "::error::Set GitHub Actions repository variable NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY to the Clerk test publishable key; never commit a private/secret key."
+            exit 1
+          fi
       - run: npm run build
         env:
           NEXT_TELEMETRY_DISABLED: "1"
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ vars.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
 
   dependency-security:
     name: npm full and production dependency audit
@@ -88,6 +97,8 @@ jobs:
           ];
           appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary.join('\n') + '\n');
           console.log('All:', JSON.stringify(all.counts), 'Runtime:', JSON.stringify(prod.counts));
+          console.log('Runtime findings (name/severity/direct/fix):', JSON.stringify(prod.entries));
+          console.log('All critical/high package findings:', JSON.stringify(all.entries.filter(e => e.severity === 'critical' || e.severity === 'high')));
           const blocked = (prod.counts.critical || 0) > 0 || (prod.counts.high || 0) > 0 || (all.counts.critical || 0) > 0;
           if (blocked) {
             console.error('R0-A BLOCKED: untriaged critical severity or high/critical runtime dependency findings');
