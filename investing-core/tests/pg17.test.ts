@@ -75,6 +75,59 @@ test("PostgreSQL 17 isolated ledger/ownership/integrity contract", async (t) => 
       "utf8",
     );
     await admin.query(writerCapabilityMigration);
+
+    // Execute exactly the versioned rehearsal-only runtime LOGIN candidate in
+    // ISOLATED PG17 CI. Not deployed to any remotely linked Supabase branch.
+    const rehearsalLoginMigration = await readFile(
+      new URL("../../supabase/rehearsal/migrations/20261018112500_investing_writer_runtime_login.sql", import.meta.url),
+      "utf8",
+    );
+    await admin.query(rehearsalLoginMigration);
+    await t.test("rehearsal LOGIN starts passwordless, cannot inherit writer authority, may explicitly SET ROLE", async () => {
+      const roles = await admin.query<{
+        rolcanlogin: boolean; rolinherit: boolean; rolbypassrls: boolean;
+        rolsuper: boolean; rolcreatedb: boolean; rolcreaterole: boolean;
+        rolreplication: boolean; rolconnlimit: number; no_password: boolean;
+      }>(
+        "select r.rolcanlogin,r.rolinherit,r.rolbypassrls,r.rolsuper,r.rolcreatedb," +
+        "r.rolcreaterole,r.rolreplication,r.rolconnlimit," +
+        "(a.rolpassword is null) as no_password from pg_roles r " +
+        "join pg_authid a on a.oid=r.oid where r.rolname='investing_writer_runtime'",
+      );
+      assert.equal(roles.rowCount, 1);
+      assert.deepEqual(roles.rows[0], {
+        rolcanlogin: true, rolinherit: false, rolbypassrls: false,
+        rolsuper: false, rolcreatedb: false, rolcreaterole: false,
+        rolreplication: false, rolconnlimit: 2, no_password: true,
+      });
+
+      const membership = await admin.query<{
+        admin_option:boolean;inherit_option:boolean;set_option:boolean;
+      }>(
+        "select am.admin_option,am.inherit_option,am.set_option " +
+        "from pg_auth_members am join pg_roles parent on parent.oid=am.roleid " +
+        "join pg_roles child on child.oid=am.member " +
+        "where parent.rolname='investing_contribution_writer' " +
+        "and child.rolname='investing_writer_runtime'",
+      );
+      assert.equal(membership.rowCount, 1);
+      assert.deepEqual(membership.rows[0], {
+        admin_option: false, inherit_option: false, set_option: true,
+      });
+
+      const privileges = await admin.query<{
+        can_set:boolean;can_inherit:boolean;schema_usage:boolean;ledger_insert:boolean;
+      }>(
+        "select pg_has_role('investing_writer_runtime','investing_contribution_writer','SET') as can_set," +
+        "pg_has_role('investing_writer_runtime','investing_contribution_writer','USAGE') as can_inherit," +
+        "has_schema_privilege('investing_writer_runtime','investing','USAGE') as schema_usage," +
+        "has_table_privilege('investing_writer_runtime','investing.ledger_transactions','INSERT') as ledger_insert",
+      );
+      assert.deepEqual(privileges.rows[0], {
+        can_set: true, can_inherit: false, schema_usage: false, ledger_insert: false,
+      });
+    });
+
     // Real PostgreSQL login identities for permission tests. The CI-only
     // passwords are random per run, never logged, never remotely provisioned.
     // A superuser-owned connection CANNOT prove SET ROLE authorization.
