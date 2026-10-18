@@ -68,6 +68,14 @@ export async function recordUserReportedContribution(
     await client.query("begin");
     inTransaction = true;
 
+    // Transaction-local RLS scope. Actor MUST be server-derived from Clerk.
+    // The DB GUC is not a substitute for identity verification: holders of
+    // privileged SQL credentials can set it, hence NOLOGIN role isolation.
+    await client.query(
+      "select set_config('syntrake.actor_user_id', $1, true)",
+      [actor.userId],
+    );
+
     // Hash collisions cause only unnecessary serialization, never cross-account
     // authorization; advisory locks are NOT the basis of financial authority.
     // Advisory locks serialize concurrent cooperative writers without table DML.
