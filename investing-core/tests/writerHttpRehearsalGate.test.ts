@@ -106,3 +106,30 @@ test("only two fixed test accounts and one 1-minor-unit replayable declaration p
     (e: unknown) => e instanceof WriterSmokeBadInput,
   );
 });
+
+test("narrow Supavisor IPv4 session mode retains preview-only authority", async () => {
+  const { parseRehearsalWriterPoolConfig } = await import("../server/privateWriterPool");
+  const poolerUrl = `postgresql://investing_writer_runtime.${ref}:fake-test-secret@aws-0-eu-west-3.pooler.supabase.com:5432/postgres`;
+  const sessionEnv = {
+    ...armed,
+    INVESTING_WRITER_CONNECTION_MODE: "session-pooler",
+    INVESTING_WRITER_DATABASE_URL: poolerUrl,
+  };
+  assert.equal(isWriterHttpRehearsalEnabled(sessionEnv), true);
+  const valid = parseRehearsalWriterPoolConfig(sessionEnv);
+  assert.deepEqual(valid.ssl, { rejectUnauthorized: true });
+  assert.equal(valid.max, 2);
+  for (const delta of [
+    { INVESTING_WRITER_CONNECTION_MODE: undefined },
+    { INVESTING_WRITER_CONNECTION_MODE: "transaction-pooler" },
+    { INVESTING_WRITER_PROJECT_REF: "vbazzxqyuqcrmjytaboc" },
+    { INVESTING_WRITER_DATABASE_URL: `postgresql://postgres.${ref}:fake@aws-0-eu-west-3.pooler.supabase.com:5432/postgres` },
+    { INVESTING_WRITER_DATABASE_URL: `postgresql://investing_writer_runtime.vbazzxqyuqcrmjytaboc:fake@aws-0-eu-west-3.pooler.supabase.com:5432/postgres` },
+    { INVESTING_WRITER_DATABASE_URL: `postgresql://investing_writer_runtime.${ref}:fake@aws-0-us-east-1.pooler.supabase.com:5432/postgres` },
+    { INVESTING_WRITER_DATABASE_URL: `postgresql://investing_writer_runtime.${ref}:fake@any-other.pooler.supabase.com:5432/postgres` },
+    { INVESTING_WRITER_DATABASE_URL: `postgresql://investing_writer_runtime.${ref}:fake@aws-0-eu-west-3.pooler.supabase.com:6543/postgres` },
+    { INVESTING_WRITER_DATABASE_URL: `postgresql://investing_writer_runtime.${ref}:fake@aws-0-eu-west-3.pooler.supabase.com:5432/postgres?sslmode=disable` },
+  ]) {
+    assert.equal(isWriterHttpRehearsalEnabled({ ...sessionEnv, ...delta }), false, JSON.stringify(delta));
+  }
+});
