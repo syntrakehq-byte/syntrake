@@ -35,6 +35,7 @@ test("writer rehearsal is never armed in production, wrong branch, missing crede
     { INVESTING_R0A_WRITER_HTTP_MODE: undefined },
     { INVESTING_R0A_WRITER_HTTP_MODE: "live" },
     { INVESTING_WRITER_MODE: "live" },
+    { INVESTING_WRITER_CONNECTION_MODE: "invalid" },
     { INVESTING_WRITER_PROJECT_REF: "vbazzxqyuqcrmjytaboc" },
     { INVESTING_WRITER_DATABASE_URL: undefined },
     { INVESTING_WRITER_DATABASE_URL: "postgresql://postgres:p@db.zkqgpejlkgootkvkebhd.supabase.co:5432/postgres" },
