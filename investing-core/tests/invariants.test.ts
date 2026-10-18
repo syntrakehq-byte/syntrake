@@ -86,6 +86,13 @@ test("private pg writer config fail-closed: non-rehearsal, no secrets, TLS downg
     {...valid,INVESTING_WRITER_DATABASE_URL:undefined},
     {...valid,INVESTING_WRITER_PROJECT_REF:undefined},
     {...valid,INVESTING_WRITER_PROJECT_REF:"vbazzxqyuqcrmjytaboc",},
+    // CRITICAL: the hostname + project ref are mutually consistent here.
+    // A generic 20-char regex would have ALLOWED the real production project
+    // merely because MODE=rehearsal, despite explicit rehearsal-only intent.
+    {...valid,INVESTING_WRITER_PROJECT_REF:"vbazzxqyuqcrmjytaboc",
+      INVESTING_WRITER_DATABASE_URL:"postgresql://investing_writer_runtime:password@db.vbazzxqyuqcrmjytaboc.supabase.co:5432/postgres"},
+    {...valid,INVESTING_WRITER_PROJECT_REF:"aaaaaaaaaaaaaaaaaaaa",
+      INVESTING_WRITER_DATABASE_URL:"postgresql://investing_writer_runtime:password@db.aaaaaaaaaaaaaaaaaaaa.supabase.co:5432/postgres"},
     {...valid,INVESTING_WRITER_DATABASE_URL:"postgresql://postgres:password@db."+ref+".supabase.co:5432/postgres"},
     {...valid,INVESTING_WRITER_DATABASE_URL:"postgresql://investing_contribution_writer:password@db."+ref+".supabase.co:5432/postgres"},
     {...valid,INVESTING_WRITER_DATABASE_URL:"postgresql://investing_writer_runtime:password@db."+ref+".supabase.co:5432/postgres?sslmode=disable"},
