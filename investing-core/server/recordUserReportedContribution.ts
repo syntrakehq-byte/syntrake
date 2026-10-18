@@ -45,8 +45,9 @@ function canonicalRequestHash(userId: string, input: {
 /**
  * Atomic ownership check, idempotency reservation, balanced journal, replay
  * result. Transaction-scoped advisory lock serializes cooperating operations
- * per account. A FOR SHARE lock stabilizes the account row against concurrent
- * ownership updates without granting UPDATE on investment_accounts.
+ * per account. The complementary owner-membership guard acquires the
+ * same advisory lock at COMMIT when privileged membership/owner state changes.
+ * This avoids UPDATE privilege on investment_accounts for the writer.
  * Requires an internal, privately configured, narrowly privileged PG pool.
  * This does NOT grant authority: server-verified Clerk actor + ownership
  * checks remain mandatory; untrusted DB connections cannot invoke the writer.
@@ -76,7 +77,7 @@ export async function recordUserReportedContribution(
     );
 
     const authorized = await client.query<{ id: string }>(
-      "select a.id from investing.investment_accounts a join investing.account_memberships m on m.investment_account_id=a.id where a.id=$1 and a.owner_user_id=$2 and m.user_id=$2 and m.role='owner' for share of a",
+      "select a.id from investing.investment_accounts a join investing.account_memberships m on m.investment_account_id=a.id where a.id=$1 and a.owner_user_id=$2 and m.user_id=$2 and m.role='owner'",
       [input.accountId, actor.userId],
     );
     if (authorized.rowCount !== 1) throw new ContributionBlocked("ACCOUNT_NOT_AUTHORIZED");
