@@ -56,3 +56,37 @@ test("Clerk A/B rehearsal read endpoint fails closed outside exact PREVIEW", asy
     assert.equal(isInvestingR0aClerkAbReadRehearsalEnabled(cfg), false);
   }
 });
+
+test("Preview claim diagnostic emits only two boolean indicators and cannot authorize", async () => {
+  const { inspectRehearsalJwtClaims } = await import("../server/rehearsalJwtIndicators");
+  const mock = (claims: Record<string, unknown>) =>
+    ["eyJhbGciOiJSUzI1NiJ9", Buffer.from(JSON.stringify(claims)).toString("base64url"), "dGVzdA"].join(".");
+
+  const issuer = "https://useful-flea-8054.clerk.accounts.dev";
+  const valid = inspectRehearsalJwtClaims(mock({
+    iss: issuer, role: "authenticated", sub: "user_sensitive", email: "secret@example.com",
+  }));
+  assert.deepEqual(valid, { issuerMatchesPreview: true, roleIsAuthenticated: true });
+  assert.deepEqual(Object.keys(valid).sort(), ["issuerMatchesPreview", "roleIsAuthenticated"]);
+  assert.equal(JSON.stringify(valid).includes("user_sensitive"), false);
+  assert.equal(JSON.stringify(valid).includes("secret@example.com"), false);
+
+  assert.deepEqual(inspectRehearsalJwtClaims(mock({
+    iss: issuer, sub: "user_sensitive",
+  })), { issuerMatchesPreview: true, roleIsAuthenticated: false });
+  assert.deepEqual(inspectRehearsalJwtClaims(mock({
+    iss: "https://clerk.auth.syntrake.com", role: "authenticated",
+  })), { issuerMatchesPreview: false, roleIsAuthenticated: true });
+  assert.deepEqual(inspectRehearsalJwtClaims(mock({
+    iss: issuer, role: "anon",
+  })), { issuerMatchesPreview: true, roleIsAuthenticated: false });
+  assert.deepEqual(inspectRehearsalJwtClaims(null), {
+    issuerMatchesPreview: false, roleIsAuthenticated: false,
+  });
+  assert.deepEqual(inspectRehearsalJwtClaims("garbage.not_json.signature"), {
+    issuerMatchesPreview: false, roleIsAuthenticated: false,
+  });
+  assert.deepEqual(inspectRehearsalJwtClaims("a".repeat(8193)), {
+    issuerMatchesPreview: false, roleIsAuthenticated: false,
+  });
+});
