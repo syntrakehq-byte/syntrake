@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
 import { Client, Pool } from "pg";
@@ -74,6 +75,21 @@ test("PostgreSQL 17 isolated ledger/ownership/integrity contract", async (t) => 
       "utf8",
     );
     await admin.query(writerCapabilityMigration);
+    // Real PostgreSQL login identities for permission tests. The CI-only
+    // passwords are random per run, never logged, never remotely provisioned.
+    // A superuser-owned connection CANNOT prove SET ROLE authorization.
+    const writerSecret=randomBytes(24).toString("hex");
+    const deniedSecret=randomBytes(24).toString("hex");
+    await admin.query("create role investing_ci_writer_login login noinherit nobypassrls password '"+writerSecret+"'");
+    await admin.query("grant investing_contribution_writer to investing_ci_writer_login");
+    await admin.query("create role investing_ci_denied_login login noinherit nobypassrls password '"+deniedSecret+"'");
+    const writerUrl=new URL(DB_URL!);
+    writerUrl.username="investing_ci_writer_login";
+    writerUrl.password=writerSecret;
+    const deniedUrl=new URL(DB_URL!);
+    deniedUrl.username="investing_ci_denied_login";
+    deniedUrl.password=deniedSecret;
+
     const tables=await admin.query<{n:string}>("select count(*)::text n from pg_tables where schemaname='investing'");
     assert.equal(Number(tables.rows[0].n),9);
 
@@ -322,7 +338,7 @@ test("PostgreSQL 17 isolated ledger/ownership/integrity contract", async (t) => 
     });
 
     await t.test("server transaction: owner-only user-reported contribution, replay and conflicting keys", async () => {
-      const pool = new Pool({ connectionString: DB_URL, max: 5 });
+      const pool = new Pool({ connectionString: writerUrl.toString(), max: 5 });
       const actorA = { userId: "clerk_user_a", sessionId: "synthetic_clerk_session_a" };
       const actorB = { userId: "clerk_user_b", sessionId: "synthetic_clerk_session_b" };
       const contribution = {
@@ -384,19 +400,8 @@ test("PostgreSQL 17 isolated ledger/ownership/integrity contract", async (t) => 
       assert.equal(acl.rows[0].can_insert,false);
       assert.equal(acl.rows[0].can_read,true);
 
-      const restrictedPool=new Pool({connectionString:DB_URL,max:5});
-      const restrictedDB={
-        async connect() {
-          const client=await restrictedPool.connect();
-          try {
-            await client.query("set role investing_contribution_writer");
-            return client;
-          } catch(error) {
-            client.release(true);
-            throw error;
-          }
-        },
-      };
+      const restrictedPool=new Pool({connectionString:writerUrl.toString(),max:5});
+      const restrictedDB=restrictedPool;
       const input={
         accountId:A,
         idempotencyKey:"restricted-actor-key-00001",
@@ -447,20 +452,8 @@ test("PostgreSQL 17 isolated ledger/ownership/integrity contract", async (t) => 
     });
 
     await t.test("writer role: no authority without explicit role membership, no cross-tenant SQL access", async () => {
-      await admin.query("create role investing_writer_denied nologin noinherit nobypassrls");
-      const deniedPool=new Pool({connectionString:DB_URL,max:1});
-      const deniedDB={
-        async connect() {
-          const client=await deniedPool.connect();
-          try {
-            await client.query("set role investing_writer_denied");
-            return client;
-          } catch(error) {
-            client.release(true);
-            throw error;
-          }
-        },
-      };
+      const deniedPool=new Pool({connectionString:deniedUrl.toString(),max:1});
+      const deniedDB=deniedPool;
       const actor={userId:"clerk_user_a",sessionId:"synthetic_denied_session"};
       const input={
         accountId:A,
@@ -542,7 +535,7 @@ test("PostgreSQL 17 isolated ledger/ownership/integrity contract", async (t) => 
     });
 
     await t.test("server transaction concurrent same-key replay is exactly once", async () => {
-      const pool = new Pool({ connectionString: DB_URL, max: 5 });
+      const pool = new Pool({ connectionString: writerUrl.toString(), max: 5 });
       const actor = { userId: "clerk_user_a", sessionId: "synthetic_clerk_session_a" };
       const input = {
         accountId: A,
