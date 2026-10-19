@@ -149,3 +149,36 @@ reconciled against the SQL database (all journal tables unchanged).
 Once the actual connection probe is proven, REMOVE this temporary GET
 before any production merge or deployment. Its existence and CI passing
 alone are not evidence that a real database connection succeeded.
+
+### Supabase Root 2021 TLS trust remediation (2026-10-19)
+
+Real Clerk Preview `writer-connection-check` returned
+`{"error":"CONNECTION_UNAVAILABLE","failureStage":"CONNECT","failureKind":"TLS_REJECTED"}`.
+This means CA/hostname/TLS validation failed at connect; it did **not**
+validate PostgreSQL authentication, permissions or writer RLS.
+
+The operator downloaded `prod-ca-2021 (1).crt` from the Supabase
+Preview SSL settings. Inspection with OpenSSL verifies a PEM X.509
+self-signed CA, `Supabase Root 2021 CA`, certificate signing enabled,
+valid 2021-04-28 until 2031-04-26, fingerprint
+`80:70:25:AD:50:D4:ED:21:9D:2C:9C:7D:29:9C:00:4F:82:4E:B0:0C:F7:F6:5A:FE:F6:07:D0:7B:72:E6:CA:FA`.
+This is a PUBLIC trust anchor, **not** a private key or broker authority.
+
+Supabase official PSQL documentation recommends downloading the server
+root and `sslmode=verify-full` over the Session pooler. The candidate
+pins the fingerprint in `investing-core/server/supabaseRoot2021Ca.ts`;
+the writer pool checks the certificate type and validity, and injects
+`ssl: { rejectUnauthorized: true, ca: <pinned public CA>, servername: <allowlisted pooler host> }`
+only for session-pooler. Disabling Node TLS verification is blocked.
+No connection string, actor, TLS CA or hostname is taken from HTTP input.
+
+CERTIFICATE PARSING AND UNIT TESTS ARE NOT EXTERNAL TLS PROOF.
+A new *real* GET on an exact approved Vercel Preview SHA must validate
+the Supavisor server certificate chain and hostname and then the
+PostgreSQL authenticated role and RLS reads. Certificate mismatch must
+remain a failure; do not override it, disable SSL, or weaken verification.
+Containerized assistant test environment cannot resolve the public
+Supavisor hostname, so no independent external handshake is claimed.
+
+Do not merge this temporary Preview diagnostic, or ship the fixture
+IDs to production. R0-A and write E2E remain BLOCKED until further gates.
