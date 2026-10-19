@@ -182,3 +182,28 @@ Supavisor hostname, so no independent external handshake is claimed.
 
 Do not merge this temporary Preview diagnostic, or ship the fixture
 IDs to production. R0-A and write E2E remain BLOCKED until further gates.
+
+### RLS actor correlation diagnostic after real TLS PASS (2026-10-19)
+
+Real Preview GET on deployment `dpl_4sGaAQTZXx1NVuMXumPFVNq8MGjn`
+returned `{"error":"BLOCKED"}`. The request reached the RLS-scoped
+fixture SELECT. Thus session-mode TLS, PostgreSQL authentication, PG17
+version check, `SET LOCAL ROLE investing_contribution_writer`, and
+`set_config('syntrake.actor_user_id', verifiedClerkActor, true)` were
+executed without exceptions; **account ownership NOT yet proven**.
+
+Independent SQL on Preview shows A and C fixtures each have the expected
+owner membership, zero cross memberships and two EUR subledgers; account,
+membership and subledger RLS remain FORCE enabled. No financial state
+was changed. The actual Clerk identity used by this new HTTP session
+was not independently matched to the two previously provisioned owners.
+
+Next read-only candidate verifies the applied transaction-local actor
+equals the server-derived Clerk user, then classifies the *already
+RLS-filtered* result into:
+`NO_OWNED_TEST_ACCOUNT`, `AMBIGUOUS_TEST_ACCOUNTS`,
+`TEST_FIXTURE_MISMATCH` or successful ownership.
+This returns no raw actor, account data, session, SQL, JWT or credentials,
+and never bypasses writer RLS. All negative cases must fail closed.
+Do not adjust membership, seed new users, or weaken policies merely to
+make this probe pass. The financial POST arming variable stays absent.
