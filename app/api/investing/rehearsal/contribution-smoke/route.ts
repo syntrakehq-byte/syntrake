@@ -68,6 +68,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       confirmedByBroker: false,
     }, 200);
   } catch (error: unknown) {
+    // Clerk's server-only adapter emits this exact error when the session is
+    // absent. Distinguish missing authentication (401) from a PostgreSQL or
+    // ledger failure (503) without revealing actor IDs, tokens or SQL state.
+    // The writer still derives auth independently on every invocation.
+    if (error instanceof Error && error.message === "UNAUTHENTICATED") {
+      return reply({ error: "UNAUTHENTICATED" }, 401);
+    }
     if (error instanceof WriterSmokeBadInput) return reply({ error: "INVALID_INPUT" }, 400);
     if (error instanceof ContributionBlocked) {
       if (error.code === "ACCOUNT_NOT_AUTHORIZED") return reply({ error: "BLOCKED" }, 403);
@@ -75,8 +82,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         return reply({ error: "CONFLICT" }, 409);
       }
     }
-    // Unauthenticated Clerk, PostgreSQL timeout, DB failure and missing
-    // subledgers all fail closed. Never use privileged fallback credentials.
+    // Database/connectivity errors and incomplete setup fail closed.
+    // Never use a privileged fallback credential or disclose SQL details.
     return reply({ error: "WRITE_UNAVAILABLE" }, 503);
   }
 }
