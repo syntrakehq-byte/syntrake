@@ -3,6 +3,7 @@ import { requireVerifiedClerkActor } from "@/investing-core/server/requireVerifi
 import { createRehearsalWriterPool } from "@/investing-core/server/privateWriterPool";
 import { isWriterConnectionProbeEnabled } from "@/investing-core/server/writerHttpRehearsalGate";
 import { connectionProbeFailureKind } from "@/investing-core/server/writerConnectionProbeFailure";
+import { writerReadProbeVerdict } from "@/investing-core/server/writerReadProbeVerdict";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -83,6 +84,17 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
       // SQL RLS, not client accountId, determines visibility. Restrict the
       // successful response to the two already-provisioned test fixtures.
+      const actorContext = await client.query<{ matches: boolean }>(
+        "select current_setting('syntrake.actor_user_id', true) = $1 as matches",
+        [actor.userId],
+      );
+      if (actorContext.rowCount !== 1 || actorContext.rows[0]?.matches !== true) {
+        return reply(503, {
+          error: "CONNECTION_UNAVAILABLE",
+          failureStage: "ACTOR",
+          failureKind: "INTERNAL_ERROR",
+        });
+      }
       failureStage = "ACCOUNT_RLS";
       const own = await client.query<{ id: string; name: string }>(
         `select id::text as id, name from investing.investment_accounts
@@ -91,14 +103,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
            '676ae244-9ead-449c-861d-2f34a81285e3'::uuid
          )`
       );
-      if (own.rowCount !== 1) return reply(403, { error: "BLOCKED" });
+      // Respond with only a fixed classification, never Clerk identity or
+      // raw account data. RLS remains the source of authority.
+      const verdict = writerReadProbeVerdict(own.rows);
+      if (verdict !== "OWNED_TEST_ACCOUNT") {
+        return reply(403, { error: "BLOCKED", reason: verdict });
+      }
       const row = own.rows[0];
-      if (!(
-        (row.id === "f886c954-0a0f-419c-890a-b77ecb0c36cf" &&
-         row.name === "R0-A Clerk A - PREVIEW TEST 2026-10-18") ||
-        (row.id === "676ae244-9ead-449c-861d-2f34a81285e3" &&
-         row.name === "R0-A Clerk C - PREVIEW TEST 2026-10-18")
-      )) return reply(403, { error: "BLOCKED" });
 
       failureStage = "SUBLEDGER_RLS";
       const subledgers = await client.query<{ code: string }>(
