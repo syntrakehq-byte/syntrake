@@ -30,6 +30,10 @@ export const APPROVED_R0A_REHEARSAL_REF = "zkqgpejlkgootkvkebhd" as const;
 export function parseRehearsalWriterPoolConfig(env: WriterEnvironment): PoolConfig {
   // A server-side flag is NOT user financial authorization. This gate only
   // prevents accidental activation by a non-rehearsal deployment.
+  // Explicitly reject global Node TLS verification disabling even on Preview.
+  if (env.NODE_TLS_REJECT_UNAUTHORIZED === "0") {
+    throw new InvestingWriterConfigurationBlocked();
+  }
   if (env.INVESTING_WRITER_MODE !== "rehearsal") {
     throw new InvestingWriterConfigurationBlocked();
   }
