@@ -38,6 +38,32 @@ export function isWriterHttpRehearsalEnabled(env: Env): boolean {
   }
 }
 
+
+/**
+ * Separately gated read-only connectivity probe. DOES NOT depend on the
+ * write-arming flag, so the contribution POST remains 404 throughout testing.
+ * Preview deployment, branch, Clerk test instance, fixed DB project and
+ * existing low-privilege connection parser are all mandatory.
+ */
+export function isWriterConnectionProbeEnabled(env: Env): boolean {
+  if (
+    env.VERCEL_ENV !== "preview" ||
+    env.VERCEL_GIT_COMMIT_REF !== R0A_WRITER_REHEARSAL_BRANCH ||
+    env.INVESTING_WRITER_MODE !== "rehearsal" ||
+    env.INVESTING_WRITER_PROJECT_REF !== APPROVED_R0A_REHEARSAL_REF ||
+    env.INVESTING_WRITER_CONNECTION_MODE !== "session-pooler" ||
+    !env.VERCEL_URL?.endsWith(".vercel.app") ||
+    !env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY?.startsWith("pk_test_") ||
+    !env.CLERK_SECRET_KEY?.startsWith("sk_test_")
+  ) return false;
+  try {
+    parseRehearsalWriterPoolConfig(env);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Same-origin POST on the exact deployment URL; Vercel protection stays on. */
 export function hasSameOriginWriterIntent(
   input: Readonly<{ url: string; origin: string | null; host: string | null; contentType: string | null; fetchSite: string | null }>,
