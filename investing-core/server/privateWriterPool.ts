@@ -1,4 +1,9 @@
 import { Pool, type PoolConfig } from "pg";
+import { X509Certificate } from "node:crypto";
+import {
+  SUPABASE_ROOT_2021_CA_PEM,
+  SUPABASE_ROOT_2021_CA_SHA256,
+} from "./supabaseRoot2021Ca";
 
 /**
  * Private server-side PostgreSQL transport for the *rehearsal* writer.
@@ -79,11 +84,36 @@ export function parseRehearsalWriterPoolConfig(env: WriterEnvironment): PoolConf
     throw new InvestingWriterConfigurationBlocked();
   }
 
-  // Never use a no-verify SSL mode, an environment CA override, or a
-  // supplied connection string as the source of TLS policy.
+  // Fail closed when the public trust anchor changes or expires. A CA
+  // certificate alone is NOT successful SSL proof; Node TLS must check the
+  // Supavisor server certificate chain AND its exact requested hostname.
+  // No caller-controlled CA, sslmode, peer name or verification override.
+  let ca: string | undefined;
+  if (sessionPooler) {
+    try {
+      const cert = new X509Certificate(SUPABASE_ROOT_2021_CA_PEM);
+      const now = Date.now();
+      if (
+        !cert.ca ||
+        cert.fingerprint256 !== SUPABASE_ROOT_2021_CA_SHA256 ||
+        !cert.subject.includes("CN=Supabase Root 2021 CA") ||
+        !cert.issuer.includes("CN=Supabase Root 2021 CA") ||
+        !Number.isFinite(Date.parse(cert.validFrom)) ||
+        !(Date.parse(cert.validFrom) <= now && now < Date.parse(cert.validTo))
+      ) throw new InvestingWriterConfigurationBlocked();
+      ca = SUPABASE_ROOT_2021_CA_PEM;
+    } catch {
+      throw new InvestingWriterConfigurationBlocked();
+    }
+  }
+
+  // Never use a no-verify SSL mode, environment CA override, or URL
+  // parameters as the source of TLS policy. Pin SNI / peer hostname.
   return {
     connectionString: rawUrl,
-    ssl: { rejectUnauthorized: true },
+    ssl: sessionPooler
+      ? { rejectUnauthorized: true, ca, servername: parsed.hostname }
+      : { rejectUnauthorized: true },
     max: 2,
     connectionTimeoutMillis: 2500,
     idleTimeoutMillis: 10000,
