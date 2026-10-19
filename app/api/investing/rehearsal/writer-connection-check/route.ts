@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireVerifiedClerkActor } from "@/investing-core/server/requireVerifiedClerkActor";
 import { createRehearsalWriterPool } from "@/investing-core/server/privateWriterPool";
-import { isWriterConnectionProbeEnabled } from "@/investing-core/server/writerHttpRehearsalGate";
+import { isWriterConnectionProbeEnabled, R0A_WRITER_REHEARSAL_BRANCH } from "@/investing-core/server/writerHttpRehearsalGate";
 import { connectionProbeFailureKind } from "@/investing-core/server/writerConnectionProbeFailure";
 import { writerReadProbeVerdict } from "@/investing-core/server/writerReadProbeVerdict";
 
@@ -27,18 +27,31 @@ function reply(code: number, payload: Record<string, unknown>) {
  * This diagnostic is ephemeral and MUST NOT be merged to production.
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
-  if (!isWriterConnectionProbeEnabled(process.env)) return reply(404, { error: "NOT_FOUND" });
+  // Temporary PREVIEW-only 404 classification. This is diagnostic metadata,
+  // not an authorization bypass or a relaxation of the original gate.
+  // Non-preview and unrelated branches retain the opaque 404 response.
+  if (!isWriterConnectionProbeEnabled(process.env)) {
+    const exactPreviewBranch =
+      process.env.VERCEL_ENV === "preview" &&
+      process.env.VERCEL_GIT_COMMIT_REF === R0A_WRITER_REHEARSAL_BRANCH;
+    return reply(404, exactPreviewBranch
+      ? { error: "NOT_FOUND", reason: "PREVIEW_CONNECTION_GATE" }
+      : { error: "NOT_FOUND" });
+  }
 
-  // Vercel Deployment Protection remains enabled. Do not answer through an
-  // alias or another host; no token, query argument or CSRF shortcut.
+  // Vercel Deployment Protection remains enabled. The endpoint never accepts
+  // query arguments or aliases. Classify which check denied the request without
+  // exposing expected host, deployment URL, SQL, credentials or Clerk identity.
   const url = new URL(request.url);
+  if (url.search !== "") {
+    return reply(404, { error: "NOT_FOUND", reason: "QUERY_NOT_ALLOWED" });
+  }
   if (
     url.protocol !== "https:" ||
     url.host !== process.env.VERCEL_URL ||
     request.headers.get("host") !== process.env.VERCEL_URL ||
-    url.search !== "" ||
     url.pathname !== "/api/investing/rehearsal/writer-connection-check"
-  ) return reply(404, { error: "NOT_FOUND" });
+  ) return reply(404, { error: "NOT_FOUND", reason: "HOST_GUARD" });
 
   let actor: Awaited<ReturnType<typeof requireVerifiedClerkActor>>;
   try {
