@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { X509Certificate } from "node:crypto";
+import {
+  SUPABASE_ROOT_2021_CA_PEM,
+  SUPABASE_ROOT_2021_CA_SHA256,
+} from "../server/supabaseRoot2021Ca";
 import {
   fixedWriterSmokeDeclaration,
   hasSameOriginWriterIntent,
@@ -119,7 +124,11 @@ test("narrow Supavisor IPv4 session mode retains preview-only authority", async 
   };
   assert.equal(isWriterHttpRehearsalEnabled(sessionEnv), true);
   const valid = parseRehearsalWriterPoolConfig(sessionEnv);
-  assert.deepEqual(valid.ssl, { rejectUnauthorized: true });
+  assert.deepEqual(valid.ssl, {
+    rejectUnauthorized: true,
+    ca: SUPABASE_ROOT_2021_CA_PEM,
+    servername: "aws-0-eu-west-3.pooler.supabase.com",
+  });
   assert.equal(valid.max, 2);
   for (const delta of [
     { INVESTING_WRITER_CONNECTION_MODE: undefined },
@@ -160,4 +169,16 @@ test("read-only connection probe runs without write arming; all wrong preview co
   ]) {
     assert.equal(isWriterConnectionProbeEnabled({ ...config, ...mutation }), false, JSON.stringify(mutation));
   }
+});
+
+test("public CA is the expected self-signed Supabase 2021 trust anchor, not a server certificate", () => {
+  const ca = new X509Certificate(SUPABASE_ROOT_2021_CA_PEM);
+  assert.equal(ca.fingerprint256, SUPABASE_ROOT_2021_CA_SHA256);
+  assert.equal(ca.ca, true);
+  assert.match(ca.subject, /CN=Supabase Root 2021 CA/);
+  assert.equal(ca.subject, ca.issuer);
+  assert.ok(new Date(ca.validFrom).valueOf() < Date.now());
+  assert.ok(Date.now() < new Date(ca.validTo).valueOf());
+  assert.ok(!SUPABASE_ROOT_2021_CA_PEM.includes("PRIVATE KEY"));
+  assert.ok(!SUPABASE_ROOT_2021_CA_PEM.includes("PASSWORD"));
 });
