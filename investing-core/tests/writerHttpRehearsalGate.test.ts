@@ -41,6 +41,7 @@ test("writer rehearsal is never armed in production, wrong branch, missing crede
     { INVESTING_R0A_WRITER_HTTP_MODE: undefined },
     { INVESTING_R0A_WRITER_HTTP_MODE: "live" },
     { INVESTING_WRITER_MODE: "live" },
+    { NODE_TLS_REJECT_UNAUTHORIZED: "0" },
     { INVESTING_WRITER_CONNECTION_MODE: "invalid" },
     { INVESTING_WRITER_PROJECT_REF: "vbazzxqyuqcrmjytaboc" },
     { INVESTING_WRITER_DATABASE_URL: undefined },
