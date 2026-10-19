@@ -4,6 +4,7 @@ import {
   fixedWriterSmokeDeclaration,
   hasSameOriginWriterIntent,
   isWriterHttpRehearsalEnabled,
+  isWriterConnectionProbeEnabled,
   R0A_WRITER_REHEARSAL_BRANCH,
   WriterSmokeBadInput,
 } from "../server/writerHttpRehearsalGate";
@@ -132,5 +133,31 @@ test("narrow Supavisor IPv4 session mode retains preview-only authority", async 
     { INVESTING_WRITER_DATABASE_URL: `postgresql://investing_writer_runtime.${ref}:fake@aws-0-eu-west-3.pooler.supabase.com:5432/postgres?sslmode=disable` },
   ]) {
     assert.equal(isWriterHttpRehearsalEnabled({ ...sessionEnv, ...delta }), false, JSON.stringify(delta));
+  }
+});
+
+test("read-only connection probe runs without write arming; all wrong preview configs fail closed", () => {
+  const config = {
+    ...armed,
+    INVESTING_WRITER_CONNECTION_MODE: "session-pooler",
+    INVESTING_WRITER_DATABASE_URL:
+      `postgresql://investing_writer_runtime.${ref}:fake@aws-1-eu-west-3.pooler.supabase.com:5432/postgres`,
+    INVESTING_R0A_WRITER_HTTP_MODE: undefined,
+  };
+  assert.equal(isWriterConnectionProbeEnabled(config), true);
+  assert.equal(isWriterHttpRehearsalEnabled(config), false);
+  for (const mutation of [
+    { VERCEL_ENV: "production" },
+    { VERCEL_GIT_COMMIT_REF: "main" },
+    { INVESTING_WRITER_MODE: "live" },
+    { INVESTING_WRITER_PROJECT_REF: "vbazzxqyuqcrmjytaboc" },
+    { INVESTING_WRITER_CONNECTION_MODE: "transaction-pooler" },
+    { INVESTING_WRITER_DATABASE_URL: undefined },
+    { VERCEL_URL: "syntrake.com" },
+    { VERCEL_URL: undefined },
+    { NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_live_example" },
+    { CLERK_SECRET_KEY: "sk_live_example" },
+  ]) {
+    assert.equal(isWriterConnectionProbeEnabled({ ...config, ...mutation }), false, JSON.stringify(mutation));
   }
 });
