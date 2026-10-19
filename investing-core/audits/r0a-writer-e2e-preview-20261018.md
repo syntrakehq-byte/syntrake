@@ -121,3 +121,31 @@ Connect-panel screenshot / independent connection proof is required before
 configuring secrets or arming this path. Do not purchase IPv4 ingress or
 weaken TLS settings as a shortcut. Pooler support is pending actual login,
 SET LOCAL ROLE, transaction consistency and reconciliation proof.
+
+## Database connection verification after credential entry (2026-10-19)
+
+The operator added an encrypted, branch-scoped `INVESTING_WRITER_DATABASE_URL`
+in Vercel. Its *presence* and branch scope were verified using undecrypted
+Vercel metadata only. Password validity, TLS handshake and SQL login were
+**not** inferred from mere environment variable presence.
+
+A separate read-only `GET /api/investing/rehearsal/writer-connection-check`
+is now available in the candidate. It requires all Preview gates and a
+server-verified Clerk session, uses the private writer LOGIN, starts a
+`BEGIN READ ONLY` transaction, verifies PG17, executes
+`SET LOCAL ROLE investing_contribution_writer`, and checks that the
+server-derived actor can read exactly one of A/C fixture accounts and its
+two EUR subledgers under RLS. Its finalizer always issues `ROLLBACK`,
+then releases and closes the private pool; no SQL insert/update/delete,
+cash movement, transaction, or idempotency record may be created.
+
+This probe **does not use** the independent writer-HTTP arming flag.
+`INVESTING_R0A_WRITER_HTTP_MODE` must remain ABSENT, leaving the separate
+contribution POST and UI 404. It must not expose the password, token,
+actor identifier, account UUID or raw Postgres errors. Successful completion
+returns boolean verdicts only. A successful server response must still be
+reconciled against the SQL database (all journal tables unchanged).
+
+Once the actual connection probe is proven, REMOVE this temporary GET
+before any production merge or deployment. Its existence and CI passing
+alone are not evidence that a real database connection succeeded.
