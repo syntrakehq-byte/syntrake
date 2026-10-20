@@ -4,5 +4,6 @@
     "deploymentEnabled": {
       "main": false
     }
-  }
+  },
+  "ignoreCommand": "exit 1"
 }
