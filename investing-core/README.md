@@ -1,6 +1,6 @@
 # SYNTRAKE Investing R0-A — foundation candidate
 
-**Status (2026-10-20): CANDIDATE, NOT MERGED, NOT RELEASED.** This is not the functioning Investing Core or a broker integration.
+**R0-A status (2026-10-20): ACCEPTED IN GIT `main@c7aaa43537ad57eb40b7463e5ce354d6cf107be6`, NOT DEPLOYED TO PRODUCTION.** This is not the functioning Investing Core or a broker integration.
 
 ## What has been independently proven
 
@@ -28,7 +28,7 @@ All temporary browser-accessible Preview rehearsal routes, writer smoke UI, JWT/
 - The compiler excludes `investing-core/**/*.ts` from the general Next application typecheck; a dedicated strict investing typecheck and isolated PostgreSQL 17 integration gate exist.
 - Sequential HTTP replay on A/C is demonstrated, while concurrent HTTP race tests against a live Clerk Preview were **not** performed. Concurrent idempotency was tested independently in PostgreSQL 17 CI.
 - `USER_REPORTED` denotes user declaration, **not externally verified cash**, returns or investable balance.
-- R0-A must not be merged or migrated to production without a separate lineage, schema/RLS and security acceptance gate and explicit operator authorization.
+- R0-A source is merged in Git; applying migrations or deploying this schema to production still requires a separate lineage, schema/RLS and security gate with explicit operator authorization.
 
 See the detailed source-backed rehearsal reports in `investing-core/audits/` and the guarded Preview-only shutdown at `supabase/rehearsal/teardown/20261020_r0a_preview_writer_fail_closed.sql`.
 
