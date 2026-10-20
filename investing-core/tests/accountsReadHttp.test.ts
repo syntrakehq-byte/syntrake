@@ -7,7 +7,7 @@ const ref = "zkqgpejlkgootkvkebhd";
 const route = "https://www.syntrake.com/api/investing/accounts";
 const enabled = {
   VERCEL_ENV: "preview",
-  VERCEL_GIT_COMMIT_REF: "candidate/investing-r1-read-accounts-20261020",
+  VERCEL_GIT_COMMIT_REF: "candidate/investing-r1b-accounts-ui-20261020",
   INVESTING_R1_ACCOUNTS_READ_MODE: "enabled",
   INVESTING_R1_SUPABASE_PROJECT_REF: ref,
   NEXT_PUBLIC_SUPABASE_URL: `https://${ref}.supabase.co`,
@@ -27,6 +27,7 @@ test("R1 is disabled by default and bound to exact matching Supabase project + p
     { VERCEL_ENV: "development" },
     { VERCEL_ENV: undefined },
     { VERCEL_GIT_COMMIT_REF: "main" },
+    { VERCEL_GIT_COMMIT_REF: "candidate/investing-r1-read-accounts-20261020" },
     { VERCEL_GIT_COMMIT_REF: "candidate/investing-r0a-writer-e2e-preview-20261018" },
     { VERCEL_GIT_COMMIT_REF: undefined },
     { INVESTING_R1_ACCOUNTS_READ_MODE: undefined },
