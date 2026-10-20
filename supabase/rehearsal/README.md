@@ -1,54 +1,45 @@
-# Investing R0-A — isolated rehearsal-only DDL
+# SYNTRAKE R0-A — archived isolated PREVIEW rehearsal evidence
 
-**Status: PREPARED / NOT APPLIED.** Source: `syntrakehq-byte/syntrake`, stacked on PR #5 at
-`3eb6676d0980b4f272d39881e134525448d12c18`.
+**Status: REHEARSAL COMPLETE; writer LOGIN DISABLED, role membership REVOKED on 2026-10-20.**
 
-This directory is intentionally **outside** the standard `supabase/migrations/`
-directory. Neither routine `supabase db push` nor the production migration
-pipeline may automatically discover this LOGIN-creation script. It must never
-be added to the default migrations folder in a production-targeted checkout.
+These scripts are operator-only audit artifacts, deliberately **outside**
+`supabase/migrations/`. Do not run them through production migrations or
+reenable them as part of future Investing Core work.
 
-## Scope and limits
+## Target and recorded facts
 
-- Allowed future target **only after separate authorization**:
-  Supabase PREVIEW `investing-r0a-rehearsal`,
-  project ref `zkqgpejlkgootkvkebhd`.
-- Explicitly prohibited target: production/main `vbazzxqyuqcrmjytaboc`.
-- Prerequisite already rehearsed: writer capability migration
-  `20261018074500_investing_contribution_writer_capability.sql`.
-- Candidate: `migrations/20261018112500_investing_writer_runtime_login.sql`.
-- Creates one named private LOGIN with `PASSWORD NULL`; associates it to
-  the existing `NOLOGIN` capability with `ADMIN FALSE, INHERIT FALSE, SET TRUE`.
-- Creates **no credentials**, no runtime environment secret, no Clerk users,
-  no portfolios/subledgers, no idempotency rows, and no financial movements.
-- PostgreSQL role creation is cluster-scoped. Although a missing password
-  blocks normal password authentication, other authentication methods must be
-  independently assessed before any session is allowed to connect.
+- ONLY rehearsal target: Supabase Preview `zkqgpejlkgootkvkebhd`.
+- Forbidden target: production/main Supabase `vbazzxqyuqcrmjytaboc`.
+- `migrations/20261018112500_investing_writer_runtime_login.sql`
+  documents the historical restricted LOGIN setup.
+- `fixtures/20261018_r0a_writer_subledgers_preview_only.sql`
+  documents the one-off A/C EUR subledger setup.
+- The audited and executed fail-closed operation is
+  `teardown/20261020_r0a_preview_writer_fail_closed.sql`.
+  It has strong fixture/ledger identity and integrity preconditions and
+  atomically revokes financial writer authority, preserving evidence.
 
-## Future gate (NOT authorized by this candidate)
+## Verified terminal state
 
-1. Re-verify immutable predecessor/candidate SHAs and `git diff`. Verify the
-   live Supabase PREVIEW project reference, migrations and catalog state, and
-   document the target before requesting a separate migration authorization.
-2. Run isolated PostgreSQL 17 tests of this exact versioned file plus negative
-   authorization/role-inheritance checks. Inspect GitHub Actions CI.
-3. Use a separate, rehearsal-only CLI workspace with the **remote migration
-   history fetched**, confirm the linked `.temp/project-ref`, and use an
-   official `db push --dry-run` to prove **exactly one pending migration**
-   before any user-authorized application. Do not repair remote history
-   without an independent audit and authorization.
-4. After any separately approved rehearsal application, independently inspect
-   `pg_roles`, `pg_auth_members`, `pg_policies`, actual SQL grants, migration
-   history, and production unchanged. Stop on any mismatch.
-5. A later separately approved step must provision a secret and runtime
-   connection for the dedicated LOGIN. Test actual PostgreSQL authentication,
-   verified Clerk A/B sessions, negative tenant access, missing/forged actor,
-   replay/idempotency, race handling and journal reconciliation. Do not enable
-   a financial HTTP endpoint before these gates.
-6. Any test cash contributions must stay labelled `USER_REPORTED`, **not**
-   broker-confirmed. No live brokerage execution or real cash movement.
+Post-shutdown direct PostgreSQL checks returned:
 
-**Important:** `syntrake.actor_user_id` is untrusted SQL context, not a signed
-identity. Financial authority depends on real Clerk server authentication and
-a private, audited database-login boundary. This prepared file does not
-authorize a later live deployment, production migration, or merge.
+- `investing_writer_runtime.rolcanlogin = false`.
+- `pg_has_role('investing_writer_runtime',
+  'investing_contribution_writer', 'SET') = false`.
+- `investing_contribution_writer.rolcanlogin = false`.
+- Exactly 2 synthetic `USER_REPORTED` journals, one each for Clerk A/C test
+  owners, 4 balanced entries, 2 idempotency records, 0 integrity issues.
+- No production Supabase role/schema modification.
+
+All earlier rehearsal authorization instructions are historic, **not**
+instructions or authorization to reapply roles, migrations or credentials.
+An additional approval, canonical schema review, exact SHA and separate
+nonproduction safety gate are required even to recreate this experiment.
+
+## Important truth boundary
+
+`USER_REPORTED` is a declaration, not broker-confirmed cash or performance.
+`syntrake.actor_user_id` is untrusted SQL context and only meaningful
+behind a verified Clerk server actor and trusted private PG authority.
+A branch Preview env flag being paused does not revoke immutable deployments;
+that is why the dedicated PG LOGIN and role capability were also disabled.
