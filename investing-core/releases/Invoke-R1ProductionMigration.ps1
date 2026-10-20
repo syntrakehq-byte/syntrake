@@ -50,10 +50,10 @@ function DigestHex([string]$value) {
   } finally { $sha.Dispose() }
 }
 function Supabase([string[]]$arguments) {
-  Invoke-External "npx.cmd" (@("--yes", "supabase@$CliVersion", "--workdir", $Isolated) + $arguments)
+  Invoke-External -exe "npx.cmd" -argv (@("--yes", "supabase@$CliVersion", "--workdir", $Isolated) + $arguments)
 }
 function Supabase-Read([string[]]$arguments) {
-  return Capture-External "npx.cmd" (@("--yes", "supabase@$CliVersion", "--workdir", $Isolated) + $arguments)
+  return Capture-External -exe "npx.cmd" -argv (@("--yes", "supabase@$CliVersion", "--workdir", $Isolated) + $arguments)
 }
 function Check-Migration-Files() {
   Assert (Test-Path -LiteralPath $Migrations -PathType Container) "missing isolated migration directory"
@@ -100,19 +100,19 @@ Assert ([bool](Get-Command npx.cmd -ErrorAction SilentlyContinue)) "Node.js/npm 
 if (-not (Test-Path -LiteralPath $Repo -PathType Container)) {
   New-Item -ItemType Directory -Path $Folder -Force | Out-Null
   Write-Host "Fetching exact approved private GitHub commit. Git may ask you to log in."
-  Invoke-External "git.exe" @("clone", "--no-checkout", "--filter=blob:none", $RepoUrl, $Repo)
+  Invoke-External -exe "git.exe" -argv @("clone", "--no-checkout", "--filter=blob:none", $RepoUrl, $Repo)
 }
 # HEAD can never be accepted from a moving branch, only pinned commit.
-Invoke-External "git.exe" @("-C", $Repo, "fetch", "--no-tags", "origin", $SourceSHA)
-Invoke-External "git.exe" @("-C", $Repo, "checkout", "--detach", $SourceSHA)
-$sourceHead = (Capture-External "git.exe" @("-C", $Repo, "rev-parse", "HEAD")).Trim()
+Invoke-External -exe "git.exe" -argv @("-C", $Repo, "fetch", "--no-tags", "origin", $SourceSHA)
+Invoke-External -exe "git.exe" -argv @("-C", $Repo, "checkout", "--detach", $SourceSHA)
+$sourceHead = (Capture-External -exe "git.exe" -argv @("-C", $Repo, "rev-parse", "HEAD")).Trim()
 Assert ($sourceHead -ceq $SourceSHA) "Git checkout did not match accepted SHA"
 
 $ReleaseSource = Join-Path $Repo "supabase\release-candidates\$ReleaseName"
 $HistorySource = Join-Path $Repo "supabase\release-evidence\20261017191056_remote_schema.registry.json"
 Assert (Test-Path -LiteralPath $ReleaseSource -PathType Leaf) "missing candidate release SQL"
 Assert (Test-Path -LiteralPath $HistorySource -PathType Leaf) "missing historical registry evidence"
-$blob=(Capture-External "git.exe" @("-C", $Repo, "hash-object", $ReleaseSource)).Trim()
+$blob=(Capture-External -exe "git.exe" -argv @("-C", $Repo, "hash-object", $ReleaseSource)).Trim()
 Assert ($blob -eq $ExpectedBlob) "release SQL bytes differ from audited Git blob"
 
 $history = Get-Content -LiteralPath $HistorySource -Raw | ConvertFrom-Json
@@ -127,7 +127,7 @@ Assert ((DigestHex ([string]::Join("`n", [string[]]$statements))) -eq $HistorySH
 if (-not (Test-Path -LiteralPath (Join-Path $Isolated "supabase\config.toml") -PathType Leaf)) {
   New-Item -ItemType Directory -Path $Isolated -Force | Out-Null
   Write-Host "Creating a SEPARATE Supabase CLI workdir with no older Investing/writer migrations."
-  Supabase @("init")
+  Supabase -arguments @("init")
 }
 New-Item -ItemType Directory -Path $Migrations -Force | Out-Null
 Copy-Item -LiteralPath $ReleaseSource -Destination (Join-Path $Migrations $ReleaseName) -Force
@@ -138,22 +138,22 @@ $baselineSql = $header + (($statements | ForEach-Object { [string]$_ + ";" }) -j
   $baselineSql, (New-Object System.Text.UTF8Encoding($false)))
 Check-Migration-Files
 
-$version = (Supabase-Read @("--version")).Trim()
+$version = (Supabase-Read -arguments @("--version")).Trim()
 Assert ($version -match "(^|\s)$([regex]::Escape($CliVersion))(\s|$)") "CLI version not pinned to $CliVersion"
 Write-Host "Supabase CLI $CliVersion, project $ProjectRef, Git $SourceSHA, SQL Git blob $ExpectedBlob."
 Write-Host "Authenticate locally. Never send personal tokens or database passwords in chat."
-Supabase @("login")
-Supabase @("link", "--project-ref", $ProjectRef)
+Supabase -arguments @("login")
+Supabase -arguments @("link", "--project-ref", $ProjectRef)
 $linked = Join-Path $Isolated "supabase\.temp\project-ref"
 Assert (Test-Path -LiteralPath $linked -PathType Leaf) "Supabase CLI linked project-ref file unavailable"
 Assert ((Get-Content -LiteralPath $linked -Raw).Trim() -eq $ProjectRef) "Supabase CLI linked WRONG project"
 Check-Migration-Files
-$historyBefore = Supabase-Read @("migration", "list", "--linked")
+$historyBefore = Supabase-Read -arguments @("migration", "list", "--linked")
 Validate-History $historyBefore $false
 Write-Host "PRE-APPLY HISTORY (versions only):"
 Write-Host $historyBefore
 
-$plan = Supabase-Read @("db", "push", "--linked", "--dry-run")
+$plan = Supabase-Read -arguments @("db", "push", "--linked", "--dry-run")
 Assert-DryRun $plan
 Write-Host "READ-ONLY CLI PLAN:"
 Write-Host $plan
@@ -171,9 +171,9 @@ Check-Migration-Files
 Assert ((Get-Content -LiteralPath $linked -Raw).Trim() -eq $ProjectRef) "linked project drift before apply"
 # NO --include-all, --include-roles, --include-seed, --yes, db reset or repair.
 # If connection drops or an error occurs: STOP; DO NOT automatically retry.
-Supabase @("db", "push", "--linked")
+Supabase -arguments @("db", "push", "--linked")
 Write-Host "CLI operation returned success. Verifying migration history."
-$historyAfter = Supabase-Read @("migration", "list", "--linked")
+$historyAfter = Supabase-Read -arguments @("migration", "list", "--linked")
 Validate-History $historyAfter $true
 Write-Host $historyAfter
 Write-Host "CLI_APPLY_AND_HISTORY_PASS. Independent Supabase RLS/security audit is still required."
