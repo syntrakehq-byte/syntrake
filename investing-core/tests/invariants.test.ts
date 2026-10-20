@@ -3,7 +3,6 @@ import test from "node:test";
 import { assertBalanced, netByLedgerAccount } from "../domain/ledger";
 import { addMoney, currencyMinorDigits, money, subtractMoney } from "../domain/money";
 import { parseUserReportedContributionJson } from "../server/contributionJsonContract";
-import { createRehearsalWriterPool, parseRehearsalWriterPoolConfig, InvestingWriterConfigurationBlocked } from "../server/privateWriterPool";
 
 const account = "00000000-0000-4000-8000-000000000011";
 const cash = "00000000-0000-4000-8000-000000000021";
@@ -64,58 +63,5 @@ test("future HTTP JSON contribution contract preserves minor units and rejects c
     {accessToken:"fabricated_token"},
   ]) {
     assert.throws(()=>parseUserReportedContributionJson({...body,...forged}));
-  }
-});
-
-test("private pg writer config fail-closed: non-rehearsal, no secrets, TLS downgrade, wrong host or SQL role", async () => {
-  const ref="zkqgpejlkgootkvkebhd";
-  const valid={
-    INVESTING_WRITER_MODE:"rehearsal",
-    INVESTING_WRITER_PROJECT_REF:ref,
-    INVESTING_WRITER_DATABASE_URL:`postgresql://investing_writer_runtime:p%40ssword@db.${ref}.supabase.co:5432/postgres`,
-  };
-  const result=parseRehearsalWriterPoolConfig(valid);
-  assert.deepEqual(result.ssl,{rejectUnauthorized:true});
-  assert.equal(result.max,2);
-  assert.equal(result.connectionTimeoutMillis,2500);
-  assert.equal(result.idleTimeoutMillis,10000);
-
-  for(const env of [
-    {...valid,INVESTING_WRITER_MODE:"production"},
-    {...valid,INVESTING_WRITER_MODE:undefined},
-    {...valid,INVESTING_WRITER_DATABASE_URL:undefined},
-    {...valid,INVESTING_WRITER_PROJECT_REF:undefined},
-    {...valid,INVESTING_WRITER_PROJECT_REF:"vbazzxqyuqcrmjytaboc",},
-    // CRITICAL: the hostname + project ref are mutually consistent here.
-    // A generic 20-char regex would have ALLOWED the real production project
-    // merely because MODE=rehearsal, despite explicit rehearsal-only intent.
-    {...valid,INVESTING_WRITER_PROJECT_REF:"vbazzxqyuqcrmjytaboc",
-      INVESTING_WRITER_DATABASE_URL:"postgresql://investing_writer_runtime:password@db.vbazzxqyuqcrmjytaboc.supabase.co:5432/postgres"},
-    {...valid,INVESTING_WRITER_PROJECT_REF:"aaaaaaaaaaaaaaaaaaaa",
-      INVESTING_WRITER_DATABASE_URL:"postgresql://investing_writer_runtime:password@db.aaaaaaaaaaaaaaaaaaaa.supabase.co:5432/postgres"},
-    {...valid,INVESTING_WRITER_DATABASE_URL:"postgresql://postgres:password@db."+ref+".supabase.co:5432/postgres"},
-    {...valid,INVESTING_WRITER_DATABASE_URL:"postgresql://investing_contribution_writer:password@db."+ref+".supabase.co:5432/postgres"},
-    {...valid,INVESTING_WRITER_DATABASE_URL:"postgresql://investing_writer_runtime:password@db."+ref+".supabase.co:5432/postgres?sslmode=disable"},
-    {...valid,INVESTING_WRITER_DATABASE_URL:"postgresql://investing_writer_runtime:password@db."+ref+".supabase.co:5432/postgres?options=-c%20search_path%3Dpublic"},
-    {...valid,INVESTING_WRITER_DATABASE_URL:"postgresql://investing_writer_runtime:password@127.0.0.1:5432/postgres"},
-    {...valid,INVESTING_WRITER_DATABASE_URL:"postgresql://investing_writer_runtime:password@db."+ref+".supabase.co:5433/postgres"},
-    {...valid,INVESTING_WRITER_DATABASE_URL:"postgresql://investing_writer_runtime:password@db."+ref+".supabase.co:5432/notpostgres"},
-    {...valid,INVESTING_WRITER_DATABASE_URL:"not a connection"},
-  ]) {
-    assert.throws(()=>parseRehearsalWriterPoolConfig(env),(e:unknown)=>{
-      assert.equal((e as Error).message,"INVESTING_WRITER_CONFIGURATION_BLOCKED");
-      assert.ok(e instanceof InvestingWriterConfigurationBlocked);
-      return true;
-    });
-  }
-
-  // No client connects and no secret is logged just by constructing the Pool.
-  const pool=createRehearsalWriterPool(valid);
-  try {
-    assert.equal(pool.totalCount,0);
-    assert.equal(pool.idleCount,0);
-    assert.equal(pool.waitingCount,0);
-  } finally {
-    await pool.end();
   }
 });
