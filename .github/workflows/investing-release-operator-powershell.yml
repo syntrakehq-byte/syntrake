@@ -40,7 +40,7 @@ jobs:
             'Assert-DryRun',
             'Validate-History',
             'Read-Host',
-            'Supabase @("db", "push", "--linked")'
+            'Supabase -arguments @("db", "push", "--linked")'
           )) {
             if (-not $text.Contains($required)) { throw "BLOCKED: missing required production guard contract" }
           }
