@@ -8,13 +8,16 @@ import { InvestingReadBlocked, type InvestingReadResult } from "./supabaseReadTr
  */
 type Config = Readonly<Record<string, string | undefined>>;
 
+export const R1_PREVIEW_BRANCH = "candidate/investing-r1-read-accounts-20261020" as const;
+export const R1_PREVIEW_SUPABASE_PROJECT_REF = "zkqgpejlkgootkvkebhd" as const;
+
 export function isR1AccountReadEnabled(env: Config): boolean {
-  const ref = env.INVESTING_R1_SUPABASE_PROJECT_REF;
   return (
+    env.VERCEL_ENV === "preview" &&
+    env.VERCEL_GIT_COMMIT_REF === R1_PREVIEW_BRANCH &&
     env.INVESTING_R1_ACCOUNTS_READ_MODE === "enabled" &&
-    typeof ref === "string" &&
-    /^[a-z0-9]{20}$/.test(ref) &&
-    env.NEXT_PUBLIC_SUPABASE_URL === `https://${ref}.supabase.co` &&
+    env.INVESTING_R1_SUPABASE_PROJECT_REF === R1_PREVIEW_SUPABASE_PROJECT_REF &&
+    env.NEXT_PUBLIC_SUPABASE_URL === `https://${R1_PREVIEW_SUPABASE_PROJECT_REF}.supabase.co` &&
     /^sb_publishable_[A-Za-z0-9_-]{10,}$/.test(
       env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? "",
     )
@@ -46,7 +49,7 @@ export async function handleR1AccountsRead(
   } catch {
     return json(400, { error: "INVALID_REQUEST" });
   }
-  if (url.pathname !== "/api/investing/accounts" || url.search !== "") {
+  if (url.pathname !== "/api/investing/accounts" || url.search !== "" || url.hash !== "" || requestUrl.endsWith("?")) {
     // No per-user, tenant, account, portfolio or selection query is accepted.
     return json(400, { error: "INVALID_REQUEST" });
   }
