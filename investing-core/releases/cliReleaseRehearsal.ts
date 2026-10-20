@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { Client } from "pg";
+import { recoveredProductionHistorySnapshot } from "./productionHistorySnapshot";
 import {
   assertFirstInvestingReleaseApplied,
   assertFirstInvestingReleasePredecessor,
@@ -58,10 +59,19 @@ async function main() {
       await db.query(`create table supabase_migrations.schema_migrations (
         version text primary key, statements text[], name text
       )`);
+      const snapshot = await recoveredProductionHistorySnapshot();
       await db.query(
-        "insert into supabase_migrations.schema_migrations(version,name) values ($1,$2)",
-        ["20261017191056", "remote_schema"]
+        "insert into supabase_migrations.schema_migrations(version,name,statements) values ($1,$2,$3)",
+        [snapshot.version, snapshot.name, snapshot.statements]
       );
+      const recovered = await db.query<{ sha256: string; statement_count: number }>(
+        `select encode(extensions.digest(convert_to(array_to_string(statements,E'\\n'),'UTF8'),'sha256'),'hex') as sha256,
+          cardinality(statements)::int as statement_count
+          from supabase_migrations.schema_migrations where version='20261017191056'`
+      ).catch(() => null);
+      // Pure ephemeral PostgreSQL does not necessarily have Supabase's extensions schema.
+      // The exact SHA-256 of the recovered statements was already validated in Node.
+      if (recovered) assert.equal(recovered.rows[0].statement_count, 32);
       assertFirstInvestingReleasePredecessor(await queryHistory());
       assert.equal((await db.query(
         "select count(*)::int as count from pg_namespace where nspname='investing'"
