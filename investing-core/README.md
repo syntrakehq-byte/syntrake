@@ -1,6 +1,6 @@
-# SYNTRAKE Investing R0-A — foundation candidate
+# SYNTRAKE Investing — R0-A foundations / R1-A read-only integration
 
-**Status (2026-10-20): CANDIDATE, NOT MERGED, NOT RELEASED.** This is not the functioning Investing Core or a broker integration.
+**R0-A status (2026-10-20): ACCEPTED IN GIT `main@c7aaa43537ad57eb40b7463e5ce354d6cf107be6`, NOT DEPLOYED TO PRODUCTION.** This is not the functioning Investing Core or a broker integration.
 
 ## What has been independently proven
 
@@ -28,6 +28,15 @@ All temporary browser-accessible Preview rehearsal routes, writer smoke UI, JWT/
 - The compiler excludes `investing-core/**/*.ts` from the general Next application typecheck; a dedicated strict investing typecheck and isolated PostgreSQL 17 integration gate exist.
 - Sequential HTTP replay on A/C is demonstrated, while concurrent HTTP race tests against a live Clerk Preview were **not** performed. Concurrent idempotency was tested independently in PostgreSQL 17 CI.
 - `USER_REPORTED` denotes user declaration, **not externally verified cash**, returns or investable balance.
-- R0-A must not be merged or migrated to production without a separate lineage, schema/RLS and security acceptance gate and explicit operator authorization.
+- R0-A source is merged in Git; applying migrations or deploying this schema to production still requires a separate lineage, schema/RLS and security gate with explicit operator authorization.
 
 See the detailed source-backed rehearsal reports in `investing-core/audits/` and the guarded Preview-only shutdown at `supabase/rehearsal/teardown/20261020_r0a_preview_writer_fail_closed.sql`.
+
+
+## R1-A read-only account discovery — Preview A/C evidence PASS, production NOT ACTIVE
+
+- The new `GET /api/investing/accounts` endpoint is **disabled by default** (HTTP 404). For the R1 Preview rehearsal, it requires `VERCEL_ENV=preview`, the exact R1 candidate Git branch, `INVESTING_R1_ACCOUNTS_READ_MODE=enabled`, the compile-time allowlisted **Preview** project `zkqgpejlkgootkvkebhd` matching the configured `NEXT_PUBLIC_SUPABASE_URL` and a Supabase **publishable** API key. Production and unrelated Preview branches are rejected even if their credentials otherwise match. There is no service-role fallback.
+- When enabled, the route uses the existing verified Clerk server `auth()` adapter to obtain a JWT. Supabase PostgREST checks the signed token and PostgreSQL owner/member RLS. The browser cannot choose an actor/account/tenant through a query or body.
+- HTTP 200 returns only `state: AVAILABLE | EMPTY_OR_UNPROVISIONED`, basic account summaries, `source: SUPABASE_RLS_READ` and `financialState: NOT_INCLUDED`. It deliberately omits cash, balances, performance and user/session identity. HTTP 401 = absent session; 403 = upstream authorization denied; 503 = unavailable or invalid upstream evidence. 404 = disabled, 400 = invalid path/filter.
+- Do not interpret zero visible accounts as zero invested capital. The production schema/RLS integration and production deployment remain unapproved and unperformed. On 2026-10-20, two genuine Clerk/Google user sessions A and C each returned **only their own** account from the R1-A isolated Vercel Preview, with `financialState: NOT_INCLUDED`. These were **user-observed sanitized HTTP JSON responses**, not independently replayed browser/HAR proof. Supabase Preview persisted unchanged (2 historical synthetic journals, 4 entries, 2 idempotency records, 0 integrity issues) and the financial writer remained `NOLOGIN` with `SET ROLE` revoked. A dedicated Preview deployment for the exact rehearsed SHA was READY. The temporary Vercel build override was removed from this candidate; the branch-scoped R1 read-mode env was set back to `disabled` for **future** deployments. Previous immutable Preview deployments may continue serving their own snapshot/configuration under Clerk and RLS. No production DDL/DML, Vercel production deployment, or Git `main` merge was performed during the rehearsal.
+- Unit tests cover the disabled gate, configuration drift, forged query filters, session failures, sanitized errors, no-store and no fake financial values. Existing isolated PG17 RLS tests remain required.
