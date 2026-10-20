@@ -31,3 +31,12 @@ All temporary browser-accessible Preview rehearsal routes, writer smoke UI, JWT/
 - R0-A must not be merged or migrated to production without a separate lineage, schema/RLS and security acceptance gate and explicit operator authorization.
 
 See the detailed source-backed rehearsal reports in `investing-core/audits/` and the guarded Preview-only shutdown at `supabase/rehearsal/teardown/20261020_r0a_preview_writer_fail_closed.sql`.
+
+
+## R1 read-only account discovery — candidate, NOT ACTIVE
+
+- The new `GET /api/investing/accounts` endpoint is **disabled by default** (HTTP 404). It requires `INVESTING_R1_ACCOUNTS_READ_MODE=enabled`, an independently configured 20-character `INVESTING_R1_SUPABASE_PROJECT_REF` matching `NEXT_PUBLIC_SUPABASE_URL` exactly, and a Supabase **publishable** API key. There is no service-role fallback.
+- When enabled, the route uses the existing verified Clerk server `auth()` adapter to obtain a JWT. Supabase PostgREST checks the signed token and PostgreSQL owner/member RLS. The browser cannot choose an actor/account/tenant through a query or body.
+- HTTP 200 returns only `state: AVAILABLE | EMPTY_OR_UNPROVISIONED`, basic account summaries, `source: SUPABASE_RLS_READ` and `financialState: NOT_INCLUDED`. It deliberately omits cash, balances, performance and user/session identity. HTTP 401 = absent session; 403 = upstream authorization denied; 503 = unavailable or invalid upstream evidence. 404 = disabled, 400 = invalid path/filter.
+- Do not interpret zero visible accounts as zero invested capital. A production SQL schema/RLS and real provider/JWT/account smoke test are still unapproved and unperformed. This R1 candidate makes no remote DDL/DML, Vercel deployment or API activation.
+- Unit tests cover the disabled gate, configuration drift, forged query filters, session failures, sanitized errors, no-store and no fake financial values. Existing isolated PG17 RLS tests remain required.
