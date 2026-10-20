@@ -8,7 +8,7 @@ import { InvestingReadBlocked, type InvestingReadResult } from "./supabaseReadTr
  */
 type Config = Readonly<Record<string, string | undefined>>;
 
-export const R1_PREVIEW_BRANCH = "candidate/investing-r1-read-accounts-20261020" as const;
+export const R1_PREVIEW_BRANCH = "candidate/investing-r1b-accounts-ui-20261020" as const;
 export const R1_PREVIEW_SUPABASE_PROJECT_REF = "zkqgpejlkgootkvkebhd" as const;
 
 export function isR1AccountReadEnabled(env: Config): boolean {
