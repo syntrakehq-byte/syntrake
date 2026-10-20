@@ -3,9 +3,11 @@ import test from "node:test";
 import { handleR1AccountsRead, isR1AccountReadEnabled } from "../server/accountsReadHttp";
 import { InvestingReadBlocked, type InvestingReadResult } from "../server/supabaseReadTransport";
 
-const ref = "vbazzxqyuqcrmjytaboc";
+const ref = "zkqgpejlkgootkvkebhd";
 const route = "https://www.syntrake.com/api/investing/accounts";
 const enabled = {
+  VERCEL_ENV: "preview",
+  VERCEL_GIT_COMMIT_REF: "candidate/investing-r1-read-accounts-20261020",
   INVESTING_R1_ACCOUNTS_READ_MODE: "enabled",
   INVESTING_R1_SUPABASE_PROJECT_REF: ref,
   NEXT_PUBLIC_SUPABASE_URL: `https://${ref}.supabase.co`,
@@ -21,10 +23,17 @@ const ownerResult: InvestingReadResult = {
 test("R1 is disabled by default and bound to exact matching Supabase project + public key", () => {
   assert.equal(isR1AccountReadEnabled(enabled), true);
   for (const delta of [
+    { VERCEL_ENV: "production" },
+    { VERCEL_ENV: "development" },
+    { VERCEL_ENV: undefined },
+    { VERCEL_GIT_COMMIT_REF: "main" },
+    { VERCEL_GIT_COMMIT_REF: "candidate/investing-r0a-writer-e2e-preview-20261018" },
+    { VERCEL_GIT_COMMIT_REF: undefined },
     { INVESTING_R1_ACCOUNTS_READ_MODE: undefined },
     { INVESTING_R1_ACCOUNTS_READ_MODE: "production" },
     { INVESTING_R1_SUPABASE_PROJECT_REF: undefined },
-    { INVESTING_R1_SUPABASE_PROJECT_REF: "zkqgpejlkgootkvkebhd" },
+    { INVESTING_R1_SUPABASE_PROJECT_REF: "vbazzxqyuqcrmjytaboc" },
+    { INVESTING_R1_SUPABASE_PROJECT_REF: "vbazzxqyuqcrmjytaboc", NEXT_PUBLIC_SUPABASE_URL: "https://vbazzxqyuqcrmjytaboc.supabase.co" },
     { INVESTING_R1_SUPABASE_PROJECT_REF: "not-a-ref" },
     { NEXT_PUBLIC_SUPABASE_URL: undefined },
     { NEXT_PUBLIC_SUPABASE_URL: "http://" + ref + ".supabase.co" },
@@ -55,12 +64,10 @@ test("R1 rejects any query/account/user selection before reading", async () => {
     route + "?userId=clerk_other",
     route + "?cash=0",
     route + "?",
+    route + "#evil",
     route.replace("/accounts", "/accounts/other"),
     "not a url",
   ]) {
-    // URL('?') has an empty search in standard WHATWG parsing; that shape is
-    // equivalent to the canonical route, so exclude it from the deny matrix.
-    if (request.endsWith("?")) continue;
     const response = await handleR1AccountsRead(request, enabled, forbidden);
     assert.equal(response.status, 400, request);
     assert.deepEqual(await response.json(), { error: "INVALID_REQUEST" });
