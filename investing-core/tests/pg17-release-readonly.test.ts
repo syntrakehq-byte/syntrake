@@ -28,16 +28,28 @@ test("PG17 first-release read-only migrations stay fail-closed", async (t) => {
     await db.query("grant usage on schema auth to authenticated");
     await db.query("grant execute on function auth.jwt() to authenticated");
 
-    const paths = [
-      "../../supabase/migrations/20261017160000_investing_core_foundation.sql",
-      "../../supabase/migrations/20261018070000_investing_owner_membership_guard.sql",
-    ] as const;
+    const foundation = await readFile(new URL(
+      "../../supabase/migrations/20261017160000_investing_core_foundation.sql", import.meta.url,
+    ), "utf8");
+    const ownerGuard = await readFile(new URL(
+      "../../supabase/migrations/20261018070000_investing_owner_membership_guard.sql", import.meta.url,
+    ), "utf8");
+    const releaseSQL = await readFile(new URL(
+      "../../supabase/release-candidates/20261020180000_investing_first_readonly_release.sql",
+      import.meta.url,
+    ), "utf8");
 
-    for (const path of paths) {
-      const sql = await readFile(new URL(path, import.meta.url), "utf8");
-      assert.ok(sql.length > 1000, "not a placeholder migration: " + path);
-      await db.query(sql);
-    }
+    // No silently invented or modified DDL inside the consolidated release.
+    const foundationCopy = releaseSQL.split("-- BEGIN EXACT FOUNDATION SQL\\n")[1]
+      ?.split("\\n-- END EXACT FOUNDATION SQL")[0];
+    const ownerCopy = releaseSQL.split("-- BEGIN EXACT OWNER GUARD SQL\\n")[1]
+      ?.split("\\n-- END EXACT OWNER GUARD SQL")[0];
+    assert.equal(foundationCopy, foundation.trimEnd(), "release foundation differs from accepted source");
+    assert.equal(ownerCopy, ownerGuard.trimEnd(), "release owner guard differs from accepted source");
+    assert.match(releaseSQL, /REVOKE SELECT ON[\\s\\S]*investing\\.ledger_transactions[\\s\\S]*FROM authenticated;/);
+    assert.equal(releaseSQL.includes("CREATE ROLE investing_contribution_writer"), false);
+    assert.equal(releaseSQL.includes("CREATE ROLE investing_writer_runtime"), false);
+    await db.query(releaseSQL);
 
     await t.test("exact schema shape, no writer capability or runtime login", async () => {
       const tables = await db.query<{ count: number }>(
@@ -62,18 +74,28 @@ test("PG17 first-release read-only migrations stay fail-closed", async (t) => {
       const privileges = await db.query<{
         auth_read: boolean; auth_insert: boolean; anon_read: boolean;
         member_insert: boolean; writer_rpc: boolean; guard_rpc: boolean;
+        ledger_read: boolean; portfolio_read: boolean; identity_read: boolean;
+        subledger_read: boolean; entry_read: boolean; member_read: boolean;
       }>(
         "select " +
         "has_table_privilege('authenticated','investing.investment_accounts','SELECT') as auth_read," +
         "has_table_privilege('authenticated','investing.investment_accounts','INSERT') as auth_insert," +
         "has_table_privilege('anon','investing.investment_accounts','SELECT') as anon_read," +
         "has_table_privilege('authenticated','investing.account_memberships','INSERT') as member_insert," +
+        "has_table_privilege('authenticated','investing.account_memberships','SELECT') as member_read," +
+        "has_table_privilege('authenticated','investing.ledger_transactions','SELECT') as ledger_read," +
+        "has_table_privilege('authenticated','investing.portfolios','SELECT') as portfolio_read," +
+        "has_table_privilege('authenticated','investing.identity_accounts','SELECT') as identity_read," +
+        "has_table_privilege('authenticated','investing.ledger_accounts','SELECT') as subledger_read," +
+        "has_table_privilege('authenticated','investing.ledger_entries','SELECT') as entry_read," +
         "has_function_privilege('authenticated','investing.ledger_integrity_issues()','EXECUTE') as writer_rpc," +
         "has_function_privilege('authenticated','investing.assert_canonical_owner_membership()','EXECUTE') as guard_rpc"
       );
       assert.deepEqual(privileges.rows[0], {
         auth_read: true, auth_insert: false, anon_read: false,
         member_insert: false, writer_rpc: false, guard_rpc: false,
+        member_read: true, ledger_read: false, portfolio_read: false,
+        identity_read: false, subledger_read: false, entry_read: false,
       });
     });
 
