@@ -164,6 +164,10 @@ if ($Mode -eq "Plan") {
 }
 
 $want = "APLICAR $ProjectRef 20261020180000"
+Write-Host "Before execution, independently check Supabase dashboard: Data API auto-expose = OFF;"
+Write-Host "Exposed schemas exclude investing; Clerk integration ENABLED. Do not enable investing yet."
+$uiText = Read-Host "After checking those settings NOW, type: CONTROLOS OFF CLERK ON"
+Assert ($uiText -ceq "CONTROLOS OFF CLERK ON") "operator has not re-confirmed Supabase dashboard controls"
 Write-Host "About to apply exact reviewed SQL in Supabase Production, with NO writers, seed or roles."
 $answer = Read-Host "Type exactly: $want"
 Assert ($answer -ceq $want) "operator did not confirm exact target and migration"
