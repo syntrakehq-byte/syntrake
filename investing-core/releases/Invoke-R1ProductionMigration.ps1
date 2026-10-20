@@ -1,4 +1,4 @@
-# SYNTRAKE R1 — operator-controlled Supabase Production release.
+﻿# SYNTRAKE R1 — operator-controlled Supabase Production release.
 # Requires: Windows PowerShell 5.1+, Git with personal GitHub access, Node.js/npm.
 # This is NOT a GitHub Action and NEVER uses a CI/service_role credential.
 # .\Invoke-R1ProductionMigration.ps1 -Mode Plan  (no production writes)
