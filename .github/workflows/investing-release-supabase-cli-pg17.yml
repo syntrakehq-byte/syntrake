@@ -50,11 +50,12 @@ jobs:
           : "${RUNNER_TEMP:?}"
           ROOT="$RUNNER_TEMP/syntrake_cli_release"
           mkdir -p "$ROOT/supabase/migrations"
-          # This exists ONLY within ephemeral CI. It is NOT the real remote_schema
-          # SQL and is NEVER placed in the canonical source migration directory.
-          printf '%s\n' '-- SYNTHETIC CI FIXTURE: already-applied remote_schema' \
-            '-- DO NOT copy, deploy or replay this placeholder to Production.' \
+          # Historical source is reconstructed from the REAL Production migration
+          # registry snapshot, independently fingerprinted and Git-committed.
+          # Already-applied file is NOT executed. Never copy it to Production.
+          npx tsx -e 'import {renderRecoveredBaselineForDisposableCI} from "./investing-core/releases/productionHistorySnapshot"; renderRecoveredBaselineForDisposableCI().then(sql => process.stdout.write(sql)).catch(() => {process.stderr.write("BLOCKED_HISTORICAL_SNAPSHOT\\n"); process.exitCode = 1;});' \
             > "$ROOT/supabase/migrations/20261017191056_remote_schema.sql"
+          test -s "$ROOT/supabase/migrations/20261017191056_remote_schema.sql"
           cp supabase/release-candidates/20261020180000_investing_first_readonly_release.sql \
             "$ROOT/supabase/migrations/20261020180000_investing_first_readonly_release.sql"
           test "$(find "$ROOT/supabase/migrations" -maxdepth 1 -type f -name '*.sql' | wc -l)" -eq 2

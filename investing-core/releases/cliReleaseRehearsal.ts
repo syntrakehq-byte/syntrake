@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { Client } from "pg";
+import { recoveredProductionHistorySnapshot, RECOVERED_BASELINE_SQL_MD5 } from "./productionHistorySnapshot";
 import {
   assertFirstInvestingReleaseApplied,
   assertFirstInvestingReleasePredecessor,
@@ -58,10 +59,18 @@ async function main() {
       await db.query(`create table supabase_migrations.schema_migrations (
         version text primary key, statements text[], name text
       )`);
+      const snapshot = await recoveredProductionHistorySnapshot();
       await db.query(
-        "insert into supabase_migrations.schema_migrations(version,name) values ($1,$2)",
-        ["20261017191056", "remote_schema"]
+        "insert into supabase_migrations.schema_migrations(version,name,statements) values ($1,$2,$3)",
+        [snapshot.version, snapshot.name, snapshot.statements]
       );
+      const recovered = await db.query<{ sql_md5: string; statement_count: number }>(
+        `select md5(array_to_string(statements,E'\\n')) as sql_md5,
+          cardinality(statements)::int as statement_count
+          from supabase_migrations.schema_migrations where version='20261017191056'`
+      );
+      assert.equal(recovered.rows[0].statement_count, 32);
+      assert.equal(recovered.rows[0].sql_md5, RECOVERED_BASELINE_SQL_MD5);
       assertFirstInvestingReleasePredecessor(await queryHistory());
       assert.equal((await db.query(
         "select count(*)::int as count from pg_namespace where nspname='investing'"
@@ -69,6 +78,13 @@ async function main() {
       process.stdout.write("ISOLATED_PG17_CLI_BASELINE_READY\n");
     } else {
       assertFirstInvestingReleaseApplied(await queryHistory());
+      const baseline = await db.query<{ sql_md5: string; statements: number }>(
+        `select md5(array_to_string(statements,E'\\n')) as sql_md5,
+        cardinality(statements)::int as statements
+        from supabase_migrations.schema_migrations where version='20261017191056'`
+      );
+      assert.equal(baseline.rows[0].statements, 32);
+      assert.equal(baseline.rows[0].sql_md5, RECOVERED_BASELINE_SQL_MD5);
       const shape = await db.query<{
         tables: number; accounts: number; writer: boolean;
         grant_select: boolean; grant_insert: boolean;
