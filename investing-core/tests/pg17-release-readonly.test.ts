@@ -40,13 +40,13 @@ test("PG17 first-release read-only migrations stay fail-closed", async (t) => {
     ), "utf8");
 
     // No silently invented or modified DDL inside the consolidated release.
-    const foundationCopy = releaseSQL.split("-- BEGIN EXACT FOUNDATION SQL\\n")[1]
-      ?.split("\\n-- END EXACT FOUNDATION SQL")[0];
-    const ownerCopy = releaseSQL.split("-- BEGIN EXACT OWNER GUARD SQL\\n")[1]
-      ?.split("\\n-- END EXACT OWNER GUARD SQL")[0];
+    const foundationCopy = releaseSQL.split("-- BEGIN EXACT FOUNDATION SQL\n")[1]
+      ?.split("\n-- END EXACT FOUNDATION SQL")[0];
+    const ownerCopy = releaseSQL.split("-- BEGIN EXACT OWNER GUARD SQL\n")[1]
+      ?.split("\n-- END EXACT OWNER GUARD SQL")[0];
     assert.equal(foundationCopy, foundation.trimEnd(), "release foundation differs from accepted source");
     assert.equal(ownerCopy, ownerGuard.trimEnd(), "release owner guard differs from accepted source");
-    assert.match(releaseSQL, /REVOKE SELECT ON[\\s\\S]*investing\\.ledger_transactions[\\s\\S]*FROM authenticated;/);
+    assert.match(releaseSQL, /REVOKE SELECT ON[\s\S]*investing\.ledger_transactions[\s\S]*FROM authenticated;/);
     assert.equal(releaseSQL.includes("CREATE ROLE investing_contribution_writer"), false);
     assert.equal(releaseSQL.includes("CREATE ROLE investing_writer_runtime"), false);
     await db.query(releaseSQL);
