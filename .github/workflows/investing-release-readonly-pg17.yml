@@ -5,6 +5,7 @@ on:
     paths:
       - 'investing-core/**'
       - 'supabase/migrations/**'
+      - 'supabase/release-candidates/**'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/investing-release-readonly-pg17.yml'

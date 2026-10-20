@@ -9,19 +9,49 @@ import { InvestingReadBlocked, type InvestingReadResult } from "./supabaseReadTr
 type Config = Readonly<Record<string, string | undefined>>;
 
 export const R1_PREVIEW_BRANCH = "candidate/investing-r1b-accounts-ui-20261020" as const;
+export const R1_RELEASE_CANDIDATE_BRANCH = "candidate/investing-r1-production-readonly-release-20261020" as const;
 export const R1_PREVIEW_SUPABASE_PROJECT_REF = "zkqgpejlkgootkvkebhd" as const;
+export const R1_PRODUCTION_SUPABASE_PROJECT_REF = "vbazzxqyuqcrmjytaboc" as const;
 
-export function isR1AccountReadEnabled(env: Config): boolean {
-  return (
-    env.VERCEL_ENV === "preview" &&
-    env.VERCEL_GIT_COMMIT_REF === R1_PREVIEW_BRANCH &&
-    env.INVESTING_R1_ACCOUNTS_READ_MODE === "enabled" &&
-    env.INVESTING_R1_SUPABASE_PROJECT_REF === R1_PREVIEW_SUPABASE_PROJECT_REF &&
-    env.NEXT_PUBLIC_SUPABASE_URL === `https://${R1_PREVIEW_SUPABASE_PROJECT_REF}.supabase.co` &&
-    /^sb_publishable_[A-Za-z0-9_-]{10,}$/.test(
-      env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? "",
-    )
+function publishableKeyOnly(env: Config): boolean {
+  return /^sb_publishable_[A-Za-z0-9_-]{10,}$/.test(
+    env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? "",
   );
+}
+
+/**
+ * Runtime-disabled production gate. A production build becomes readable ONLY
+ * after a separately approved operator supplies both an exact 40-hex deploy
+ * SHA and the explicit prod-only enable flag, for the intended Supabase
+ * production ref. All values are server environment, never query parameters.
+ * This gate does not itself prove Supabase has an applied schema or valid
+ * third-party Clerk JWT configuration: those require separate release proof.
+ */
+export function isR1AccountReadEnabled(env: Config): boolean {
+  if (!publishableKeyOnly(env)) return false;
+
+  if (env.VERCEL_ENV === "preview") {
+    return (
+      (env.VERCEL_GIT_COMMIT_REF === R1_PREVIEW_BRANCH ||
+        env.VERCEL_GIT_COMMIT_REF === R1_RELEASE_CANDIDATE_BRANCH) &&
+      env.INVESTING_R1_ACCOUNTS_READ_MODE === "enabled" &&
+      env.INVESTING_R1_SUPABASE_PROJECT_REF === R1_PREVIEW_SUPABASE_PROJECT_REF &&
+      env.NEXT_PUBLIC_SUPABASE_URL === `https://${R1_PREVIEW_SUPABASE_PROJECT_REF}.supabase.co`
+    );
+  }
+
+  if (env.VERCEL_ENV === "production") {
+    const approvedSHA = env.INVESTING_R1_PRODUCTION_APPROVED_SHA ?? "";
+    return (
+      env.VERCEL_GIT_COMMIT_REF === "main" &&
+      env.INVESTING_R1_PRODUCTION_READ_MODE === "enabled" &&
+      /^[a-f0-9]{40}$/.test(approvedSHA) &&
+      env.VERCEL_GIT_COMMIT_SHA === approvedSHA &&
+      env.INVESTING_R1_SUPABASE_PROJECT_REF === R1_PRODUCTION_SUPABASE_PROJECT_REF &&
+      env.NEXT_PUBLIC_SUPABASE_URL === `https://${R1_PRODUCTION_SUPABASE_PROJECT_REF}.supabase.co`
+    );
+  }
+  return false;
 }
 
 export const accountReadHeaders = Object.freeze({
