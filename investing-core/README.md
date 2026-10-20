@@ -1,63 +1,33 @@
-# SYNTRAKE Investing Core — R0-A candidate (BLOCKED)
+# SYNTRAKE Investing R0-A — foundation candidate
 
-This bounded context is independent from Trading, Research Lab and Billing. It is not a functioning investing product or broker integration.
+**Status (2026-10-20): CANDIDATE, NOT MERGED, NOT RELEASED.** This is not the functioning Investing Core or a broker integration.
 
-- Clerk is the identity provider. Supabase JWT verification must precede PostgreSQL RLS reads of `auth.jwt()->>'sub'`. A real tenant A/B Clerk→REST/RLS rehearsal PASS is **audit-reported** from the user's earlier independent-audit summary; redacted source transcript/signature details were not attached and therefore are not independently attested in this repo. The isolated server actor adapter calls Clerk `auth()` but is NOT exposed on an HTTP write route.
-- Accounting uses exact bigint minor units and an explicit supported subset of ISO 4217 currencies, including JPY (0 minor digits) and KWD (3 minor digits). The SQL currency registry must match the domain registry. Three uppercase letters alone do not validate ISO currencies.
-- Double-entry journals post between different internal ledger accounts within one investment account. Every currency independently balances. Journal state moves from draft to posted before COMMIT and cannot subsequently be changed. Corrections require compensating journals.
-- The server-side `recordUserReportedContribution` checks ownership and the owner membership in PostgreSQL, serializes cooperating operations with a transaction-scoped advisory account lock, hashes normalized input, rejects idempotency-key conflicts and prevents duplicate external references. The forward-only owner-guard candidate uses the **same advisory key at COMMIT** to coordinate owner/membership changes. Reservation, journal and replay result commit atomically. PG17 CI proves a NOLOGIN/NO-BYPASSRLS restricted role can execute and replay a contribution **without UPDATE permission on investment_accounts**; this CI-only role/policy fixture is NOT a provisioned operational writer. There is a server-only Clerk-bound function, but NO enabled HTTP write route or provisioned privileged PostgreSQL runtime LOGIN.
-- USER_REPORTED is a NON-VERIFIED financial declaration. Its journal is internal bookkeeping only; it is NOT proof of a deposit, broker-confirmed cash, performance, investable balance or available trading authority. Future investment/execution logic MUST NOT promote this evidence to broker-confirmed truth without independent reconciliation.
-- PostgreSQL tests use synthetic fixtures, admin setup, and simulation of JWT claims at database level, NOT genuine signed Clerk JWT verification.
-- The original foundation SQL was applied to the nonproduction Supabase `investing-r0a-rehearsal` branch under a separately named migration (`20261017191352_investing_core_r0a_foundation_f0a9c5c5`), with exact SQL contents matched to the GitHub foundation file at `f0a9c5c5...`. It was **not** applied to the main Supabase project. The PR #4 owner-guard migration `20261018070000_investing_owner_membership_guard.sql` **was** applied exclusively to the nonproduction rehearsal branch as the registered migration `20261018072636_investing_owner_membership_guard_467bd9b7`, with exact SQL parity and functional rollback-only tests verified. The PR #5 writer-capability migration `20261018074500_investing_contribution_writer_capability.sql` is **CI-only** and is not remotely applied; its authorized application was blocked by tool security restrictions. Rewriting either previously applied migration or silently reconciling version drift is prohibited.
-- Supabase service_role is capability, never user authorization. A future constrained privileged DB writer, real external auth validation and operational auditing must be separately gated.
+## What has been independently proven
 
-Outstanding BLOCKED gates: independently retain the redacted genuine Clerk/Supabase A/B rehearsal transcript if available, provision/test a strictly authorized server-held PostgreSQL writer role and its RLS/DDL in an explicitly authorized nonproduction rehearsal, operational auth-to-write/timeout/retry/failure/reconciliation, and dev/build-tool vulnerability assessment. Site build, PG17 tests and npm **runtime** audit passed on the current candidate ancestry; those successes do NOT authorize merge, production migrations, live execution or real deposits. No service in this slice may move real money.
+- A versioned PostgreSQL 17 double-entry ledger and restricted owner-based financial writer, with validated bigint minor units, immutable journals, independent currencies and deterministic idempotency.
+- Isolated PG17 CI, including concurrent same-key replay, owner/member isolation, missing-actor rejection and transactional integrity.
+- Genuine Clerk A/C sessions in a nonproduction rehearsal project, with server-derived identity, cross-account HTTP denials and one authorized synthetic `USER_REPORTED` contribution per account. Both sequential replays returned their original transaction IDs.
+- Independently reconciled **Preview** project `zkqgpejlkgootkvkebhd`: 2 posted journals (1 A, 1 C), 4 balanced entries, 2 idempotency keys and 0 reported integrity findings. Amount: **1 EUR minor unit per account**, NOT broker-confirmed cash or actual transferred funds.
+- End-of-ensayo fail-closed shutdown performed only in that Preview database: `investing_writer_runtime` is now `NOLOGIN`; its `investing_contribution_writer` membership was revoked, with both states re-read and confirmed after the change.
 
-## Read-only Clerk → Supabase transport candidate
+## What survives in the R0-A product foundation
 
-- The server-only entry **loadOwnInvestingAccountsFromClerk** obtains `userId`, `sessionId`, and `getToken()` exclusively from Clerk's server-side `auth()` context. It has **no public route** in R0-A.
-- **readOwnInvestingAccounts** uses an auditable, narrowly scoped PostgREST GET for investment account summaries, setting `Accept-Profile: investing`, a **publishable** key and the session's bearer token. No dynamic user/account filter, privileged fallback, client-supplied JWT, cash balance, or trading authority.
-- Production callers MUST never construct the lower-level transport's session argument from client data. A valid-looking JWT is not verified by regex: verification is done by the Supabase gateway. The simulated transport tests CANNOT establish real Clerk/Supabase JWT signature validation.
-- Unit tests cover missing session/token, wrong hosts, secret keys, synthetic gateway 401/403, network errors, malformed responses and two isolated **synthetic** sessions. PostgreSQL 17 tests additionally exercise mocked RLS A/B, unauthorized anon, missing `sub` and read-only access.
-- The rehearsal JWT/REST/RLS A/B test is **AUDIT-REPORTED PASS** for the foundation schema, including negative cross-tenant checks. Its original signed-token assertions were not recovered here. This evidence does not demonstrate the newer owner-guard schema, production rollout, or authorized financial writes. The exact test environment and actor-to-tenant authority remain essential.
+- Financial invariants in `investing-core/domain` and `investing-core/server`.
+- Private Clerk actor adapter, typed untrusted-input validation, tenant-aware read-only transport and a transaction-scoped deterministic writer that requires a separately authorized minimally privileged PG connection.
+- Versioned candidate schema migrations and PostgreSQL 17/security tests.
+- Immutable evidence and operator-only fixture/teardown scripts under `investing-core/audits` and `supabase/rehearsal`.
 
-## Supabase Advisor disposition (rehearsal, 2026-10-18)
+## Removed at closure
 
-See [the scoped audit evidence](./audits/r0a-rehearsal-20261018.md).
-The private `operation_idempotency_keys` table has FORCE RLS,
-**no public policies**, and no anonymous/authenticated grants. This is
-intentional deny-by-default, not a reason to add an externally callable
-policy. Seven RLS-initplan warnings persist despite existing
-`(SELECT auth.jwt()->>'sub')` wrappers. Seven FK index-coverage warnings
-are performance questions, not proof of a correctness or auth defect;
-benchmark with real workload evidence before adding speculative indexes.
+All temporary browser-accessible Preview rehearsal routes, writer smoke UI, JWT/debug inspectors, hardcoded preview HTTP gate, and preview-specific private writer pool/TLS trust-anchor implementation have been **removed from this candidate tree**. The old Preview deployments may still be reachable but their low-privilege writer database capability was independently revoked. Audit evidence remains in Git history.
 
-## Writer integration preparation (candidate PR #5)
+## Explicit limits
 
-This candidate adds a strict JSON adapter and direct negative integration tests.
-`amountMinor` arrives as a canonical decimal **string** to preserve bigint
-precision; unknown identity/role fields are rejected. Server-only Clerk
-`auth()` supplies the Actor, not request payload.
+- **No Investing Core product workflow** yet: no imported living portfolios, current positions, real cash reconciliation, market-data valuations, risk/allocation engines, decision engines or broker integrations.
+- No production schemas/DB migration or production authorization. The connected production Supabase project is separate and has not received the Preview financial schema.
+- The compiler excludes `investing-core/**/*.ts` from the general Next application typecheck; a dedicated strict investing typecheck and isolated PostgreSQL 17 integration gate exist.
+- Sequential HTTP replay on A/C is demonstrated, while concurrent HTTP race tests against a live Clerk Preview were **not** performed. Concurrent idempotency was tested independently in PostgreSQL 17 CI.
+- `USER_REPORTED` denotes user declaration, **not externally verified cash**, returns or investable balance.
+- R0-A must not be merged or migrated to production without a separate lineage, schema/RLS and security acceptance gate and explicit operator authorization.
 
-The isolated PostgreSQL 17 tests additionally reuse a single `pg` connection
-across tenant A and B operations, verifying that `SET LOCAL ROLE` and
-`syntrake.actor_user_id` never survive COMMIT/ROLLBACK. Invalid inputs fail
-before acquiring SQL, and lock contention aborts without partial journals.
-These are real PG17 CI fixtures, **not** Clerk-provider end-to-end tests.
-Read the [integration acceptance matrix](./audits/r0a-writer-authority-contract.md).
-
-The `pg` package has now been promoted into production dependencies with a
-version-consistent lockfile. GitHub CI verifies `npm ci --omit=dev` and a
-successful Node `require('pg')`, as well as a lazy, fail-closed rehearsal-only
-private PostgreSQL pool configuration **pinned at compile time to the verified
-non-default branch `zkqgpejlkgootkvkebhd`** (not the production project),
-with a negative test using a production ref and matching production host. The server-only
-`recordUserReportedContributionInRehearsal()` now composes Clerk authentication,
-strict JSON input and the private pool without enabling a request handler.
-Standalone Node 20 tests can load the Clerk-bound server entry module
-without credentials or database connections; no signed Clerk session is
-executed by that smoke test.
-Global Next.js compilation still excludes `investing-core/**/*.ts`, so actual
-Next runtime bundling is **not proved**. There is no server-held constrained
-LOGIN, new remote writer-capability migration, REST writer endpoint or broker
-confirmation.
+See the detailed source-backed rehearsal reports in `investing-core/audits/` and the guarded Preview-only shutdown at `supabase/rehearsal/teardown/20261020_r0a_preview_writer_fail_closed.sql`.
