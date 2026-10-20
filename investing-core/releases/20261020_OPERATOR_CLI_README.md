@@ -41,7 +41,7 @@ After inspecting a successful `PLAN_PASS`, run:
 .\Invoke-R1ProductionMigration.ps1 -Mode Apply
 ```
 
-The script re-runs every local check, re-links the Production project, repeats remote history inspection and dry-run, and requires a typed confirmation: `APLICAR vbazzxqyuqcrmjytaboc 20261020180000`. Only then invokes `supabase db push --linked`, **without** seed, role or --include-all. Supabase CLI may ask for its own additional confirmation. Do not skip it.
+The script re-runs every local check, re-links the Production project, repeats remote history inspection and dry-run. Before any apply the operator must freshly inspect the Supabase dashboard and type `CONTROLOS OFF CLERK ON` to attest the Clerk provider is enabled, `Automatically expose new tables` is OFF and `investing` is NOT an exposed schema; this attestation is *not* independent dashboard/API verification. The script then requires a typed confirmation: `APLICAR vbazzxqyuqcrmjytaboc 20261020180000`. Only then invokes `supabase db push --linked`, **without** seed, role or --include-all. Supabase CLI may ask for its own additional confirmation. Do not skip it.
 
 If the command returns any ambiguity, error or disconnect, **do not run it again**. Supply only sanitized logs (CLI plan, migration version and failure stage), and stop to inspect actual remote SQL objects and migration history independently before proposing a corrective plan.
 
