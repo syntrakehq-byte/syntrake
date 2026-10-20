@@ -29,6 +29,9 @@ jobs:
     env:
       CI: "true"
       INVESTING_RELEASE_CLI_DB_URL: "postgresql://postgres:postgres@127.0.0.1:5432/syntrake_cli_rehearsal"
+      # CLI v2.84.2 reserializes --db-url and drops sslmode. Force plaintext
+      # only for the loopback-only disposable PG17 fixture. NEVER use for Prod.
+      PGSSLMODE: "disable"
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
