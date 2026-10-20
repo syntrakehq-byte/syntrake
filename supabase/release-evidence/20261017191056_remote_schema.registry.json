@@ -39,5 +39,6 @@
     "ALTER DEFAULT PRIVILEGES FOR ROLE \"postgres\" IN SCHEMA \"public\" GRANT ALL ON TABLES TO \"anon\"",
     "ALTER DEFAULT PRIVILEGES FOR ROLE \"postgres\" IN SCHEMA \"public\" GRANT ALL ON TABLES TO \"authenticated\"",
     "ALTER DEFAULT PRIVILEGES FOR ROLE \"postgres\" IN SCHEMA \"public\" GRANT ALL ON TABLES TO \"service_role\""
-  ]
+  ],
+  "statementArrayJoinedByNewlineSha256": "8cec567d53f9f17868c7110b48d17212e1ba8db897f513aee36e287f0016335d"
 }
