@@ -20,7 +20,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Parse PowerShell without executing any migration or authentication
-        shell: pwsh
+        shell: powershell
         run: |
           $path = "investing-core/releases/Invoke-R1ProductionMigration.ps1"
           $tokens = $null
