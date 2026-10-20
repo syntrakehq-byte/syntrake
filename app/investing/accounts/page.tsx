@@ -29,10 +29,6 @@ export default async function InvestingAccountsPage({
   if (!session.userId || !session.sessionId) {
     redirect("/sign-in?redirect_url=%2Finvesting%2Faccounts");
   }
-  const language = await resolveRequestSiteLang(
-    searchParams && "then" in searchParams
-      ? await searchParams
-      : searchParams,
-  );
+  const language = await resolveRequestSiteLang(await searchParams);
   return <AccountDiscoveryClient lang={language} />;
 }
