@@ -44,13 +44,16 @@ jobs:
           )) {
             if (-not $text.Contains($required)) { throw "BLOCKED: missing required production guard contract" }
           }
-          $never = @('db reset', 'migration repair', '--include-all', '--include-seed', '--include-roles')
-          foreach ($hazard in $never) {
-            # Disallowed terms may appear in comments documenting what NOT to do,
-            # but never as shell-invocation args.
-            if ($text -match 'Supabase\s+@\("[^"\r\n]*' + [regex]::Escape($hazard)) {
-              throw "BLOCKED: dangerous command parameter used"
+          $never = @('reset', 'repair', '--include-all', '--include-seed', '--include-roles')
+          $calls = [regex]::Matches($text, '(?m)^\s*Supabase\s+-arguments\s+@\([^\r\n]*')
+          if ($calls.Count -lt 5) { throw "BLOCKED: too few reviewed Supabase calls" }
+          foreach ($call in $calls) {
+            foreach ($hazard in $never) {
+              if ($call.Value.Contains($hazard)) { throw "BLOCKED: dangerous command invoked" }
             }
+          }
+          if ([regex]::Matches($text, '(?m)^\s*Supabase -arguments @\("db", "push", "--linked"\)').Count -ne 1) {
+            throw "BLOCKED: exactly one guarded apply invocation required"
           }
           Write-Host "WINDOWS_POWERSHELL_PARSE_AND_RELEASE_GUARDS_PASS"
       - name: Confirm SQL in accepted Git tree still unchanged
