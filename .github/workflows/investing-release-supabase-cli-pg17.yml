@@ -64,7 +64,7 @@ jobs:
           ROOT="$RUNNER_TEMP/syntrake_cli_release"
           npx --yes supabase@2.84.2 --version
           npx --yes supabase@2.84.2 --workdir "$ROOT" db push \
-            --db-url "$INVESTING_RELEASE_CLI_DB_URL" --dry-run 2>&1 | tee "$RUNNER_TEMP/cli-dryrun.txt"
+            --db-url "$INVESTING_RELEASE_CLI_DB_URL?sslmode=disable" --dry-run 2>&1 | tee "$RUNNER_TEMP/cli-dryrun.txt"
           grep -q '20261020180000_investing_first_readonly_release' "$RUNNER_TEMP/cli-dryrun.txt"
           echo "ISOLATED_SUPABASE_CLI_DRY_RUN_PASS"
       - name: Supabase CLI actual push to disposable local PG17, NEVER a Supabase project
@@ -73,7 +73,7 @@ jobs:
           set -euo pipefail
           ROOT="$RUNNER_TEMP/syntrake_cli_release"
           npx --yes supabase@2.84.2 --yes --workdir "$ROOT" db push \
-            --db-url "$INVESTING_RELEASE_CLI_DB_URL"
+            --db-url "$INVESTING_RELEASE_CLI_DB_URL?sslmode=disable"
           npx tsx investing-core/releases/cliReleaseRehearsal.ts verify
       - name: Second dry-run must not propose any replay
         shell: bash
@@ -81,7 +81,7 @@ jobs:
           set -euo pipefail
           ROOT="$RUNNER_TEMP/syntrake_cli_release"
           npx --yes supabase@2.84.2 --workdir "$ROOT" db push \
-            --db-url "$INVESTING_RELEASE_CLI_DB_URL" --dry-run 2>&1 | tee "$RUNNER_TEMP/cli-replay.txt"
+            --db-url "$INVESTING_RELEASE_CLI_DB_URL?sslmode=disable" --dry-run 2>&1 | tee "$RUNNER_TEMP/cli-replay.txt"
           if grep -Eq 'Would apply.*20261020180000|Applying migration 20261020180000' "$RUNNER_TEMP/cli-replay.txt"; then
             echo "BLOCKED: replay was proposed"
             exit 1
