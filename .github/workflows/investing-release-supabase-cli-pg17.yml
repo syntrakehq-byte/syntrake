@@ -1,0 +1,89 @@
+name: investing-release-supabase-cli-pg17
+
+on:
+  pull_request:
+    paths:
+      - 'investing-core/releases/**'
+      - 'supabase/release-candidates/**'
+      - '.github/workflows/investing-release-supabase-cli-pg17.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  isolated-supabase-cli:
+    name: Supabase CLI dry-run and apply, disposable PostgreSQL 17 only
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: syntrake_cli_rehearsal
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd="pg_isready -U postgres -d syntrake_cli_rehearsal"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    env:
+      CI: "true"
+      INVESTING_RELEASE_CLI_DB_URL: "postgresql://postgres:postgres@127.0.0.1:5432/syntrake_cli_rehearsal"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci
+      - name: Seed ONLY disposable local PG17 with simulated remote migration history
+        run: npx tsx investing-core/releases/cliReleaseRehearsal.ts seed
+      - name: Assemble isolated migration workspace, excluding all historical Git migrations and writer capability
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${RUNNER_TEMP:?}"
+          ROOT="$RUNNER_TEMP/syntrake_cli_release"
+          mkdir -p "$ROOT/supabase/migrations"
+          # This exists ONLY within ephemeral CI. It is NOT the real remote_schema
+          # SQL and is NEVER placed in the canonical source migration directory.
+          printf '%s\n' '-- SYNTHETIC CI FIXTURE: already-applied remote_schema' \
+            '-- DO NOT copy, deploy or replay this placeholder to Production.' \
+            > "$ROOT/supabase/migrations/20261017191056_remote_schema.sql"
+          cp supabase/release-candidates/20261020180000_investing_first_readonly_release.sql \
+            "$ROOT/supabase/migrations/20261020180000_investing_first_readonly_release.sql"
+          test "$(find "$ROOT/supabase/migrations" -maxdepth 1 -type f -name '*.sql' | wc -l)" -eq 2
+          test ! -e "$ROOT/supabase/migrations/20261018074500_investing_contribution_writer_capability.sql"
+          echo "ISOLATED_RELEASE_WORKSPACE_ONLY"
+      - name: Supabase CLI v2.84.2 dry run selects only one forward candidate migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/syntrake_cli_release"
+          npx --yes supabase@2.84.2 --version
+          npx --yes supabase@2.84.2 --workdir "$ROOT" db push \
+            --db-url "$INVESTING_RELEASE_CLI_DB_URL" --dry-run 2>&1 | tee "$RUNNER_TEMP/cli-dryrun.txt"
+          grep -q '20261020180000_investing_first_readonly_release' "$RUNNER_TEMP/cli-dryrun.txt"
+          echo "ISOLATED_SUPABASE_CLI_DRY_RUN_PASS"
+      - name: Supabase CLI actual push to disposable local PG17, NEVER a Supabase project
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/syntrake_cli_release"
+          npx --yes supabase@2.84.2 --yes --workdir "$ROOT" db push \
+            --db-url "$INVESTING_RELEASE_CLI_DB_URL"
+          npx tsx investing-core/releases/cliReleaseRehearsal.ts verify
+      - name: Second dry-run must not propose any replay
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/syntrake_cli_release"
+          npx --yes supabase@2.84.2 --workdir "$ROOT" db push \
+            --db-url "$INVESTING_RELEASE_CLI_DB_URL" --dry-run 2>&1 | tee "$RUNNER_TEMP/cli-replay.txt"
+          if grep -Eq 'Would apply.*20261020180000|Applying migration 20261020180000' "$RUNNER_TEMP/cli-replay.txt"; then
+            echo "BLOCKED: replay was proposed"
+            exit 1
+          fi
+          npx tsx investing-core/releases/cliReleaseRehearsal.ts verify
