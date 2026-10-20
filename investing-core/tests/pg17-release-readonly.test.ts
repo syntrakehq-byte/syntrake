@@ -2,6 +2,14 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { Client } from "pg";
+import {
+  assertFirstInvestingReleasePredecessor,
+  assertFirstInvestingReleaseApplied,
+  FIRST_INVESTING_RELEASE_NAME,
+  FIRST_INVESTING_RELEASE_VERSION,
+  ReleaseHistoryBlocked,
+  type MigrationVersionName,
+} from "../releases/releaseHistoryGate";
 
 /**
  * First Investing release rehearsal. Only the immutable foundation + canonical
@@ -49,7 +57,67 @@ test("PG17 first-release read-only migrations stay fail-closed", async (t) => {
     assert.match(releaseSQL, /REVOKE SELECT ON[\s\S]*investing\.ledger_transactions[\s\S]*FROM authenticated;/);
     assert.equal(releaseSQL.includes("CREATE ROLE investing_contribution_writer"), false);
     assert.equal(releaseSQL.includes("CREATE ROLE investing_writer_runtime"), false);
-    await db.query(releaseSQL);
+    // Reproduce the EXISTING production migration registry exactly in
+    // disposable CI PostgreSQL. Do not ever write the real Supabase registry.
+    await db.query("create schema supabase_migrations");
+    await db.query(`create table supabase_migrations.schema_migrations (
+      version text primary key, statements text[], name text
+    )`);
+    await db.query(
+      "insert into supabase_migrations.schema_migrations(version,name) values($1,$2)",
+      ["20261017191056", "remote_schema"],
+    );
+    const migrationHistory = async (): Promise<MigrationVersionName[]> => {
+      const result = await db.query<MigrationVersionName>(
+        "select version,name from supabase_migrations.schema_migrations order by version",
+      );
+      return result.rows;
+    };
+
+    await t.test("release history is exact remote baseline and fails closed on drift", () => {
+      assert.doesNotThrow(() => assertFirstInvestingReleasePredecessor([
+        { version: "20261017191056", name: "remote_schema" },
+      ]));
+      const historyVariants: MigrationVersionName[][] = [
+        [],
+        [{ version: "20261017191056", name: "rewritten_migration" }],
+        [{ version: "20261017191057", name: "remote_schema" }],
+        [{ version: "20261017191056", name: "remote_schema" },
+          { version: "20261018120000", name: "unapproved_extra" }],
+        [{ version: FIRST_INVESTING_RELEASE_VERSION, name: FIRST_INVESTING_RELEASE_NAME }],
+      ];
+      for (const variant of historyVariants) {
+        assert.throws(() => assertFirstInvestingReleasePredecessor(variant), ReleaseHistoryBlocked);
+      }
+    });
+
+    assertFirstInvestingReleasePredecessor(await migrationHistory());
+    await db.query("begin");
+    try {
+      await db.query(releaseSQL);
+      await db.query(
+        "insert into supabase_migrations.schema_migrations(version,name,statements) values($1,$2,$3)",
+        [FIRST_INVESTING_RELEASE_VERSION, FIRST_INVESTING_RELEASE_NAME, [releaseSQL]],
+      );
+      await db.query("commit");
+    } catch (error) {
+      await db.query("rollback");
+      throw error;
+    }
+
+    await t.test("exact forward version appended atomically; replay blocked", async () => {
+      const finalHistory = await migrationHistory();
+      assertFirstInvestingReleaseApplied(finalHistory);
+      assert.throws(() => assertFirstInvestingReleasePredecessor(finalHistory), ReleaseHistoryBlocked);
+      const before = await db.query("select count(*)::int as count from investing.investment_accounts");
+      assert.equal(before.rows[0].count, 0, "release creates NO user/account records");
+      await assert.rejects(
+        db.query("insert into supabase_migrations.schema_migrations(version,name) values($1,$2)",
+          [FIRST_INVESTING_RELEASE_VERSION,FIRST_INVESTING_RELEASE_NAME]),
+        /duplicate key/,
+      );
+      assertFirstInvestingReleaseApplied(await migrationHistory());
+    });
 
     await t.test("exact schema shape, no writer capability or runtime login", async () => {
       const tables = await db.query<{ count: number }>(
