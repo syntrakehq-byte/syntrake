@@ -1,0 +1,144 @@
+name: investing-r0a-quality-gates
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  site-regression:
+    name: Site lint, typecheck and production build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npx tsc --noEmit
+      - name: Verify build-only public Clerk configuration
+        env:
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ vars.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+        run: |
+          if [ -z "$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" ]; then
+            echo "::error::Set GitHub Actions repository variable NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY to the Clerk test publishable key; never commit a private/secret key."
+            exit 1
+          fi
+      - run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ vars.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+
+  dependency-security:
+    name: npm full and production dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Collect npm audit evidence without exposing environment values
+        shell: bash
+        run: |
+          npm audit --json > "$RUNNER_TEMP/r0a-audit-all.json" || true
+          npm audit --omit=dev --json > "$RUNNER_TEMP/r0a-audit-prod.json" || true
+          node --input-type=module <<'NODE'
+          import { readFileSync, appendFileSync } from 'node:fs';
+
+          const report = (file, label) => {
+            let audit;
+            try {
+              audit = JSON.parse(readFileSync(file, 'utf8'));
+            } catch {
+              throw new Error(label + ': npm audit did not return valid JSON');
+            }
+            if (!audit || audit.error || !audit.vulnerabilities || !audit.metadata?.vulnerabilities) {
+              throw new Error(label + ': npm audit could not provide complete vulnerability data');
+            }
+            const counts = audit.metadata.vulnerabilities;
+            const entries = Object.entries(audit.vulnerabilities).map(([name, finding]) => ({
+              name,
+              severity: finding.severity,
+              direct: Boolean(finding.isDirect),
+              fix: finding.fixAvailable === false ? 'no' : (finding.fixAvailable === true ? 'yes' : 'version-change'),
+            }));
+            entries.sort((a,b) => ({critical:0,high:1,moderate:2,low:3,info:4}[a.severity] ?? 5) - ({critical:0,high:1,moderate:2,low:3,info:4}[b.severity] ?? 5) || a.name.localeCompare(b.name));
+            return {label, counts, entries};
+          };
+
+          const all = report(process.env.RUNNER_TEMP + '/r0a-audit-all.json', 'All dependencies');
+          const prod = report(process.env.RUNNER_TEMP + '/r0a-audit-prod.json', 'Runtime dependencies');
+          const summary = [
+            '## SYNTRAKE R0-A dependency security (candidate evidence only)',
+            '',
+            '| Scope | Critical | High | Moderate | Low | Total |',
+            '|---|---:|---:|---:|---:|---:|',
+            ...[all, prod].map(r => '| ' + r.label + ' | ' + (r.counts.critical || 0) + ' | ' + (r.counts.high || 0) + ' | ' + (r.counts.moderate || 0) + ' | ' + (r.counts.low || 0) + ' | ' + (r.counts.total || 0) + ' |'),
+            '',
+            '### Affected packages (package names and severities only)',
+            ...[all,prod].flatMap(r => [
+              '', '**' + r.label + '**',
+              ...r.entries.map(e => '- ' + e.severity + ': `' + e.name + '` (direct=' + e.direct + ', fix=' + e.fix + ')')
+            ]),
+            '',
+            'This report does not establish exploitability. No dependency was automatically updated.',
+          ];
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary.join('\n') + '\n');
+          console.log('All:', JSON.stringify(all.counts), 'Runtime:', JSON.stringify(prod.counts));
+          console.log('Runtime findings (name/severity/direct/fix):', JSON.stringify(prod.entries));
+          console.log('All critical/high package findings:', JSON.stringify(all.entries.filter(e => e.severity === 'critical' || e.severity === 'high')));
+          const blocked = (prod.counts.critical || 0) > 0 || (prod.counts.high || 0) > 0 || (all.counts.critical || 0) > 0;
+          if (blocked) {
+            console.error('R0-A BLOCKED: untriaged critical severity or high/critical runtime dependency findings');
+            process.exitCode = 1;
+          }
+          NODE
+
+  nonbreaking-remediation:
+    name: Isolated compatible lockfile remediation rehearsal
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Try compatible lockfile-only repairs (temporary runner, no push)
+        shell: bash
+        run: |
+          npm audit fix --package-lock-only --ignore-scripts || true
+          npm pkg set devDependencies.postcss=8.5.30 overrides.postcss=8.5.30
+          npm install --package-lock-only --ignore-scripts
+          git diff --stat -- package.json package-lock.json
+          if git diff --quiet -- package.json package-lock.json; then
+            echo "No compatible lockfile-only dependency updates were proposed."
+          else
+            echo "Compatible lockfile updates were proposed in this ephemeral runner only."
+          fi
+      - run: npm ci
+      - run: npm run test:investing
+      - run: npx tsc -p tsconfig.investing.json --noEmit
+      - name: Re-evaluate runtime critical/high after temporary compatible updates
+        run: npm audit --omit=dev --audit-level=high
+      - name: Export tested manifest changes for independent review (no secrets)
+        shell: bash
+        run: |
+          echo SYNTRAKE_DEP_DIFF_BEGIN
+          git diff --no-ext-diff -- package.json package-lock.json
+          echo SYNTRAKE_DEP_DIFF_END
