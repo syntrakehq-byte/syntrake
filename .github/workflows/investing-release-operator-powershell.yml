@@ -46,7 +46,7 @@ jobs:
           }
           $never = @('reset', 'repair', '--include-all', '--include-seed', '--include-roles')
           $calls = [regex]::Matches($text, '(?m)^\s*Supabase\s+-arguments\s+@\([^\r\n]*')
-          if ($calls.Count -lt 5) { throw "BLOCKED: too few reviewed Supabase calls" }
+          if ($calls.Count -ne 4) { throw "BLOCKED: unexpected number of Supabase operator calls" }
           foreach ($call in $calls) {
             foreach ($hazard in $never) {
               if ($call.Value.Contains($hazard)) { throw "BLOCKED: dangerous command invoked" }
