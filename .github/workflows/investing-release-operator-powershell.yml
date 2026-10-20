@@ -1,0 +1,64 @@
+name: investing-release-operator-powershell
+
+on:
+  pull_request:
+    paths:
+      - 'investing-core/releases/Invoke-R1ProductionMigration.ps1'
+      - '.github/workflows/investing-release-operator-powershell.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  powershell-contract:
+    name: Windows PowerShell offline syntax and hazardous-command denylist
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Parse PowerShell without executing any migration or authentication
+        shell: pwsh
+        run: |
+          $path = "investing-core/releases/Invoke-R1ProductionMigration.ps1"
+          $tokens = $null
+          $errors = $null
+          $ast = [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $path),[ref]$tokens,[ref]$errors)
+          if ($null -eq $ast -or $errors.Count -gt 0) {
+            foreach ($error in $errors) { Write-Host $error.Message }
+            throw "BLOCKED: PowerShell parser errors"
+          }
+          $text = [IO.File]::ReadAllText((Resolve-Path $path))
+          foreach ($required in @(
+            'd42ecf58ca46c0e33d866cced2cdf14aa36eced0',
+            'vbazzxqyuqcrmjytaboc',
+            'f23fadf42d050a7d45f84ef166f94168256eb892',
+            '20261020180000_investing_first_readonly_release.sql',
+            '20261017191056_remote_schema.sql',
+            'Assert-DryRun',
+            'Validate-History',
+            'Read-Host',
+            'Supabase @("db", "push", "--linked")'
+          )) {
+            if (-not $text.Contains($required)) { throw "BLOCKED: missing required production guard contract" }
+          }
+          $never = @('db reset', 'migration repair', '--include-all', '--include-seed', '--include-roles')
+          foreach ($hazard in $never) {
+            # Disallowed terms may appear in comments documenting what NOT to do,
+            # but never as shell-invocation args.
+            if ($text -match 'Supabase\s+@\("[^"\r\n]*' + [regex]::Escape($hazard)) {
+              throw "BLOCKED: dangerous command parameter used"
+            }
+          }
+          Write-Host "WINDOWS_POWERSHELL_PARSE_AND_RELEASE_GUARDS_PASS"
+      - name: Confirm SQL in accepted Git tree still unchanged
+        shell: pwsh
+        run: |
+          $path = "supabase/release-candidates/20261020180000_investing_first_readonly_release.sql"
+          $out = (git hash-object $path).Trim()
+          if ($out -cne "f23fadf42d050a7d45f84ef166f94168256eb892") {
+            throw "BLOCKED: candidate SQL blob drifted"
+          }
+          Write-Host "EXACT_AUDITED_SQL_BLOB_PASS"
