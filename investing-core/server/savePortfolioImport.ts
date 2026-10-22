@@ -69,11 +69,13 @@ export async function savePortfolioImport(
       "INSERT INTO investing.portfolio_import_snapshots " +
       "(investment_account_id,portfolio_id,actor_user_id,idempotency_key,payload_sha256," +
       "import_schema_version,declared_portfolio_name,declared_base_currency," +
-      "source_kind,source_reference,source_as_of) " +
-      "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT DO NOTHING RETURNING id",
+      "source_kind,source_reference,source_as_of,expected_cash_rows," +
+      "expected_position_rows,expected_planned_rows) " +
+      "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) ON CONFLICT DO NOTHING RETURNING id",
       [account,portfolioId,session.userId,idempotencyKey,hash,draft.schemaVersion,
        draft.portfolioName,draft.baseCurrency,draft.provenance.source,
-       draft.provenance.sourceReference,draft.provenance.asOf],
+       draft.provenance.sourceReference,draft.provenance.asOf,
+       draft.cashBalances.length,draft.positions.length,draft.plannedContributions.length],
     );
     if (!inserted.rows.length) {
       const previous = await db.query<{id:string;payload_sha256:string;portfolio_id:string}>(
@@ -109,6 +111,12 @@ export async function savePortfolioImport(
         "VALUES ($1,$2,$3,$4,$5,$6,$7)",
         [snapshotId,account,portfolioId,n,p.currency,p.minor.toString(),p.dueDate]);
     }
+    const sealed = await db.query<{id:string}>(
+      "UPDATE investing.portfolio_import_snapshots SET snapshot_status='finalized' " +
+      "WHERE id=$1 AND investment_account_id=$2 AND actor_user_id=$3 AND snapshot_status='draft' RETURNING id",
+      [snapshotId,account,session.userId],
+    );
+    if (sealed.rows.length !== 1) throw new PortfolioImportBlocked("WRITE_UNAVAILABLE");
     await db.query("COMMIT"); active = false;
     return { kind: "UNVERIFIED_IMPORT", snapshotId, ledgerChanged: false };
   } catch (e) {
