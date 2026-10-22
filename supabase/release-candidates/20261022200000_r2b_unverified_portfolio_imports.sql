@@ -22,6 +22,7 @@ create table investing.portfolio_import_snapshots (
   import_schema_version text not null check (import_schema_version = 'R2_IMPORT_DRAFT_V1'),
   evidence_status text not null default 'UNVERIFIED' check (evidence_status = 'UNVERIFIED'),
   declared_portfolio_name text not null check (length(btrim(declared_portfolio_name)) between 1 and 120),
+  declared_base_currency char(3) not null references investing.supported_currencies(code),
   source_kind text not null check (source_kind in ('MANUAL_ENTRY','DOCUMENT_EXTRACTED')),
   source_reference text not null check (length(source_reference) between 8 and 128),
   source_as_of timestamptz not null,
