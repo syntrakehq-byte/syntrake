@@ -21,6 +21,11 @@ create table investing.portfolio_import_snapshots (
   payload_sha256 text not null check (payload_sha256 ~ '^[a-f0-9]{64}$'),
   import_schema_version text not null check (import_schema_version = 'R2_IMPORT_DRAFT_V1'),
   evidence_status text not null default 'UNVERIFIED' check (evidence_status = 'UNVERIFIED'),
+  snapshot_status text not null default 'draft' check (snapshot_status in ('draft','finalized')),
+  expected_cash_rows int not null check (expected_cash_rows between 0 and 100),
+  expected_position_rows int not null check (expected_position_rows between 0 and 5000),
+  expected_planned_rows int not null check (expected_planned_rows between 0 and 500),
+  check (expected_cash_rows + expected_position_rows > 0),
   declared_portfolio_name text not null check (length(btrim(declared_portfolio_name)) between 1 and 120),
   declared_base_currency char(3) not null references investing.supported_currencies(code),
   source_kind text not null check (source_kind in ('MANUAL_ENTRY','DOCUMENT_EXTRACTED')),
@@ -80,30 +85,83 @@ create table investing.portfolio_import_planned_contributions (
     references investing.portfolio_import_snapshots(id, investment_account_id, portfolio_id)
 );
 
--- An import is a historical USER-REPORTED SNAPSHOT. It is not the ledger,
--- brokerage cash, positions or performance; correction means append a new
--- snapshot referencing a new source/key, not mutating or deleting the past.
-create function investing.reject_portfolio_import_mutation()
+-- Corrections append a NEW snapshot. A draft may be finalized only once.
+-- All children are INSERT-only while parent is draft, then permanently sealed.
+create function investing.guard_portfolio_import_header()
 returns trigger language plpgsql security invoker
 set search_path = pg_catalog, investing
 as $guard$
 begin
-  raise exception 'portfolio import snapshot is immutable' using errcode = '55000';
+  if TG_OP = 'DELETE' then
+    raise exception 'portfolio import is immutable' using errcode = '55000';
+  end if;
+  if old.snapshot_status <> 'draft' or new.snapshot_status <> 'finalized'
+    or (to_jsonb(new)-'snapshot_status') is distinct from (to_jsonb(old)-'snapshot_status') then
+    raise exception 'portfolio import may only finalize draft once' using errcode = '55000';
+  end if;
+  return new;
 end
 $guard$;
 
+create function investing.guard_portfolio_import_child()
+returns trigger language plpgsql security invoker
+set search_path = pg_catalog, investing
+as $guard$
+declare current_status text;
+begin
+  if TG_OP <> 'INSERT' then
+    raise exception 'portfolio import child is immutable' using errcode = '55000';
+  end if;
+  select snapshot_status into current_status
+    from investing.portfolio_import_snapshots
+   where id=NEW.snapshot_id
+     and investment_account_id=NEW.investment_account_id
+     and portfolio_id=NEW.portfolio_id
+   for update;
+  if current_status is distinct from 'draft' then
+    raise exception 'cannot append to finalized portfolio import' using errcode = '55000';
+  end if;
+  return new;
+end
+$guard$;
+
+-- At COMMIT every import must be finalized and contain precisely the number
+-- of declared records. No partial snapshot may survive a worker crash.
+create function investing.assert_portfolio_import_complete()
+returns trigger language plpgsql security invoker
+set search_path = pg_catalog, investing
+as $check$
+declare row_data investing.portfolio_import_snapshots%ROWTYPE;
+begin
+  select * into row_data from investing.portfolio_import_snapshots where id=NEW.id;
+  if not found or row_data.snapshot_status <> 'finalized' then
+    raise exception 'unfinalized portfolio import' using errcode='23514';
+  end if;
+  if (select count(*) from investing.portfolio_import_cash where snapshot_id=NEW.id) <> row_data.expected_cash_rows
+  or (select count(*) from investing.portfolio_import_positions where snapshot_id=NEW.id) <> row_data.expected_position_rows
+  or (select count(*) from investing.portfolio_import_planned_contributions where snapshot_id=NEW.id) <> row_data.expected_planned_rows then
+    raise exception 'incomplete portfolio import' using errcode='23514';
+  end if;
+  return null;
+end
+$check$;
+
 create trigger immutable_portfolio_import_snapshots
 before update or delete on investing.portfolio_import_snapshots
-for each row execute function investing.reject_portfolio_import_mutation();
+for each row execute function investing.guard_portfolio_import_header();
 create trigger immutable_portfolio_import_cash
-before update or delete on investing.portfolio_import_cash
-for each row execute function investing.reject_portfolio_import_mutation();
+before insert or update or delete on investing.portfolio_import_cash
+for each row execute function investing.guard_portfolio_import_child();
 create trigger immutable_portfolio_import_positions
-before update or delete on investing.portfolio_import_positions
-for each row execute function investing.reject_portfolio_import_mutation();
+before insert or update or delete on investing.portfolio_import_positions
+for each row execute function investing.guard_portfolio_import_child();
 create trigger immutable_portfolio_import_planned
-before update or delete on investing.portfolio_import_planned_contributions
-for each row execute function investing.reject_portfolio_import_mutation();
+before insert or update or delete on investing.portfolio_import_planned_contributions
+for each row execute function investing.guard_portfolio_import_child();
+create constraint trigger assert_portfolio_import_complete
+after insert on investing.portfolio_import_snapshots
+deferrable initially deferred
+for each row execute function investing.assert_portfolio_import_complete();
 
 -- Do NOT alter any existing R1 privileges, policies or ledger state.
 -- Only the FOUR newly created tables receive explicit least-privilege grants.
@@ -113,7 +171,11 @@ revoke all on investing.portfolio_import_snapshots,
   investing.portfolio_import_planned_contributions
   from PUBLIC, anon, authenticated;
 
-revoke execute on function investing.reject_portfolio_import_mutation()
+revoke execute on function investing.guard_portfolio_import_header()
+  from PUBLIC, anon, authenticated;
+revoke execute on function investing.guard_portfolio_import_child()
+  from PUBLIC, anon, authenticated;
+revoke execute on function investing.assert_portfolio_import_complete()
   from PUBLIC, anon, authenticated;
 
 alter table investing.portfolio_import_snapshots enable row level security;
@@ -132,7 +194,9 @@ grant select, insert on investing.portfolio_import_snapshots,
   investing.portfolio_import_cash,
   investing.portfolio_import_positions,
   investing.portfolio_import_planned_contributions to investing_import_writer;
--- No UPDATE/DELETE, no ledger or financial account INSERT/UPDATE, and no EXECUTE.
+grant update(snapshot_status) on investing.portfolio_import_snapshots to investing_import_writer;
+-- Only one safe draft -> finalized UPDATE; no DELETE or UPDATE of data facts.
+-- No ledger or financial account INSERT/UPDATE, and no exposed RPC.
 
 -- Worker identity is set by a verified server-only session on the same
 -- transaction/connection. The NOLOGIN role never authenticates directly.
@@ -180,6 +244,17 @@ with check (
     where p.id = portfolio_import_snapshots.portfolio_id
       and p.investment_account_id = portfolio_import_snapshots.investment_account_id
   )
+);
+
+create policy import_writer_snapshot_finalize on investing.portfolio_import_snapshots
+for update to investing_import_writer
+using (
+  actor_user_id = nullif(current_setting('syntrake.actor_user_id',true),'')
+  and snapshot_status = 'draft'
+)
+with check (
+  actor_user_id = nullif(current_setting('syntrake.actor_user_id',true),'')
+  and snapshot_status = 'finalized'
 );
 
 create policy import_writer_cash_select on investing.portfolio_import_cash
