@@ -89,9 +89,8 @@ export default function InvestingOnboardingClient({lang}:{lang:SiteLang}){
  const current=actor&&record?.userId===actor?record.data:null;
 
  useEffect(()=>{
-   if(!actor){setLoading(false);return;}
+   if(!actor)return;
    let live=true;const controller=new AbortController();
-   setLoading(true);
    void (async()=>{
     try{
      const res=await fetch("/api/investing/onboarding",{
@@ -207,7 +206,7 @@ export default function InvestingOnboardingClient({lang}:{lang:SiteLang}){
  <div className="flex flex-wrap items-center justify-between gap-3">
   <h2 className="font-semibold">{copy.recent}</h2>
   <button className="text-sm text-sky-300 underline disabled:opacity-40" disabled={loading}
-   onClick={()=>setRev(v=>v+1)}>{copy.reload}</button>
+   onClick={()=>{setLoading(true);setRev(v=>v+1);}}>{copy.reload}</button>
  </div>
  {loading?<p className="mt-3 text-slate-400">…</p>
   :current?.latest?<p className="mt-3 text-emerald-200">{copy.saved} — {current.latest.choice.pathway==="HAS_PORTFOLIO"?copy.has:copy.needs}</p>
