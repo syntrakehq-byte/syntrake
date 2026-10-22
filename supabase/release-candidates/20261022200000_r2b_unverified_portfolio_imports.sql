@@ -104,20 +104,16 @@ create trigger immutable_portfolio_import_planned
 before update or delete on investing.portfolio_import_planned_contributions
 for each row execute function investing.reject_portfolio_import_mutation();
 
-revoke all on all tables in schema investing from public, anon, authenticated;
--- Preserve the existing R1 least-privilege read grants; DO NOT grant
--- access to financial/ledger data or to the new import tables.
-grant select on investing.investment_accounts,
-  investing.account_memberships, investing.supported_currencies to authenticated;
-
+-- Do NOT alter any existing R1 privileges, policies or ledger state.
+-- Only the FOUR newly created tables receive explicit least-privilege grants.
 revoke all on investing.portfolio_import_snapshots,
   investing.portfolio_import_cash,
   investing.portfolio_import_positions,
   investing.portfolio_import_planned_contributions
-  from PUBLIC, anon, authenticated, service_role;
+  from PUBLIC, anon, authenticated;
 
 revoke execute on function investing.reject_portfolio_import_mutation()
-  from PUBLIC, anon, authenticated, service_role;
+  from PUBLIC, anon, authenticated;
 
 alter table investing.portfolio_import_snapshots enable row level security;
 alter table investing.portfolio_import_snapshots force row level security;
