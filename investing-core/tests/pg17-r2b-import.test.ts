@@ -149,6 +149,53 @@ test("R2-B1 isolated PG17: owner A/B, immutable atomic import, negative capabili
       [first.snapshotId]), /immutable/);
     await assert.rejects(admin.query(
       "delete from investing.portfolio_import_snapshots where id=$1",[first.snapshotId]),/immutable/);
+
+    // A finalized parent cannot receive a late cash row after COMMIT.
+    const raw=await pool.connect();
+    try {
+      await raw.query("BEGIN");
+      await raw.query("SET LOCAL ROLE investing_import_writer");
+      await raw.query("SELECT set_config('syntrake.actor_user_id',$1,true)",[actorA.userId]);
+      const visible=await raw.query<{id:string}>(
+        "SELECT id FROM investing.portfolio_import_snapshots ORDER BY id");
+      assert.deepEqual(visible.rows.map(r=>r.id),[first.snapshotId]);
+      await assert.rejects(raw.query(
+        "INSERT INTO investing.portfolio_import_cash "+
+        "(snapshot_id,investment_account_id,portfolio_id,currency,reported_amount_minor) "+
+        "VALUES ($1,$2,$3,'CHF',1)",[first.snapshotId,A,PORT_A]),
+        /cannot append to finalized/);
+      await raw.query("ROLLBACK");
+    } finally {
+      raw.release();
+    }
+
+    // Deferred COMMIT trigger rejects missing finalization and partial data:
+    // a durable snapshot may NEVER be created before all expected rows.
+    const headerSql=
+      "INSERT INTO investing.portfolio_import_snapshots "+
+      "(investment_account_id,portfolio_id,actor_user_id,idempotency_key,"+
+      "payload_sha256,import_schema_version,declared_portfolio_name,"+
+      "declared_base_currency,source_kind,source_reference,source_as_of,"+
+      "expected_cash_rows,expected_position_rows,expected_planned_rows) "+
+      "VALUES ($1,$2,$3,$4,$5,'R2_IMPORT_DRAFT_V1','Incomplete',"+
+      "'EUR','MANUAL_ENTRY',$6,'2026-10-22T18:00:00.000Z',1,0,0)";
+    await admin.query("BEGIN");
+    await admin.query(headerSql,[
+      A,PORT_A,actorA.userId,"unfinished-import-0001","a".repeat(64),"unfinished-source-0001"]);
+    await assert.rejects(admin.query("COMMIT"),/unfinalized portfolio import/);
+    await admin.query("ROLLBACK");
+
+    await admin.query("BEGIN");
+    const incomplete=await admin.query<{id:string}>(
+      headerSql+" RETURNING id",
+      [A,PORT_A,actorA.userId,"incomplete-import-001","b".repeat(64),"incomplete-source-001"]);
+    await admin.query("UPDATE investing.portfolio_import_snapshots SET snapshot_status='finalized' WHERE id=$1",
+      [incomplete.rows[0].id]);
+    await assert.rejects(admin.query("COMMIT"),/incomplete portfolio import/);
+    await admin.query("ROLLBACK");
+    const leftovers=await admin.query<{count:string}>(
+      "SELECT count(*)::text count FROM investing.portfolio_import_snapshots WHERE source_reference IN ('unfinished-source-0001','incomplete-source-001')");
+    assert.equal(leftovers.rows[0].count,"0");
   } finally {
     await pool?.end();
     await admin.end();
