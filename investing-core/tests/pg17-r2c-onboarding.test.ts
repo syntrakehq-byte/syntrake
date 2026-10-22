@@ -67,18 +67,24 @@ test("R2-C Postgres17: signed-sub RLS actor A/B and append-only onboarding; fina
     const replay=await db.query(ins,[a,key,hash]);
     assert.equal(replay.rows.length,0);
     assert.equal((await db.query("select id from investing.onboarding_intents")).rowCount,1);
+    await db.query("savepoint denied_insert_a");
     await assert.rejects(db.query(ins,[b,"00000000-0000-4000-8000-000000000012",hash]),/row-level security/);
+    await db.query("rollback to savepoint denied_insert_a");
    });
    await asActor(b,async()=>{
     assert.equal((await db.query("select id from investing.onboarding_intents")).rowCount,0);
+    await db.query("savepoint denied_insert_b");
     await assert.rejects(db.query(ins,[a,"00000000-0000-4000-8000-000000000013",hash]),/row-level security/);
+    await db.query("rollback to savepoint denied_insert_b");
     const record=await db.query(ins,[b,"00000000-0000-4000-8000-000000000014",hash]);
     assert.equal(record.rowCount,1);
     assert.equal((await db.query("select id from investing.onboarding_intents")).rowCount,1);
    });
    await asActor(a,async()=>{
     assert.equal((await db.query("select id from investing.onboarding_intents")).rowCount,1);
+    await db.query("savepoint denied_mutate_a");
     await assert.rejects(db.query("update investing.onboarding_intents set pathway='NEEDS_PORTFOLIO' where actor_user_id=$1",[a]),/permission denied/);
+    await db.query("rollback to savepoint denied_mutate_a");
    });
   });
   await t.test("missing JWT and anon cannot read, write or infer user financial state",async()=>{
