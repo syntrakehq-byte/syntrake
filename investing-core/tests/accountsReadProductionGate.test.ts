@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { isR1AccountReadEnabled, handleR1AccountsRead } from "../server/accountsReadHttp";
-import type { InvestingReadResult } from "../server/supabaseReadTransport";
+import { InvestingReadBlocked, type InvestingReadResult } from "../server/supabaseReadTransport";
 
 const prodRef = "vbazzxqyuqcrmjytaboc";
 const previewRef = "zkqgpejlkgootkvkebhd";
@@ -102,4 +102,53 @@ test("candidate Preview still opt-in and can never use production project ref", 
   assert.equal(isR1AccountReadEnabled(preview), true);
   assert.equal(isR1AccountReadEnabled({...preview,INVESTING_R1_ACCOUNTS_READ_MODE:"disabled"}),false);
   assert.equal(isR1AccountReadEnabled({...preview,INVESTING_R1_SUPABASE_PROJECT_REF:prodRef,NEXT_PUBLIC_SUPABASE_URL:`https://${prodRef}.supabase.co`}),false);
+});
+
+
+test("R1-C production error mapping remains fail closed without synthetic zero balances", async () => {
+  const cases = [
+    ["UNAUTHENTICATED", 401, "UNAUTHENTICATED"],
+    ["READ_UNAUTHORIZED", 403, "BLOCKED"],
+    ["TOKEN_UNAVAILABLE", 503, "READ_UNAVAILABLE"],
+    ["INVALID_CONFIGURATION", 503, "READ_UNAVAILABLE"],
+    ["INVALID_READ_RESPONSE", 503, "READ_UNAVAILABLE"],
+    ["READ_UNAVAILABLE", 503, "READ_UNAVAILABLE"],
+  ] as const;
+
+  for (const [code, status, reason] of cases) {
+    const response = await handleR1AccountsRead(
+      "https://www.syntrake.com/api/investing/accounts",
+      production,
+      async () => { throw new InvestingReadBlocked(code); },
+    );
+    assert.equal(response.status, status, code);
+    const body = await response.json();
+    assert.deepEqual(body, { error: reason });
+    assert.equal(JSON.stringify(body).includes("CI_ONLY_FAKE_ACTOR"), false);
+    assert.equal("accounts" in body, false);
+    assert.equal("cash" in body, false);
+    assert.equal("balance" in body, false);
+    assert.equal(response.headers.get("cache-control"), "private, no-store, max-age=0");
+  }
+});
+
+test("R1-C rehearsal branch never becomes readable merely through global Preview flags", async () => {
+  const rehearse = {
+    ...production,
+    VERCEL_ENV: "preview",
+    VERCEL_GIT_COMMIT_REF: "candidate/investing-r1c-release-rehearsal-20261021",
+    INVESTING_R1_ACCOUNTS_READ_MODE: "enabled",
+    INVESTING_R1_SUPABASE_PROJECT_REF: previewRef,
+    NEXT_PUBLIC_SUPABASE_URL: `https://${previewRef}.supabase.co`,
+  };
+  assert.equal(isR1AccountReadEnabled(rehearse), false);
+  let requested = false;
+  const response = await handleR1AccountsRead(
+    "https://www.syntrake.com/api/investing/accounts",
+    rehearse,
+    async () => { requested = true; return testRead; },
+  );
+  assert.equal(requested, false);
+  assert.equal(response.status, 404);
+  assert.deepEqual(await response.json(), { error: "NOT_FOUND" });
 });
