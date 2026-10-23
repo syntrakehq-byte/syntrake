@@ -1,7 +1,7 @@
 "use client";
 
-import { useAuth } from "@clerk/nextjs";
-import { ArrowLeft, ArrowRight, ShieldCheck, ClipboardCheck } from "lucide-react";
+import { SignOutButton, useAuth } from "@clerk/nextjs";
+import { ArrowLeft, ArrowRight, ShieldCheck, ClipboardCheck, LogOut } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SiteLang } from "@/lib/i18n/siteLanguage";
@@ -14,52 +14,52 @@ const tr={
  pt:{
   eyebrow:"SYNTRAKE · INVESTING",title:"Vamos conhecer a tua situação",
   subtitle:"O Investing é para acompanhamento e decisões de longo prazo. Não partilha contas, capital ou ordens com o Trading.",
-  back:"Início",titleQuestion:"Já tens um portfolio de investimentos?",
+  back:"Início",signOut:"Terminar sessão",titleQuestion:"Já tens um portfolio de investimentos?",
   has:"Sim, já invisto",hasText:"Quero importar as posições e depois analisar se o portfolio é adequado.",
   needs:"Não, vou começar",needsText:"Quero definir objetivos, horizonte e risco antes de construir um portfolio.",
   source:"Como pretendes importar?",manual:"Introduzir manualmente",document:"Extrato ou ficheiro do broker",connect:"Ligar broker mais tarde",
   objective:"Objetivo principal",retirement:"Reforma",wealth:"Crescimento do património",purchase:"Compra importante",other:"Outro",
   horizon:"Horizonte (anos)",risk:"Capacidade de suportar perdas",low:"Baixa",medium:"Média",high:"Alta",
   save:"Guardar a minha escolha",saving:"A guardar…",saved:"Escolha guardada no Supabase Preview",
-  disclaimer:"Este passo guarda apenas a tua intenção declarada. Ainda não cria uma conta financeira, portfolio, cash, depósitos ou recomendações. Não são enviadas ordens.",
+  disclaimer:"A escolha inicial é uma declaração do utilizador. Quando a conta e o portfolio são criados, são apenas estruturas vazias: cash, depósitos, posições e broker continuam por verificar. Não são enviadas ordens.",
   recent:"Última escolha guardada",none:"Ainda não tens uma escolha guardada.",reload:"Atualizar",
   error:"Não foi possível confirmar os dados. Nenhuma situação financeira foi presumida.",
   blocked:"O serviço ainda não está disponível para esta sessão ou ambiente.",
-  noAccount:"Esta escolha não comprova a existência de uma conta financeira",next:"Próxima etapa: criar conta e portfolio próprios, importar ou propor alternativas depois de validar os dados.",
+  noAccount:"A escolha não comprova capital ou posições",next:"Depois da criação da estrutura, é necessário importar ou construir um portfolio e verificar os dados antes de analisar ou recomendar.",
   label:"R2-C · PREVIEW · APENAS INVESTING",
  },
  en:{
   eyebrow:"SYNTRAKE · INVESTING",title:"Tell us about your situation",
   subtitle:"Investing focuses on long-term decisions. It does not share accounts, capital, or orders with Trading.",
-  back:"Home",titleQuestion:"Do you already have an investment portfolio?",
+  back:"Home",signOut:"Sign out",titleQuestion:"Do you already have an investment portfolio?",
   has:"Yes, I invest already",hasText:"Import my positions and then assess portfolio suitability.",
   needs:"No, I am starting",needsText:"Define goals, horizon and risk before constructing a portfolio.",
   source:"How would you like to import?",manual:"Enter manually",document:"Broker statement or file",connect:"Connect broker later",
   objective:"Primary goal",retirement:"Retirement",wealth:"Wealth growth",purchase:"Major purchase",other:"Other",
   horizon:"Investment horizon (years)",risk:"Capacity to withstand losses",low:"Low",medium:"Medium",high:"High",
   save:"Save my choice",saving:"Saving…",saved:"Choice saved in Supabase Preview",
-  disclaimer:"This saves only your declared intent. It does not create a financial account, portfolio, cash, deposits or recommendations, and it does not place orders.",
+  disclaimer:"Your initial choice is user-reported. Creating an account and portfolio creates empty structures only: cash, deposits, positions and broker data remain unverified. No orders are placed.",
   recent:"Last saved choice",none:"No saved choice yet.",reload:"Refresh",
   error:"Unable to verify onboarding data. No financial state was assumed.",
   blocked:"Onboarding is unavailable for this session or environment.",
-  noAccount:"This choice does not confirm a financial account exists",next:"Next step: provision your own account and portfolio, then import or construct alternatives after validation.",
+  noAccount:"This choice does not verify funds or holdings",next:"After creating the structure, import or construct a portfolio and verify the facts before any analysis or recommendation.",
   label:"R2-C · PREVIEW · INVESTING ONLY",
  },
  fr:{
   eyebrow:"SYNTRAKE · INVESTING",title:"Parlons de votre situation",
   subtitle:"Investing concerne les décisions à long terme. Il ne partage ni comptes, ni capital, ni ordres avec Trading.",
-  back:"Accueil",titleQuestion:"Avez-vous déjà un portefeuille d'investissement ?",
+  back:"Accueil",signOut:"Se déconnecter",titleQuestion:"Avez-vous déjà un portefeuille d'investissement ?",
   has:"Oui, j'investis déjà",hasText:"Importer mes positions et vérifier ensuite l'adéquation du portefeuille.",
   needs:"Non, je débute",needsText:"Définir objectifs, horizon et risque avant de construire un portefeuille.",
   source:"Comment souhaitez-vous importer ?",manual:"Saisie manuelle",document:"Relevé ou fichier du courtier",connect:"Connecter un courtier plus tard",
   objective:"Objectif principal",retirement:"Retraite",wealth:"Développer mon patrimoine",purchase:"Achat important",other:"Autre",
   horizon:"Horizon (années)",risk:"Capacité à supporter des pertes",low:"Faible",medium:"Moyenne",high:"Élevée",
   save:"Enregistrer mon choix",saving:"Enregistrement…",saved:"Choix enregistré dans Supabase Preview",
-  disclaimer:"Seule votre intention déclarée est enregistrée. Aucun compte financier, portefeuille, solde, dépôt ou recommandation n'est créé. Aucun ordre n'est envoyé.",
+  disclaimer:"Votre choix initial est déclaratif. Si un compte et un portefeuille sont créés, ils restent des structures vides : liquidités, dépôts, positions et courtier ne sont pas vérifiés. Aucun ordre n'est envoyé.",
   recent:"Dernier choix enregistré",none:"Aucun choix enregistré.",reload:"Actualiser",
   error:"Impossible de vérifier les données. Aucun état financier n'a été supposé.",
   blocked:"Ce service n'est pas disponible pour cette session ou cet environnement.",
-  noAccount:"Ce choix ne confirme pas l’existence d’un compte financier",next:"Étape suivante : créer un compte et un portefeuille propres, puis importer ou construire des alternatives après vérification.",
+  noAccount:"Ce choix ne prouve ni liquidités ni positions",next:"Après la création de la structure, importer ou construire un portefeuille et vérifier les données avant toute analyse ou recommandation.",
   label:"R2-C · PREVIEW · INVESTING UNIQUEMENT",
  },
 } satisfies Record<SiteLang,Record<string,string>>;
@@ -139,7 +139,14 @@ export default function InvestingOnboardingClient({lang}:{lang:SiteLang}){
  <header className="flex flex-wrap items-center justify-between gap-4">
  <Link className="flex items-center gap-2 text-sm text-slate-300 hover:text-white" href="/start">
   <ArrowLeft size={17}/>{copy.back}</Link>
+ <div className="flex flex-wrap items-center gap-3">
  <span className="rounded-full border border-sky-500/40 bg-sky-500/10 px-4 py-2 text-xs font-semibold tracking-wider text-sky-200">{copy.label}</span>
+ <SignOutButton redirectUrl="/start">
+  <button type="button" className="inline-flex items-center gap-2 rounded-lg border border-slate-600 px-4 py-2 text-xs font-semibold text-slate-200 hover:border-sky-400 hover:text-white">
+   <LogOut size={15} aria-hidden="true"/>{copy.signOut}
+  </button>
+ </SignOutButton>
+ </div>
  </header>
  <section className="mt-14 max-w-3xl">
   <p className="text-xs font-bold tracking-[0.25em] text-sky-300">{copy.eyebrow}</p>
