@@ -38,6 +38,8 @@ jobs:
           npm run test:investing
           npx tsc -p tsconfig.investing.json --noEmit
       - name: Real isolated PostgreSQL 17 initial account, A/B, replay and concurrency
-        run: npx tsx --test investing-core/tests/pg17-r2c2-initial-portfolio.test.ts
+        run: |
+          npx tsx --test investing-core/tests/pg17-r2c2-initial-portfolio.test.ts
+          npx tsx --test investing-core/tests/pg17-r2c2-jwt-rpc.test.ts
         env:
           INVESTING_PG17_R2C2_URL: postgresql://postgres:postgres@127.0.0.1:5432/syntrake_r2c2_ci
