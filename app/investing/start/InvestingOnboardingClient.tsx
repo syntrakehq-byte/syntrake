@@ -22,7 +22,7 @@ const tr={
   horizon:"Horizonte (anos)",risk:"Capacidade de suportar perdas",low:"Baixa",medium:"Média",high:"Alta",
   save:"Guardar a minha escolha",saving:"A guardar…",saved:"Escolha guardada no Supabase Preview",
   disclaimer:"A escolha inicial é uma declaração do utilizador. Quando a conta e o portfolio são criados, são apenas estruturas vazias: cash, depósitos, posições e broker continuam por verificar. Não são enviadas ordens.",
-  recent:"Última escolha guardada",none:"Ainda não tens uma escolha guardada.",reload:"Atualizar",
+  savedHorizon:"Horizonte guardado",recent:"Última escolha guardada",none:"Ainda não tens uma escolha guardada.",reload:"Atualizar",
   error:"Não foi possível confirmar os dados. Nenhuma situação financeira foi presumida.",
   blocked:"O serviço ainda não está disponível para esta sessão ou ambiente.",
   noAccount:"A escolha não comprova capital ou posições",next:"Depois da criação da estrutura, é necessário importar ou construir um portfolio e verificar os dados antes de analisar ou recomendar.",
@@ -39,7 +39,7 @@ const tr={
   horizon:"Investment horizon (years)",risk:"Capacity to withstand losses",low:"Low",medium:"Medium",high:"High",
   save:"Save my choice",saving:"Saving…",saved:"Choice saved in Supabase Preview",
   disclaimer:"Your initial choice is user-reported. Creating an account and portfolio creates empty structures only: cash, deposits, positions and broker data remain unverified. No orders are placed.",
-  recent:"Last saved choice",none:"No saved choice yet.",reload:"Refresh",
+  savedHorizon:"Saved horizon",recent:"Last saved choice",none:"No saved choice yet.",reload:"Refresh",
   error:"Unable to verify onboarding data. No financial state was assumed.",
   blocked:"Onboarding is unavailable for this session or environment.",
   noAccount:"This choice does not verify funds or holdings",next:"After creating the structure, import or construct a portfolio and verify the facts before any analysis or recommendation.",
@@ -56,7 +56,7 @@ const tr={
   horizon:"Horizon (années)",risk:"Capacité à supporter des pertes",low:"Faible",medium:"Moyenne",high:"Élevée",
   save:"Enregistrer mon choix",saving:"Enregistrement…",saved:"Choix enregistré dans Supabase Preview",
   disclaimer:"Votre choix initial est déclaratif. Si un compte et un portefeuille sont créés, ils restent des structures vides : liquidités, dépôts, positions et courtier ne sont pas vérifiés. Aucun ordre n'est envoyé.",
-  recent:"Dernier choix enregistré",none:"Aucun choix enregistré.",reload:"Actualiser",
+  savedHorizon:"Horizon enregistré",recent:"Dernier choix enregistré",none:"Aucun choix enregistré.",reload:"Actualiser",
   error:"Impossible de vérifier les données. Aucun état financier n'a été supposé.",
   blocked:"Ce service n'est pas disponible pour cette session ou cet environnement.",
   noAccount:"Ce choix ne prouve ni liquidités ni positions",next:"Après la création de la structure, importer ou construire un portefeuille et vérifier les données avant toute analyse ou recommandation.",
@@ -87,6 +87,7 @@ export default function InvestingOnboardingClient({lang}:{lang:SiteLang}){
  const [notice,setNotice]=useState<"SAVED"|"ERROR"|"BLOCKED"|null>(null);
  const [rev,setRev]=useState(0);
  const attempt=useRef<string|null>(null);
+ const hasUnsavedEdits=useRef(false);
  const current=actor&&record?.userId===actor?record.data:null;
 
  useEffect(()=>{
@@ -100,7 +101,22 @@ export default function InvestingOnboardingClient({lang}:{lang:SiteLang}){
      });
      const data:unknown=await res.json();
      if(!res.ok||!isState(data))throw new Error("unavailable");
-     if(live)setRecord({userId:actor,data});
+     if(live){
+       setRecord({userId:actor,data});
+       // A saved user declaration is the source of truth, not the UI defaults.
+       // Never overwrite edits made while this asynchronous GET was running.
+       if(data.latest&&!hasUnsavedEdits.current){
+         const saved=data.latest.choice;
+         setPathway(saved.pathway);
+         if(saved.pathway==="HAS_PORTFOLIO"){
+           setSource(saved.importSource);
+         }else{
+           setObjective(saved.objective);
+           setHorizon(String(saved.horizonYears));
+           setCapacity(saved.lossCapacity);
+         }
+       }
+     }
     }catch{if(live){setRecord(null);setNotice("ERROR");}}
     finally{if(live)setLoading(false);}
    })();
@@ -108,7 +124,7 @@ export default function InvestingOnboardingClient({lang}:{lang:SiteLang}){
  },[actor,rev]);
 
  const resetAttempt=useCallback(()=>{attempt.current=null;setNotice(null);},[]);
- function choose(path:Pathway){setPathway(path);resetAttempt();}
+ function choose(path:Pathway){hasUnsavedEdits.current=true;setPathway(path);resetAttempt();}
  async function submit(){
   if(!actor||!pathway||saving)return;
   const n=Number(horizon);
@@ -128,6 +144,7 @@ export default function InvestingOnboardingClient({lang}:{lang:SiteLang}){
    const value:unknown=await res.json();
    if(!res.ok||!isState(value)){setNotice(res.status===403||res.status===404?"BLOCKED":"ERROR");return;}
    setRecord({userId:actor,data:value});
+   hasUnsavedEdits.current=false;
    setNotice("SAVED");
   }catch{setNotice("ERROR");}
   finally{setSaving(false);}
@@ -175,7 +192,7 @@ export default function InvestingOnboardingClient({lang}:{lang:SiteLang}){
  <section className="mt-8 rounded-2xl border border-slate-700 bg-slate-900/80 p-7">
  {pathway==="HAS_PORTFOLIO"?(
  <label className="block text-sm font-semibold">{copy.source}
-  <select value={source} onChange={e=>{setSource(e.target.value as typeof source);resetAttempt();}} className={inputClass}>
+  <select value={source} onChange={e=>{hasUnsavedEdits.current=true;setSource(e.target.value as typeof source);resetAttempt();}} className={inputClass}>
    <option value="MANUAL_ENTRY">{copy.manual}</option>
    <option value="DOCUMENT_EXTRACTED">{copy.document}</option>
    <option value="BROKER_CONNECT_LATER">{copy.connect}</option>
@@ -184,7 +201,7 @@ export default function InvestingOnboardingClient({lang}:{lang:SiteLang}){
  ):(
  <div className="grid gap-5 md:grid-cols-3">
  <label className="text-sm font-semibold">{copy.objective}
-  <select value={objective} onChange={e=>{setObjective(e.target.value as typeof objective);resetAttempt();}} className={inputClass}>
+  <select value={objective} onChange={e=>{hasUnsavedEdits.current=true;setObjective(e.target.value as typeof objective);resetAttempt();}} className={inputClass}>
    <option value="RETIREMENT">{copy.retirement}</option>
    <option value="WEALTH_GROWTH">{copy.wealth}</option>
    <option value="LARGE_PURCHASE">{copy.purchase}</option>
@@ -193,10 +210,10 @@ export default function InvestingOnboardingClient({lang}:{lang:SiteLang}){
  </label>
  <label className="text-sm font-semibold">{copy.horizon}
   <input type="number" min={1} max={60} step={1} value={horizon}
-   onChange={e=>{setHorizon(e.target.value);resetAttempt();}} className={inputClass}/>
+   onChange={e=>{hasUnsavedEdits.current=true;setHorizon(e.target.value);resetAttempt();}} className={inputClass}/>
  </label>
  <label className="text-sm font-semibold">{copy.risk}
-  <select value={capacity} onChange={e=>{setCapacity(e.target.value as typeof capacity);resetAttempt();}} className={inputClass}>
+  <select value={capacity} onChange={e=>{hasUnsavedEdits.current=true;setCapacity(e.target.value as typeof capacity);resetAttempt();}} className={inputClass}>
    <option value="LOW">{copy.low}</option>
    <option value="MEDIUM">{copy.medium}</option>
    <option value="HIGH">{copy.high}</option>
@@ -219,6 +236,9 @@ export default function InvestingOnboardingClient({lang}:{lang:SiteLang}){
  {loading?<p className="mt-3 text-slate-400">…</p>
   :current?.latest?<p className="mt-3 text-emerald-200">{copy.saved} — {current.latest.choice.pathway==="HAS_PORTFOLIO"?copy.has:copy.needs}</p>
   :<p className="mt-3 text-slate-300">{copy.none}</p>}
+ {!loading&&current?.latest?.choice.pathway==="NEEDS_PORTFOLIO"&&(
+  <p className="mt-2 text-sm text-slate-300">{copy.savedHorizon}: {current.latest.choice.horizonYears}</p>
+ )}
  {notice==="SAVED"&&<p className="mt-3 text-sm text-emerald-300">{copy.saved}</p>}
  {notice==="ERROR"&&<p role="alert" className="mt-3 text-sm text-amber-300">{copy.error}</p>}
  {notice==="BLOCKED"&&<p role="alert" className="mt-3 text-sm text-amber-300">{copy.blocked}</p>}
