@@ -1,3 +1,4 @@
+import {pathToFileURL} from "node:url";
 // SYNTRAKE R2-C2: read-only, REAL Clerk A/B authorization proof.
 // Deliberately performs GET requests only. Never provision or write financial data.
 // All JWTs are supplied through process environment, not command arguments or files.
@@ -148,7 +149,7 @@ export async function verifyClerkABReadOnly({
     limitations:"No RPC POST, no writes, no production. Separate A/B first-portfolio provisioning and browser-session tests remain required."
   };
 }
-if (process.argv[1] && import.meta.url === new URL("file://" + process.argv[1].replace(/\\/g,"/")).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   verifyClerkABReadOnly({
     projectUrl: process.env.SYNTRAKE_CLERK_AB_PREVIEW_URL,
     publishableKey: process.env.SYNTRAKE_CLERK_AB_PUBLISHABLE_KEY,
