@@ -1,11 +1,12 @@
 "use client";
 
-import { useAuth } from "@clerk/nextjs";
-import { ArrowLeft, ArrowRight, ShieldCheck, ClipboardCheck } from "lucide-react";
+import { SignOutButton, useAuth } from "@clerk/nextjs";
+import { ArrowLeft, ArrowRight, ShieldCheck, ClipboardCheck, LogOut } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SiteLang } from "@/lib/i18n/siteLanguage";
 import type { OnboardingChoice, OnboardingEvent } from "@/investing-core/onboarding/onboardingIntent";
+import FirstPortfolioClient from "./FirstPortfolioClient";
 
 type Pathway=OnboardingChoice["pathway"];
 type ResponseState={state:string;latest:OnboardingEvent|null;financialState:string;executionAuthority:string};
@@ -13,52 +14,52 @@ const tr={
  pt:{
   eyebrow:"SYNTRAKE · INVESTING",title:"Vamos conhecer a tua situação",
   subtitle:"O Investing é para acompanhamento e decisões de longo prazo. Não partilha contas, capital ou ordens com o Trading.",
-  back:"Início",titleQuestion:"Já tens um portfolio de investimentos?",
+  back:"Início",signOut:"Terminar sessão",titleQuestion:"Já tens um portfolio de investimentos?",
   has:"Sim, já invisto",hasText:"Quero importar as posições e depois analisar se o portfolio é adequado.",
   needs:"Não, vou começar",needsText:"Quero definir objetivos, horizonte e risco antes de construir um portfolio.",
   source:"Como pretendes importar?",manual:"Introduzir manualmente",document:"Extrato ou ficheiro do broker",connect:"Ligar broker mais tarde",
   objective:"Objetivo principal",retirement:"Reforma",wealth:"Crescimento do património",purchase:"Compra importante",other:"Outro",
   horizon:"Horizonte (anos)",risk:"Capacidade de suportar perdas",low:"Baixa",medium:"Média",high:"Alta",
   save:"Guardar a minha escolha",saving:"A guardar…",saved:"Escolha guardada no Supabase Preview",
-  disclaimer:"Este passo guarda apenas a tua intenção declarada. Ainda não cria uma conta financeira, portfolio, cash, depósitos ou recomendações. Não são enviadas ordens.",
-  recent:"Última escolha guardada",none:"Ainda não tens uma escolha guardada.",reload:"Atualizar",
+  disclaimer:"A escolha inicial é uma declaração do utilizador. Quando a conta e o portfolio são criados, são apenas estruturas vazias: cash, depósitos, posições e broker continuam por verificar. Não são enviadas ordens.",
+  savedHorizon:"Horizonte guardado",recent:"Última escolha guardada",none:"Ainda não tens uma escolha guardada.",reload:"Atualizar",
   error:"Não foi possível confirmar os dados. Nenhuma situação financeira foi presumida.",
   blocked:"O serviço ainda não está disponível para esta sessão ou ambiente.",
-  noAccount:"Conta financeira: NÃO CRIADA",next:"Próxima etapa: criar conta e portfolio próprios, importar ou propor alternativas depois de validar os dados.",
+  noAccount:"A escolha não comprova capital ou posições",next:"Depois da criação da estrutura, é necessário importar ou construir um portfolio e verificar os dados antes de analisar ou recomendar.",
   label:"R2-C · PREVIEW · APENAS INVESTING",
  },
  en:{
   eyebrow:"SYNTRAKE · INVESTING",title:"Tell us about your situation",
   subtitle:"Investing focuses on long-term decisions. It does not share accounts, capital, or orders with Trading.",
-  back:"Home",titleQuestion:"Do you already have an investment portfolio?",
+  back:"Home",signOut:"Sign out",titleQuestion:"Do you already have an investment portfolio?",
   has:"Yes, I invest already",hasText:"Import my positions and then assess portfolio suitability.",
   needs:"No, I am starting",needsText:"Define goals, horizon and risk before constructing a portfolio.",
   source:"How would you like to import?",manual:"Enter manually",document:"Broker statement or file",connect:"Connect broker later",
   objective:"Primary goal",retirement:"Retirement",wealth:"Wealth growth",purchase:"Major purchase",other:"Other",
   horizon:"Investment horizon (years)",risk:"Capacity to withstand losses",low:"Low",medium:"Medium",high:"High",
   save:"Save my choice",saving:"Saving…",saved:"Choice saved in Supabase Preview",
-  disclaimer:"This saves only your declared intent. It does not create a financial account, portfolio, cash, deposits or recommendations, and it does not place orders.",
-  recent:"Last saved choice",none:"No saved choice yet.",reload:"Refresh",
+  disclaimer:"Your initial choice is user-reported. Creating an account and portfolio creates empty structures only: cash, deposits, positions and broker data remain unverified. No orders are placed.",
+  savedHorizon:"Saved horizon",recent:"Last saved choice",none:"No saved choice yet.",reload:"Refresh",
   error:"Unable to verify onboarding data. No financial state was assumed.",
   blocked:"Onboarding is unavailable for this session or environment.",
-  noAccount:"Financial account: NOT CREATED",next:"Next step: provision your own account and portfolio, then import or construct alternatives after validation.",
+  noAccount:"This choice does not verify funds or holdings",next:"After creating the structure, import or construct a portfolio and verify the facts before any analysis or recommendation.",
   label:"R2-C · PREVIEW · INVESTING ONLY",
  },
  fr:{
   eyebrow:"SYNTRAKE · INVESTING",title:"Parlons de votre situation",
   subtitle:"Investing concerne les décisions à long terme. Il ne partage ni comptes, ni capital, ni ordres avec Trading.",
-  back:"Accueil",titleQuestion:"Avez-vous déjà un portefeuille d'investissement ?",
+  back:"Accueil",signOut:"Se déconnecter",titleQuestion:"Avez-vous déjà un portefeuille d'investissement ?",
   has:"Oui, j'investis déjà",hasText:"Importer mes positions et vérifier ensuite l'adéquation du portefeuille.",
   needs:"Non, je débute",needsText:"Définir objectifs, horizon et risque avant de construire un portefeuille.",
   source:"Comment souhaitez-vous importer ?",manual:"Saisie manuelle",document:"Relevé ou fichier du courtier",connect:"Connecter un courtier plus tard",
   objective:"Objectif principal",retirement:"Retraite",wealth:"Développer mon patrimoine",purchase:"Achat important",other:"Autre",
   horizon:"Horizon (années)",risk:"Capacité à supporter des pertes",low:"Faible",medium:"Moyenne",high:"Élevée",
   save:"Enregistrer mon choix",saving:"Enregistrement…",saved:"Choix enregistré dans Supabase Preview",
-  disclaimer:"Seule votre intention déclarée est enregistrée. Aucun compte financier, portefeuille, solde, dépôt ou recommandation n'est créé. Aucun ordre n'est envoyé.",
-  recent:"Dernier choix enregistré",none:"Aucun choix enregistré.",reload:"Actualiser",
+  disclaimer:"Votre choix initial est déclaratif. Si un compte et un portefeuille sont créés, ils restent des structures vides : liquidités, dépôts, positions et courtier ne sont pas vérifiés. Aucun ordre n'est envoyé.",
+  savedHorizon:"Horizon enregistré",recent:"Dernier choix enregistré",none:"Aucun choix enregistré.",reload:"Actualiser",
   error:"Impossible de vérifier les données. Aucun état financier n'a été supposé.",
   blocked:"Ce service n'est pas disponible pour cette session ou cet environnement.",
-  noAccount:"Compte financier : NON CRÉÉ",next:"Étape suivante : créer un compte et un portefeuille propres, puis importer ou construire des alternatives après vérification.",
+  noAccount:"Ce choix ne prouve ni liquidités ni positions",next:"Après la création de la structure, importer ou construire un portefeuille et vérifier les données avant toute analyse ou recommandation.",
   label:"R2-C · PREVIEW · INVESTING UNIQUEMENT",
  },
 } satisfies Record<SiteLang,Record<string,string>>;
@@ -86,6 +87,7 @@ export default function InvestingOnboardingClient({lang}:{lang:SiteLang}){
  const [notice,setNotice]=useState<"SAVED"|"ERROR"|"BLOCKED"|null>(null);
  const [rev,setRev]=useState(0);
  const attempt=useRef<string|null>(null);
+ const hasUnsavedEdits=useRef(false);
  const current=actor&&record?.userId===actor?record.data:null;
 
  useEffect(()=>{
@@ -99,7 +101,22 @@ export default function InvestingOnboardingClient({lang}:{lang:SiteLang}){
      });
      const data:unknown=await res.json();
      if(!res.ok||!isState(data))throw new Error("unavailable");
-     if(live)setRecord({userId:actor,data});
+     if(live){
+       setRecord({userId:actor,data});
+       // A saved user declaration is the source of truth, not the UI defaults.
+       // Never overwrite edits made while this asynchronous GET was running.
+       if(data.latest&&!hasUnsavedEdits.current){
+         const saved=data.latest.choice;
+         setPathway(saved.pathway);
+         if(saved.pathway==="HAS_PORTFOLIO"){
+           setSource(saved.importSource);
+         }else{
+           setObjective(saved.objective);
+           setHorizon(String(saved.horizonYears));
+           setCapacity(saved.lossCapacity);
+         }
+       }
+     }
     }catch{if(live){setRecord(null);setNotice("ERROR");}}
     finally{if(live)setLoading(false);}
    })();
@@ -107,7 +124,7 @@ export default function InvestingOnboardingClient({lang}:{lang:SiteLang}){
  },[actor,rev]);
 
  const resetAttempt=useCallback(()=>{attempt.current=null;setNotice(null);},[]);
- function choose(path:Pathway){setPathway(path);resetAttempt();}
+ function choose(path:Pathway){hasUnsavedEdits.current=true;setPathway(path);resetAttempt();}
  async function submit(){
   if(!actor||!pathway||saving)return;
   const n=Number(horizon);
@@ -127,6 +144,7 @@ export default function InvestingOnboardingClient({lang}:{lang:SiteLang}){
    const value:unknown=await res.json();
    if(!res.ok||!isState(value)){setNotice(res.status===403||res.status===404?"BLOCKED":"ERROR");return;}
    setRecord({userId:actor,data:value});
+   hasUnsavedEdits.current=false;
    setNotice("SAVED");
   }catch{setNotice("ERROR");}
   finally{setSaving(false);}
@@ -138,7 +156,14 @@ export default function InvestingOnboardingClient({lang}:{lang:SiteLang}){
  <header className="flex flex-wrap items-center justify-between gap-4">
  <Link className="flex items-center gap-2 text-sm text-slate-300 hover:text-white" href="/start">
   <ArrowLeft size={17}/>{copy.back}</Link>
+ <div className="flex flex-wrap items-center gap-3">
  <span className="rounded-full border border-sky-500/40 bg-sky-500/10 px-4 py-2 text-xs font-semibold tracking-wider text-sky-200">{copy.label}</span>
+ <SignOutButton redirectUrl="/start">
+  <button type="button" className="inline-flex items-center gap-2 rounded-lg border border-slate-600 px-4 py-2 text-xs font-semibold text-slate-200 hover:border-sky-400 hover:text-white">
+   <LogOut size={15} aria-hidden="true"/>{copy.signOut}
+  </button>
+ </SignOutButton>
+ </div>
  </header>
  <section className="mt-14 max-w-3xl">
   <p className="text-xs font-bold tracking-[0.25em] text-sky-300">{copy.eyebrow}</p>
@@ -167,7 +192,7 @@ export default function InvestingOnboardingClient({lang}:{lang:SiteLang}){
  <section className="mt-8 rounded-2xl border border-slate-700 bg-slate-900/80 p-7">
  {pathway==="HAS_PORTFOLIO"?(
  <label className="block text-sm font-semibold">{copy.source}
-  <select value={source} onChange={e=>{setSource(e.target.value as typeof source);resetAttempt();}} className={inputClass}>
+  <select value={source} onChange={e=>{hasUnsavedEdits.current=true;setSource(e.target.value as typeof source);resetAttempt();}} className={inputClass}>
    <option value="MANUAL_ENTRY">{copy.manual}</option>
    <option value="DOCUMENT_EXTRACTED">{copy.document}</option>
    <option value="BROKER_CONNECT_LATER">{copy.connect}</option>
@@ -176,7 +201,7 @@ export default function InvestingOnboardingClient({lang}:{lang:SiteLang}){
  ):(
  <div className="grid gap-5 md:grid-cols-3">
  <label className="text-sm font-semibold">{copy.objective}
-  <select value={objective} onChange={e=>{setObjective(e.target.value as typeof objective);resetAttempt();}} className={inputClass}>
+  <select value={objective} onChange={e=>{hasUnsavedEdits.current=true;setObjective(e.target.value as typeof objective);resetAttempt();}} className={inputClass}>
    <option value="RETIREMENT">{copy.retirement}</option>
    <option value="WEALTH_GROWTH">{copy.wealth}</option>
    <option value="LARGE_PURCHASE">{copy.purchase}</option>
@@ -185,10 +210,10 @@ export default function InvestingOnboardingClient({lang}:{lang:SiteLang}){
  </label>
  <label className="text-sm font-semibold">{copy.horizon}
   <input type="number" min={1} max={60} step={1} value={horizon}
-   onChange={e=>{setHorizon(e.target.value);resetAttempt();}} className={inputClass}/>
+   onChange={e=>{hasUnsavedEdits.current=true;setHorizon(e.target.value);resetAttempt();}} className={inputClass}/>
  </label>
  <label className="text-sm font-semibold">{copy.risk}
-  <select value={capacity} onChange={e=>{setCapacity(e.target.value as typeof capacity);resetAttempt();}} className={inputClass}>
+  <select value={capacity} onChange={e=>{hasUnsavedEdits.current=true;setCapacity(e.target.value as typeof capacity);resetAttempt();}} className={inputClass}>
    <option value="LOW">{copy.low}</option>
    <option value="MEDIUM">{copy.medium}</option>
    <option value="HIGH">{copy.high}</option>
@@ -211,11 +236,15 @@ export default function InvestingOnboardingClient({lang}:{lang:SiteLang}){
  {loading?<p className="mt-3 text-slate-400">…</p>
   :current?.latest?<p className="mt-3 text-emerald-200">{copy.saved} — {current.latest.choice.pathway==="HAS_PORTFOLIO"?copy.has:copy.needs}</p>
   :<p className="mt-3 text-slate-300">{copy.none}</p>}
+ {!loading&&current?.latest?.choice.pathway==="NEEDS_PORTFOLIO"&&(
+  <p className="mt-2 text-sm text-slate-300">{copy.savedHorizon}: {current.latest.choice.horizonYears}</p>
+ )}
  {notice==="SAVED"&&<p className="mt-3 text-sm text-emerald-300">{copy.saved}</p>}
  {notice==="ERROR"&&<p role="alert" className="mt-3 text-sm text-amber-300">{copy.error}</p>}
  {notice==="BLOCKED"&&<p role="alert" className="mt-3 text-sm text-amber-300">{copy.blocked}</p>}
  <p className="mt-4 text-xs font-semibold uppercase tracking-wide text-amber-300">{copy.noAccount}</p>
  </section>
+ {current?.latest&&<FirstPortfolioClient lang={lang}/>}
  <aside className="mt-8 rounded-2xl border border-sky-500/20 bg-sky-900/15 p-7 text-sm leading-relaxed text-slate-300">
   <p className="flex items-center gap-2 font-semibold text-sky-200"><ShieldCheck size={18}/>{copy.disclaimer}</p>
   <p className="mt-4">{copy.next}</p>

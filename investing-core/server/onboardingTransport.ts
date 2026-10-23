@@ -19,7 +19,10 @@ export class OnboardingBlocked extends Error {
 }
 export function isR2CPreviewEnabled(env:Config): boolean {
   return env.VERCEL_ENV==="preview"
-    && env.VERCEL_GIT_COMMIT_REF===R2C_PREVIEW_BRANCH
+    && (env.VERCEL_GIT_COMMIT_REF===R2C_PREVIEW_BRANCH ||
+      (env.VERCEL_GIT_COMMIT_REF==="candidate/investing-r2c2-first-portfolio-20261023"
+       && env.INVESTING_R2C2_PREVIEW_MODE==="enabled"
+       && env.INVESTING_R2C2_SUPABASE_PROJECT_REF===R2C_PREVIEW_PROJECT))
     && env.INVESTING_R2C_PREVIEW_MODE==="enabled"
     && env.INVESTING_R2C_SUPABASE_PROJECT_REF===R2C_PREVIEW_PROJECT
     && env.NEXT_PUBLIC_SUPABASE_URL==="https://"+R2C_PREVIEW_PROJECT+".supabase.co"
