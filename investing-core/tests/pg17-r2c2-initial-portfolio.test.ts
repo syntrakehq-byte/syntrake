@@ -33,6 +33,7 @@ test("R2-C2 real PG17: atomic, owner-scoped initial portfolio under dedicated NO
    "../../supabase/release-candidates/20261022200000_r2b_unverified_portfolio_imports.sql",
    "../../supabase/release-candidates/20261022210000_r2c_onboarding_intents.sql",
    "../../supabase/release-candidates/20261023063000_r2c2_first_portfolio.sql",
+   "../../supabase/release-candidates/20261023070000_r2c2_preview_runtime_capability.sql",
   ];
   for(const path of migrations)await admin.query(await readFile(new URL(path,import.meta.url),"utf8"));
   const privilege=await admin.query<{anon:boolean;auth:boolean;provision:boolean;can_login:boolean;ledger:boolean}>(
@@ -46,6 +47,12 @@ test("R2-C2 real PG17: atomic, owner-scoped initial portfolio under dedicated NO
    "($1,'00000000-0000-4000-8000-000000000311',repeat('a',64),'HAS_PORTFOLIO','MANUAL_ENTRY'),"+
    "($2,'00000000-0000-4000-8000-000000000312',repeat('b',64),'HAS_PORTFOLIO','MANUAL_ENTRY')",
    [A.userId,B.userId]);
+  const previewRole=await admin.query<{can_login:boolean;can_set:boolean;inherited:boolean}>(
+    "select r.rolcanlogin can_login,pg_has_role('investing_initial_preview_runtime',"+
+    "'investing_initial_provisioner','SET') can_set,pg_has_role("+
+    "'investing_initial_preview_runtime','investing_initial_provisioner','USAGE') inherited "+
+    "from pg_roles r where r.rolname='investing_initial_preview_runtime'");
+  assert.deepEqual(previewRole.rows[0],{can_login:false,can_set:true,inherited:false});
   await admin.query("create role ci_r2c2_runtime login noinherit password 'synthetic_ci_only_never_prod'");
   await admin.query("grant investing_initial_provisioner to ci_r2c2_runtime with inherit false, set true");
   const runtime=new URL(url);
