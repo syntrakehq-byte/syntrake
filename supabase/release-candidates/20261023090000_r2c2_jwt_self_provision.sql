@@ -16,7 +16,7 @@ DECLARE
  v_actor text;
  v_role text;
  v_name text;
- v_portfolio text;
+ v_portfolio_name text;
  v_hash text;
  v_previous investing.initial_portfolio_receipts%ROWTYPE;
  v_account uuid;
@@ -36,9 +36,9 @@ BEGIN
     RAISE EXCEPTION 'invalid provisioning input' USING ERRCODE='P1202';
  END IF;
  v_name:=btrim(coalesce(p_account_name,''));
- v_portfolio:=btrim(coalesce(p_portfolio_name,''));
+ v_portfolio_name:=btrim(coalesce(p_portfolio_name,''));
  IF length(v_name) NOT BETWEEN 2 AND 80
-   OR length(v_portfolio) NOT BETWEEN 2 AND 80
+   OR length(v_portfolio_name) NOT BETWEEN 2 AND 80
    OR p_base_currency IS NULL
    OR p_base_currency NOT IN ('EUR','USD','GBP','CHF','JPY','KWD')
  THEN
@@ -54,7 +54,7 @@ BEGIN
  v_hash := encode(sha256(convert_to(
    'INITIAL_INVESTING_PORTFOLIO_V2' || chr(31) ||
    length(v_name)::text || ':' || v_name || chr(31) ||
-   length(v_portfolio)::text || ':' || v_portfolio || chr(31) ||
+   length(v_portfolio_name)::text || ':' || v_portfolio_name || chr(31) ||
    p_base_currency, 'UTF8')),'hex');
  PERFORM set_config('syntrake.actor_user_id',v_actor,true);
  PERFORM pg_advisory_xact_lock(hashtextextended(
@@ -91,7 +91,7 @@ BEGIN
  INSERT INTO investing.account_memberships(investment_account_id,user_id,role)
    VALUES(v_account,v_actor,'owner');
  INSERT INTO investing.portfolios(investment_account_id,name)
-   VALUES(v_account,v_portfolio) RETURNING id INTO v_portfolio;
+   VALUES(v_account,v_portfolio_name) RETURNING id INTO v_portfolio;
  FOREACH v_code IN ARRAY ARRAY[
    'cash','external_clearing','position_cost','income','expense','equity'
  ] LOOP
