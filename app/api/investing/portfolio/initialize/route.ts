@@ -1,6 +1,9 @@
+import {auth} from "@clerk/nextjs/server";
 import {InitialPortfolioBlocked} from "@/investing-core/server/initializeFirstPortfolio";
-import {isR2C2PreviewReady,provisionFromClerk,readInitialPortfolioFromClerk}
+import {isR2C2PreviewReady,provisionFromClerk,readViaVerifiedJwt}
   from "@/investing-core/server/initialPortfolioRuntime";
+import {inspectExistingAccountViaClerkJwt}
+  from "@/investing-core/server/legacyAccountReconciliation";
 export const runtime="nodejs";
 export const dynamic="force-dynamic";
 const headers={"Cache-Control":"private,no-store,max-age=0",
@@ -15,6 +18,7 @@ function httpError(e:unknown):Response{
   if(e.code==="INITIAL_PORTFOLIO_ALREADY_EXISTS"||e.code==="IDEMPOTENCY_CONFLICT")
    return json(409,{error:"INITIAL_PORTFOLIO_ALREADY_EXISTS"});
   if(e.code==="NOT_AUTHORIZED")return json(403,{error:"BLOCKED"});
+  if(e.code==="READ_UNAVAILABLE")return json(503,{error:"READ_UNAVAILABLE"});
  }
  return json(503,{error:"PROVISIONING_UNAVAILABLE"});
 }
@@ -23,8 +27,14 @@ export async function GET(req:Request):Promise<Response>{
  const u=new URL(req.url);
  if(u.pathname!=="/api/investing/portfolio/initialize"||u.search) return json(400,{error:"INVALID_REQUEST"});
  try{
-  const latest=await readInitialPortfolioFromClerk(process.env);
-  return json(200,{state:latest?"INITIAL_PORTFOLIO_EXISTS":"NOT_PROVISIONED",latest});
+  // Preserve the R2-C2 receipt as the highest-authority initial creation
+  // evidence. Only when absent, discover legacy account structures READ-ONLY.
+  const actor=await auth();
+  const latest=await readViaVerifiedJwt(process.env,actor);
+  if(latest)return json(200,{state:"INITIAL_PORTFOLIO_EXISTS",latest,existing:null});
+  const existing=await inspectExistingAccountViaClerkJwt(process.env,actor);
+  return json(200,{state:existing?"EXISTING_ACCOUNT_RECONCILIATION_REQUIRED":"NOT_PROVISIONED",
+    latest:null,existing});
  }catch(e){return httpError(e);}
 }
 export async function POST(req:Request):Promise<Response>{

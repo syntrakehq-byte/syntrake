@@ -21,7 +21,7 @@ export class InitialPortfolioBlocked extends Error{
   constructor(public readonly code:
     "UNAUTHENTICATED"|"INVALID_INPUT"|"NO_ONBOARDING_INTENT"|
     "INITIAL_PORTFOLIO_ALREADY_EXISTS"|"IDEMPOTENCY_CONFLICT"|
-    "NOT_AUTHORIZED"|"WRITE_UNAVAILABLE"){super(code);}
+    "NOT_AUTHORIZED"|"WRITE_UNAVAILABLE"|"READ_UNAVAILABLE"){super(code);}
 }
 type ServerActor=Readonly<{userId:string|null;sessionId:string|null}>;
 type DB=Pick<Pool,"connect">;
