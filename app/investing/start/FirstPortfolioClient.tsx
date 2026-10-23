@@ -119,7 +119,7 @@ export default function FirstPortfolioClient({lang}:{lang:SiteLang}){
  const review=actor&&existing?.owner===actor?existing.value:null;
  const canCreate=!!actor&&checkedActor===actor&&!error&&!verified&&!review;
  async function submit(){
-  if(!canCreate||busy)return;
+  if(!canCreate||busy||!actor)return;
   if(!attempt.current)attempt.current=crypto.randomUUID();
   setBusy(true);setError(null);
   try{
