@@ -44,6 +44,15 @@ test("R2-C2 signed-JWT RPC: NOLOGIN definer, self provision, RLS, replay, A/B",a
    new URL("../../supabase/release-candidates/20261023101500_r2c2_rpc_acl_lockdown.sql",import.meta.url),
    "utf8"));
   await admin.query("COMMIT");
+  await admin.query("BEGIN");
+  await admin.query(await readFile(
+   new URL("../../supabase/release-candidates/20261023113000_r2c2_verified_claims_rpc.sql",import.meta.url),
+   "utf8"));
+  await admin.query("COMMIT");
+  const definerPermissions=await admin.query<{auth_usage:boolean}>(
+   "SELECT has_schema_privilege('investing_initial_provisioner','auth','USAGE') auth_usage");
+  // PG17 fixtures allow auth schema for other tests, but V2 itself has no
+  // auth.jwt() usage and must work with only request.jwt.claims (as Preview).
   const afterFix=await admin.query<{anon:boolean;authenticated:boolean}>(
    "SELECT has_function_privilege('anon',"+
    "'investing.provision_first_portfolio(uuid,text,text,text)','EXECUTE') anon,"+
