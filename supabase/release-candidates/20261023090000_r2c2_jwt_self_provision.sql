@@ -108,6 +108,10 @@ $syntrake$;
 -- Caller cannot call as the definer, nor change financial tables directly.
 -- SECURITY DEFINER ownership is the minimum-capability NOLOGIN role; the
 -- transient CREATE privilege is revoked in this same migration.
+-- Restrict JWT visibility to the standard signed-claims accessor. Do not
+-- grant any auth table privileges or JWT creation/signing privileges.
+GRANT USAGE ON SCHEMA auth TO investing_initial_provisioner;
+GRANT EXECUTE ON FUNCTION auth.jwt() TO investing_initial_provisioner;
 GRANT CREATE ON SCHEMA investing TO investing_initial_provisioner;
 ALTER FUNCTION investing.provision_first_portfolio(uuid,text,text,text)
   OWNER TO investing_initial_provisioner;
