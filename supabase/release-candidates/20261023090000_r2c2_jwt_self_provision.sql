@@ -122,11 +122,29 @@ GRANT CREATE ON SCHEMA investing TO investing_initial_provisioner;
 -- Supabase's migration executor is CREATEROLE but not superuser.
 -- It must temporarily be permitted to SET ROLE to transfer ownership.
 -- The transaction ends with NO permanent delegated membership.
-GRANT investing_initial_provisioner TO postgres WITH INHERIT FALSE, SET TRUE;
+GRANT investing_initial_provisioner TO postgres WITH ADMIN TRUE, INHERIT FALSE, SET TRUE;
 ALTER FUNCTION investing.provision_first_portfolio(uuid,text,text,text)
   OWNER TO investing_initial_provisioner;
-REVOKE investing_initial_provisioner FROM postgres;
+-- The Supabase migration executor already has ADMIN=TRUE, INHERIT=FALSE,
+-- SET=FALSE membership (managed by Supabase). Restore those exact flags,
+-- NEVER REVOKE the pre-existing admin membership.
+GRANT investing_initial_provisioner TO postgres WITH ADMIN TRUE, INHERIT FALSE, SET FALSE;
 REVOKE CREATE ON SCHEMA investing FROM investing_initial_provisioner;
+DO $restore$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_auth_members m
+    JOIN pg_roles parent ON parent.oid=m.roleid
+    JOIN pg_roles child ON child.oid=m.member
+    WHERE parent.rolname='investing_initial_provisioner'
+      AND child.rolname='postgres'
+      AND m.admin_option AND NOT m.inherit_option AND NOT m.set_option
+  ) THEN
+    RAISE EXCEPTION 'migration executor SET privilege not restored'
+      USING ERRCODE='42501';
+  END IF;
+END
+$restore$;
 
 REVOKE ALL ON FUNCTION investing.provision_first_portfolio(uuid,text,text,text)
   FROM PUBLIC, anon, authenticated;
