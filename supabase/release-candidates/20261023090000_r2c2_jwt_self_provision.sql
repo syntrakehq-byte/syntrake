@@ -119,8 +119,13 @@ $syntrake$;
 GRANT USAGE ON SCHEMA auth TO investing_initial_provisioner;
 GRANT EXECUTE ON FUNCTION auth.jwt() TO investing_initial_provisioner;
 GRANT CREATE ON SCHEMA investing TO investing_initial_provisioner;
+-- Supabase's migration executor is CREATEROLE but not superuser.
+-- It must temporarily be permitted to SET ROLE to transfer ownership.
+-- The transaction ends with NO permanent delegated membership.
+GRANT investing_initial_provisioner TO postgres WITH INHERIT FALSE, SET TRUE;
 ALTER FUNCTION investing.provision_first_portfolio(uuid,text,text,text)
   OWNER TO investing_initial_provisioner;
+REVOKE investing_initial_provisioner FROM postgres;
 REVOKE CREATE ON SCHEMA investing FROM investing_initial_provisioner;
 
 REVOKE ALL ON FUNCTION investing.provision_first_portfolio(uuid,text,text,text)
