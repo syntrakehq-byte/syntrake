@@ -1,14 +1,14 @@
 # SYNTRAKE — Arquitetura & Roadmap R0–R7
 
-**Versão:** V1.0 — CANDIDATE FOR REVIEW  
+**Versão:** V1.0 — especificação de arquitetura e roadmap (vigência sujeita ao SHA aceite em `main`)  
 **Data do snapshot:** 2026-10-23  
-**Estado:** **DECISÕES ARQUITETURAIS D1–D7 APROVADAS PELO RESPONSÁVEL EM 2026-10-23; DOCUMENTO CANDIDATO A REFERÊNCIA CANÓNICA — REVIEW E MERGE PENDENTES; SEM AUTORIZAÇÃO PARA MIGRATION/DEPLOY/EXECUÇÃO FINANCEIRA**  
+**Decisões:** **D1–D7 aprovadas em âmbito arquitetural pelo responsável em 2026-10-23.** A entrada em vigor da V1 como referência canónica depende de revisão, autorização e integração do SHA exato em `main`. Esta aprovação **não autoriza** migrations, deployments ou execução financeira.  
 **Repositório de referência:** `syntrakehq-byte/syntrake`  
-**Predecessor de proposta:** `SYNTRAKE_Auditoria_Arquitetura_Roadmap_v0_2026-10-23(1).md` (auditoria read-only V0)  
+**Evidência histórica (V0, preservada):** [Auditoria de arquitetura e roadmap V0](./audits/SYNTRAKE_ARCHITECTURE_AUDIT_V0_2026-10-23.md) (snapshot read-only de 2026-10-23)  
 **Aprovação arquitetural:** D1–D7 aprovadas explicitamente pelo responsável do projeto em 2026-10-23. Revisão independente, SHA de candidato e gate de publicação permanecem separados.  
-**Alterações em sistemas externos nesta preparação:** nenhuma.
+**Âmbito deste documento:** contratos e governança. A sua leitura ou publicação não altera sistemas externos nem concede autoridade operacional.
 
-> **Princípio de controlo:** Este documento é um *candidato a contrato canónico*. Até haver revisão, candidate commit SHA, aprovação e integração controlada, a fonte de verdade operacional é o estado observado dos sistemas reais e os seus artefactos historicamente aceites, não este texto.
+> **Regra de vigência:** numa branch/PR, esta versão é candidata; na `main`, só é referência canónica quando o SHA integrado foi revisto e expressamente aceite para publicação. Confirmar o commit em GitHub, a evidência de revisão e o índice [`current.md`](./current.md). Nenhum texto estático prova sozinho o estado operacional; GitHub, Supabase e Vercel têm de ser consultados.
 
 ---
 
@@ -38,7 +38,7 @@ O SYNTRAKE é um sistema **longitudinal de acompanhamento e apoio à decisão** 
 9. **Estado verificado, não memória.** Git commit exato + migration aplicada + deployment + testes + evidência externa, cada qual no seu ambiente. Não confundir `READY` da Vercel com scheduler/worker 24/7.
 10. **Um writer por slice e auditoria independente.** `accepted predecessor SHA → candidate SHA`, diff real, testes proporcionais ao risco, auditoria e gate antes de merge/produção. Sem autorização expressa, nenhuma alteração a production DB, deploy, merge, rollback destrutivo ou capital real.
 
-## 3. Arquitetura deliberada — publicação canónica pendente
+## 3. Arquitetura deliberada — aplicabilidade por SHA aceite
 
 ```text
                        WEB / EXPERIENCE (Next.js / Clerk / billing)
@@ -239,7 +239,7 @@ Antes de Paper: autoridade de domínio, precisão/risk, idempotência/reconcilia
 
 | Prioridade | Slice / tarefa | Resultado verificável | Bloqueia |
 |---|---|---|---|
-| **H1.1** | Rever V1 e criar **um** índice `current` no Git | referência versionada com decisões, SHA, estados, supersedes e links para evidência | Governo canónico de novos slices |
+| **H1.1** | Rever, versionar e publicar após gate **um** índice `current` no Git | referência com decisões, estado datado, SHA, supersedes e links para evidência; vigência comprovada pela `main` aceite | Governação canónica de novos slices |
 | **H1.2** | Revisão R2-C2 RPC/security | relatório técnico: grants, owner, SECURITY DEFINER, JWT, SQL injection/search_path, A/B neg., bypass, Data API e remediação/risco residual | Aprovar PR #23/DB promotion |
 | **H2.1** | R0 identidade real A≠B | duas sessões Clerk independentes; assert allow own e deny other por UI/API/RPC/DB | Fecho global R0 e R2 |
 | **H2.2** | PRs #20–#23 por lineage | auditoria de cada diff e cadeia; matriz migration Preview→Production; estado de provas exato | Qualquer merge/Production |
@@ -248,7 +248,7 @@ Antes de Paper: autoridade de domínio, precisão/risk, idempotência/reconcilia
 | **H4.1** | R3-B primeiro adapter de mercado | instrumento+1D+FX+as-of+source/quality, missing/stale/retry/licença | Valuation e market-state fiáveis |
 | **H5** | R2 financial truth viva + R4/R5 separados | portfolios e motores auditáveis, iniciando pelos contratos mínimos e provas | R6 e R7 |
 
-**Sequência imediata escolhida:** terminar H1.1 (revisão humana desta V1) e preparar o gate H1.2 em read-only. **Não abrir novo desenvolvimento enquanto a governança e as decisões materiais não estiverem fixadas.** H3/H4 são os próximos slices de capacidade depois de estabilizar os bloqueios de segurança/release existentes.
+**Sequência de execução definida no snapshot de 2026-10-23:** H1.1 compreende revisão, publicação autorizada e verificação de `main` para esta V1; H1.2 é o gate read-only seguinte. Antes de iniciar desenvolvimento material, confirmar o estado atualizado de H1.1, segurança e releases no índice e nos serviços reais. H3/H4 apenas após os gates aplicáveis.
 
 ## 9. Governança documental e compatibilidade com trabalho histórico
 
@@ -258,7 +258,7 @@ Antes de Paper: autoridade de domínio, precisão/risk, idempotência/reconcilia
 4. **Mudanças arquiteturais:** registrar uma decisão curta e material (ADR) quando alterar isolamentos, financial/market truth, concorrência/idempotência, hashing/provenance, migrações, brokers ou mandatos. Evitar ADRs burocráticas sobre detalhes reversíveis.
 5. **Uma verdade para chats e builders:** instruções de execução citam `document version + approved SHA + current accepted predecessor SHA`, nunca «segundo o outro chat» nem um screenshot como substituto de source real.
 
-## 10. Decisões arquiteturais D1–D7 aprovadas — publicação canónica pendente
+## 10. Decisões arquiteturais D1–D7 aprovadas — regra de publicação
 
 | Código | Decisão | Proposta V1 | Estado |
 |---|---|---|---|
@@ -270,7 +270,7 @@ Antes de Paper: autoridade de domínio, precisão/risk, idempotência/reconcilia
 | D6 | Governança | Registry único por SHA/ambiente/gate; Codex builder≠reviewer; Production separada | APPROVED — architectural scope, 2026-10-23 |
 | D7 | Risco pendente | PR #23 SEC DEFINER e R0 real A/B devem ser auditados antes da promoção | APPROVED — architectural scope, 2026-10-23 |
 
-**Critério para tornar a V1 canónica:** as decisões D1–D7 já foram aceites explicitamente pelo responsável em 2026-10-23; faltam candidato versionado no Git, review independente de conteúdo/compatibilidade, gate de publicação e aprovação de merge pelo SHA exato. A aceitação arquitetural **não** autoriza merges de PRs anteriores, migrations, deploys, trading ou Live.
+**Critério de vigência canónica da V1:** D1–D7 foram aprovadas arquiteturalmente em 2026-10-23. Esta versão passa a referência canónica apenas quando existir revisão independente do SHA exato, autorização de merge e integração desse SHA na `main` aceite. A evidência deve ser verificada em [PR #24](https://github.com/syntrakehq-byte/syntrake/pull/24), no histórico Git e no índice atual. Enquanto estiver apenas em PR/branch, permanece candidata. A aceitação arquitetural **não** autoriza merges de PRs anteriores, migrations, deploys, trading ou Live.
 
 ## 11. Evidência e limites do snapshot
 
@@ -297,10 +297,10 @@ Antes de Paper: autoridade de domínio, precisão/risk, idempotência/reconcilia
 ### Registo de revisão V1
 
 - **Autor da proposta:** arquitetura técnica em sessão de preparação de 2026-10-23.
-- **Review independente V1:** PENDENTE.
+- **Review independente V1:** verificar o estado efetivo das reviews e dos gates no [PR #24](https://github.com/syntrakehq-byte/syntrake/pull/24), por SHA; este documento não certifica reviews não demonstradas.
 - **Decisão do responsável:** D1–D7 aprovadas em 2026-10-23, com autorização para criar branch e PR documental **sem merge**.
-- **Candidate Git commit SHA:** consultar o head SHA do PR documental, que é a fonte de verdade; não fixar um SHA autorreferencial dentro do próprio ficheiro.
-- **Canonical approved SHA:** NÃO EXISTE para esta V1.
+- **SHA da V1:** consultar o head do PR enquanto for candidata e o commit que publicou a V1 na `main` após merge; não fixar um SHA autorreferencial dentro do próprio ficheiro.
+- **SHA canónico aprovado:** só existe quando o gate de publicação está provado no GitHub; ler a `main` e a evidência de aceitação em vez de inferir desse texto.
 - **Alterações autorizadas após a elaboração original:** criação de branch, commit e PR exclusivamente documentais no GitHub; sem merge, Supabase DDL/DML, deploy ou execução financeira.
 
-**Estado do candidato:** `DOC_PR_REVIEW_REQUIRED` — nenhuma autorização de merge/deploy/financial execution decorre deste documento.
+**Gate permanente:** revisão e autorização de mudanças continuam separadas do conteúdo arquitetural; este documento não concede autorização para merge, migrations, production deploy ou execução financeira.
