@@ -27,6 +27,29 @@ test("R2-C2 signed-JWT RPC: NOLOGIN definer, self provision, RLS, replay, A/B",a
   const {readFile}=await import("node:fs/promises");
   await admin.query(await readFile(
    new URL("../../supabase/release-candidates/20261023090000_r2c2_jwt_self_provision.sql",import.meta.url),"utf8"));
+  // Simulate Supabase's inherited PUBLIC function EXECUTE default.
+  // The forward-only ACL correction must actually close it as function owner.
+  await admin.query("BEGIN");
+  await admin.query("SET LOCAL ROLE investing_initial_provisioner");
+  await admin.query(
+   "GRANT EXECUTE ON FUNCTION investing.provision_first_portfolio(uuid,text,text,text) TO PUBLIC");
+  await admin.query("RESET ROLE");
+  await admin.query("COMMIT");
+  const beforeFix=await admin.query<{anon:boolean}>(
+   "SELECT has_function_privilege('anon',"+
+   "'investing.provision_first_portfolio(uuid,text,text,text)','EXECUTE') anon");
+  assert.equal(beforeFix.rows[0].anon,true);
+  await admin.query("BEGIN");
+  await admin.query(await readFile(
+   new URL("../../supabase/release-candidates/20261023101500_r2c2_rpc_acl_lockdown.sql",import.meta.url),
+   "utf8"));
+  await admin.query("COMMIT");
+  const afterFix=await admin.query<{anon:boolean;authenticated:boolean}>(
+   "SELECT has_function_privilege('anon',"+
+   "'investing.provision_first_portfolio(uuid,text,text,text)','EXECUTE') anon,"+
+   "has_function_privilege('authenticated',"+
+   "'investing.provision_first_portfolio(uuid,text,text,text)','EXECUTE') authenticated");
+  assert.deepEqual(afterFix.rows[0],{anon:false,authenticated:true});
   const p=await admin.query<{owner:string;security_definer:boolean;anon:boolean;authenticated:boolean;can_login:boolean}>(
    "SELECT pg_get_userbyid(p.proowner) owner,p.prosecdef security_definer,"+
    "has_function_privilege('anon',p.oid,'EXECUTE') anon,"+
