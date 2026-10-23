@@ -26,9 +26,9 @@ function mockFetch({leak=false,forgeAccepted=false,emptyB=false}={}){
     else if (url.pathname.endsWith("/portfolios"))
       data=emptyB&&!isA?[]:[{id:ownP,investment_account_id:ownId}];
     else if (url.pathname.endsWith("/initial_portfolio_receipts"))
-      data=[{user_id:sub,account_id:ownId}];
+      data=emptyB&&!isA?[]:[{user_id:sub,account_id:ownId}];
     else if (url.pathname.endsWith("/onboarding_intents"))
-      data=[{id:ownP,actor_user_id:sub}];
+      data=emptyB&&!isA?[]:[{id:ownP,actor_user_id:sub}];
     else throw Error("unexpected table");
     if (url.searchParams.has("id")) {
       const v=url.searchParams.get("id");data=data.filter(row=>v.includes(row.id));
