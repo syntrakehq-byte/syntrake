@@ -1,0 +1,21 @@
+name: investing-r2c2-clerk-ab-harness
+on:
+  pull_request:
+    paths:
+      - "scripts/security/clerk-ab-readonly.mjs"
+      - "scripts/security/clerk-ab-readonly.test.mjs"
+      - ".github/workflows/investing-r2c2-clerk-ab-harness.yml"
+permissions:
+  contents: read
+jobs:
+  read-only-verifier:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20
+      - name: Read-only A/B harness mock tests (NO real identities, NO production)
+        run: node --test scripts/security/clerk-ab-readonly.test.mjs
