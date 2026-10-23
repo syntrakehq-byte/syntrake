@@ -45,11 +45,21 @@ For dated original inspection and limitations, preserved unedited: [Architecture
 
 **Financial truth:** Preview synthetic ledger entries are not broker confirmations. Production zero observed rows do not mean user cash = €0 or no invested capital.
 
+## 2.1 R0 closure decision — 2026-10-23 (later than the above snapshot)
+
+**R0 foundation security baseline — ACCEPTED, CLOSED IN PROVED TECHNICAL SCOPE**. This decision records the completed 2026-10-20 real A/C Preview rehearsal, the clean R0-A integration through merged PR #9 (`c7aaa43537ad57eb40b7463e5ce354d6cf107be6`), successful exact-SHA CI and fresh 2026-10-23 read-only Supabase Production/Preview privilege and teardown checks. The current accepted `main` (`d42ecf58ca46c0e33d866cced2cdf14aa36eced0`) retains that R0 merge in its ancestry.
+
+**Evidence + exact scope:** [R0 foundation security closure](./closures/R0_SECURITY_CLOSURE_2026-10-23.md). The historical row above (“R0 basic sign-in ...”) is the original snapshot and **is superseded for the merged foundation scope only**, not deleted. No need to rerun completed A/C rehearsal without a specific new risk.
+
+**Not covered:** Production effective Clerk JWT for newly enabled Investing routes; R2-C2 privileged first-portfolio RPC and separate real A/B integration; unmerged R2/R3 features. Those have their own fail-closed release gates. No R2 authorization, migration, writer, or deploy is implied. The scoped R0 technical acceptance is not an independent third-party security certification.
+
+**Next sequential phase:** R1 evidence reconciliation/closure before R2. This index addendum itself is **candidate documentation** until PR #24 is reviewed and explicitly authorized for merge to accepted `main`.
+
 ## 3. Process for next work
 
 1. For each architecture revision, independently review the candidate diff against the accepted predecessor and preserved V0. Verify scope, lineage and absence of unintended code, SQL, config or workflow changes.
 2. Require explicit authorization before merging the exact reviewed SHA. **Do not infer merge authorization from D1–D7**; check [the documentary PR #24](https://github.com/syntrakehq-byte/syntrake/pull/24) for this V1.
-3. Security audit: `investing.provision_first_portfolio`; two genuinely separate Clerk sessions A≠B, including negative UI/API/RPC/DB checks.
+3. **R2-C2-specific security audit:** `investing.provision_first_portfolio`, Clerk session A≠B and negative UI/API/RPC/DB tests are release gates of that new privileged financial surface, **not a reason to invalidate previously accepted R0-A**.
 4. Audit PRs #20–#23 by exact stacked lineage and compare Preview vs Production migration histories, grants and RLS before any release.
 5. Prepare R3-A harmless durable worker and independently R3-B market-data adapter; no premature financial execution.
 
