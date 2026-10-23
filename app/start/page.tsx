@@ -2,6 +2,7 @@ import Link from "next/link";
 import { auth } from "@clerk/nextjs/server";
 import { pickByLang, type Multilingual, type SiteLang } from "@/lib/i18n/siteLanguage";
 import { resolveRequestSiteLang, withLangQuery } from "@/lib/i18n/requestSiteLang";
+import { isR1AccountReadEnabled } from "@/investing-core/server/accountsReadHttp";
 
 type PageSearchParams = Record<string, string | string[] | undefined>;
 
@@ -24,8 +25,13 @@ export default async function StartPage({
   const { userId } = await auth();
   const lang = await resolveRequestSiteLang(params);
   const link = (href: string) => withLangQuery(href, lang);
-  const onboardingHref = link("/start");
-  const openSetupHref = userId ? onboardingHref : link(`/sign-in?redirect_url=${encodeURIComponent(onboardingHref)}`);
+  // R1 account access is advertised only when the exact same server-side
+  // read-only gate as /investing/accounts and its API is enabled.
+  const r1AccountsEnabled = isR1AccountReadEnabled(process.env);
+  const setupTarget = r1AccountsEnabled ? link("/investing/accounts") : link("/start");
+  const openSetupHref = userId
+    ? setupTarget
+    : link(`/sign-in?redirect_url=${encodeURIComponent(setupTarget)}`);
 
   return (
     <main className="min-h-screen bg-transparent text-ink-900">
@@ -77,7 +83,9 @@ export default async function StartPage({
             href={openSetupHref}
             className="inline-flex items-center justify-center rounded-2xl bg-signal-700 px-6 py-3 text-sm font-semibold text-white hover:bg-signal-800"
           >
-            {t(lang, { en: "Open setup", pt: "Abrir setup", es: "Abrir setup", fr: "Ouvrir setup", de: "Setup oeffnen", it: "Apri setup" })}
+            {r1AccountsEnabled
+              ? t(lang, { en: "View investing accounts", pt: "Ver contas de investimento", fr: "Voir les comptes d’investissement" })
+              : t(lang, { en: "Open setup", pt: "Abrir setup", es: "Abrir setup", fr: "Ouvrir setup", de: "Setup oeffnen", it: "Apri setup" })}
           </Link>
           <Link
             href={link("/pricing")}
