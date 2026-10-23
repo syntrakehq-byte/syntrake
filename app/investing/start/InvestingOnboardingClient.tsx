@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SiteLang } from "@/lib/i18n/siteLanguage";
 import type { OnboardingChoice, OnboardingEvent } from "@/investing-core/onboarding/onboardingIntent";
+import FirstPortfolioClient from "./FirstPortfolioClient";
 
 type Pathway=OnboardingChoice["pathway"];
 type ResponseState={state:string;latest:OnboardingEvent|null;financialState:string;executionAuthority:string};
@@ -24,7 +25,7 @@ const tr={
   recent:"Última escolha guardada",none:"Ainda não tens uma escolha guardada.",reload:"Atualizar",
   error:"Não foi possível confirmar os dados. Nenhuma situação financeira foi presumida.",
   blocked:"O serviço ainda não está disponível para esta sessão ou ambiente.",
-  noAccount:"Conta financeira: NÃO CRIADA",next:"Próxima etapa: criar conta e portfolio próprios, importar ou propor alternativas depois de validar os dados.",
+  noAccount:"Esta escolha não comprova a existência de uma conta financeira",next:"Próxima etapa: criar conta e portfolio próprios, importar ou propor alternativas depois de validar os dados.",
   label:"R2-C · PREVIEW · APENAS INVESTING",
  },
  en:{
@@ -41,7 +42,7 @@ const tr={
   recent:"Last saved choice",none:"No saved choice yet.",reload:"Refresh",
   error:"Unable to verify onboarding data. No financial state was assumed.",
   blocked:"Onboarding is unavailable for this session or environment.",
-  noAccount:"Financial account: NOT CREATED",next:"Next step: provision your own account and portfolio, then import or construct alternatives after validation.",
+  noAccount:"This choice does not confirm a financial account exists",next:"Next step: provision your own account and portfolio, then import or construct alternatives after validation.",
   label:"R2-C · PREVIEW · INVESTING ONLY",
  },
  fr:{
@@ -58,7 +59,7 @@ const tr={
   recent:"Dernier choix enregistré",none:"Aucun choix enregistré.",reload:"Actualiser",
   error:"Impossible de vérifier les données. Aucun état financier n'a été supposé.",
   blocked:"Ce service n'est pas disponible pour cette session ou cet environnement.",
-  noAccount:"Compte financier : NON CRÉÉ",next:"Étape suivante : créer un compte et un portefeuille propres, puis importer ou construire des alternatives après vérification.",
+  noAccount:"Ce choix ne confirme pas l’existence d’un compte financier",next:"Étape suivante : créer un compte et un portefeuille propres, puis importer ou construire des alternatives après vérification.",
   label:"R2-C · PREVIEW · INVESTING UNIQUEMENT",
  },
 } satisfies Record<SiteLang,Record<string,string>>;
@@ -216,6 +217,7 @@ export default function InvestingOnboardingClient({lang}:{lang:SiteLang}){
  {notice==="BLOCKED"&&<p role="alert" className="mt-3 text-sm text-amber-300">{copy.blocked}</p>}
  <p className="mt-4 text-xs font-semibold uppercase tracking-wide text-amber-300">{copy.noAccount}</p>
  </section>
+ {current?.latest&&<FirstPortfolioClient lang={lang}/>}
  <aside className="mt-8 rounded-2xl border border-sky-500/20 bg-sky-900/15 p-7 text-sm leading-relaxed text-slate-300">
   <p className="flex items-center gap-2 font-semibold text-sky-200"><ShieldCheck size={18}/>{copy.disclaimer}</p>
   <p className="mt-4">{copy.next}</p>
