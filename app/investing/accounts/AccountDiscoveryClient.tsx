@@ -14,7 +14,7 @@ const messages = {
   en: {
     eyebrow: "INVESTING · ACCOUNT ACCESS", title: "Your investment accounts",
     subtitle: "A secure read-only view of accounts you are authorized to access.",
-    preview: "PREVIEW ONLY", source: "Verified session · Supabase RLS",
+    readOnlyBadge: "READ ONLY", source: "Verified session · Supabase RLS",
     reload: "Refresh accounts", loading: "Checking authorized accounts…",
     count: "Visible accounts", currency: "Base currency", accountId: "Account identifier",
     emptyTitle: "No accounts available", empty: "We cannot confirm any accounts under this session. This does not mean your balance is zero.",
@@ -28,7 +28,7 @@ const messages = {
   pt: {
     eyebrow: "INVESTING · ACESSO ÀS CONTAS", title: "As tuas contas de investimento",
     subtitle: "Consulta segura, apenas de leitura, das contas a que tens acesso autorizado.",
-    preview: "APENAS PREVIEW", source: "Sessão verificada · Supabase RLS",
+    readOnlyBadge: "APENAS LEITURA", source: "Sessão verificada · Supabase RLS",
     reload: "Atualizar contas", loading: "A verificar contas autorizadas…",
     count: "Contas visíveis", currency: "Moeda base", accountId: "Identificador da conta",
     emptyTitle: "Nenhuma conta disponível", empty: "Não conseguimos confirmar contas nesta sessão. Isto não significa que o teu saldo seja zero.",
@@ -42,7 +42,7 @@ const messages = {
   fr: {
     eyebrow: "INVESTING · ACCÈS AUX COMPTES", title: "Vos comptes d'investissement",
     subtitle: "Vue sécurisée, en lecture seule, des comptes auxquels vous avez accès.",
-    preview: "PREVIEW UNIQUEMENT", source: "Session vérifiée · Supabase RLS",
+    readOnlyBadge: "LECTURE SEULE", source: "Session vérifiée · Supabase RLS",
     reload: "Actualiser les comptes", loading: "Vérification des comptes autorisés…",
     count: "Comptes visibles", currency: "Devise de base", accountId: "Identifiant du compte",
     emptyTitle: "Aucun compte disponible", empty: "Aucun compte n'a pu être confirmé pour cette session. Cela ne signifie pas que le solde est nul.",
@@ -120,7 +120,7 @@ export default function AccountDiscoveryClient({ lang }: { lang: SiteLang }) {
           <Link href="/" className="inline-flex items-center gap-2 text-sm text-slate-300 hover:text-white">
             <ArrowLeft size={16} aria-hidden="true" />{copy.back}
           </Link>
-          <span className="rounded-full border border-amber-400/40 bg-amber-400/10 px-3 py-1 text-xs font-semibold tracking-wider text-amber-200">{copy.preview}</span>
+          <span className="rounded-full border border-amber-400/40 bg-amber-400/10 px-3 py-1 text-xs font-semibold tracking-wider text-amber-200">{copy.readOnlyBadge}</span>
         </header>
         <section aria-labelledby="accounts-title" className="mt-12">
           <p className="text-xs font-semibold tracking-[0.23em] text-sky-300">{copy.eyebrow}</p>
