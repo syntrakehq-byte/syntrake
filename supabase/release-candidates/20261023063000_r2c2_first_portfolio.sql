@@ -47,6 +47,11 @@ grant select,insert on investing.identity_accounts,
   investing.initial_portfolio_receipts
   to investing_initial_provisioner;
 grant select on investing.onboarding_intents to investing_initial_provisioner;
+-- The existing currency SELECT policy is for authenticated only; without
+-- this new-role policy a perfectly valid EUR lookup appears absent under RLS.
+create policy provisioner_currency_read on investing.supported_currencies
+for select to investing_initial_provisioner using (true);
+
 -- The existing owner/membership COMMIT trigger SELECT ... FOR UPDATE
 -- needs UPDATE privilege, even though provisioning NEVER updates accounts.
 -- NO LOGIN is provisioned and browser roles retain no financial INSERT.
