@@ -114,7 +114,14 @@ ALTER FUNCTION investing.provision_first_portfolio(uuid,text,text,text)
 REVOKE CREATE ON SCHEMA investing FROM investing_initial_provisioner;
 
 REVOKE ALL ON FUNCTION investing.provision_first_portfolio(uuid,text,text,text)
-  FROM PUBLIC, anon, authenticated, service_role;
+  FROM PUBLIC, anon, authenticated;
+DO $role$
+BEGIN
+ IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN
+   REVOKE ALL ON FUNCTION investing.provision_first_portfolio(uuid,text,text,text)
+     FROM service_role;
+ END IF;
+END $role$;
 GRANT EXECUTE ON FUNCTION investing.provision_first_portfolio(uuid,text,text,text)
   TO authenticated;
 
