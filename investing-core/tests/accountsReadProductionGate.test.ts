@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { isR1AccountReadEnabled, handleR1AccountsRead } from "../server/accountsReadHttp";
 import type { InvestingReadResult } from "../server/supabaseReadTransport";
@@ -102,4 +103,33 @@ test("candidate Preview still opt-in and can never use production project ref", 
   assert.equal(isR1AccountReadEnabled(preview), true);
   assert.equal(isR1AccountReadEnabled({...preview,INVESTING_R1_ACCOUNTS_READ_MODE:"disabled"}),false);
   assert.equal(isR1AccountReadEnabled({...preview,INVESTING_R1_SUPABASE_PROJECT_REF:prodRef,NEXT_PUBLIC_SUPABASE_URL:`https://${prodRef}.supabase.co`}),false);
+});
+
+
+test("R1 product entry remains bound to the same fail-closed account-read release gate", async () => {
+  // Source-level regression guard for Next server page wiring; dynamic gate
+  // behavior is separately tested above with positive and negative env vectors.
+  const start = await readFile(
+    new URL("../../app/start/page.tsx", import.meta.url), "utf8",
+  );
+  const accountsUI = await readFile(
+    new URL("../../app/investing/accounts/AccountDiscoveryClient.tsx", import.meta.url), "utf8",
+  );
+
+  assert.match(start, /import \{ isR1AccountReadEnabled \} from "@\/investing-core\/server\/accountsReadHttp"/);
+  assert.match(start, /const r1AccountsEnabled = isR1AccountReadEnabled\(process\.env\)/);
+  assert.match(start, /r1AccountsEnabled \? link\("\/investing\/accounts"\) : link\("\/start"\)/);
+  assert.match(start, /userId\s*\? setupTarget\s*:\s*link\(`\/sign-in\?redirect_url=/);
+  assert.match(start, /View investing accounts/);
+  assert.match(start, /Ver contas de investimento/);
+  assert.match(start, /Voir les comptes d’investissement/);
+
+  // The R1 UI is deliberately read-only in BOTH Preview and Production;
+  // environment-specific "PREVIEW ONLY" wording is incorrect after release.
+  for (const text of ["READ ONLY", "APENAS LEITURA", "LECTURE SEULE"]) {
+    assert.ok(accountsUI.includes(text), `missing read-only badge: ${text}`);
+  }
+  assert.doesNotMatch(accountsUI, /PREVIEW ONLY|APENAS PREVIEW|PREVIEW UNIQUEMENT/);
+  assert.match(accountsUI, /\/api\/investing\/accounts/);
+  assert.doesNotMatch(accountsUI, /financialState:\s*["'](?:REAL|VERIFIED|ZERO|ESTIMATED)/);
 });
