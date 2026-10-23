@@ -101,6 +101,12 @@ BEGIN
  INSERT INTO investing.initial_portfolio_receipts(
      user_id,idempotency_key,request_sha256,account_id,portfolio_id
  ) VALUES(v_actor,p_idempotency_key,v_hash,v_account,v_portfolio);
+ -- Canonical membership/owner constraints are deferred by the R0-A base.
+ -- Force them NOW under the restricted definer before handing control back
+ -- to the authenticated request role; otherwise COMMIT runs their invoker
+ -- triggers under a role that correctly lacks financial write authority.
+ SET CONSTRAINTS investing_account_owner_consistency,
+   investing_membership_owner_consistency IMMEDIATE;
  RETURN QUERY SELECT v_account,v_portfolio,'STRUCTURE_CREATED_UNFUNDED'::text;
 END
 $syntrake$;
