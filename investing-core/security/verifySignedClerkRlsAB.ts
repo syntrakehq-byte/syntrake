@@ -73,7 +73,7 @@ function verifyPreconditions(input:SignedRlsABInput,nowSeconds:number):void{
 
 async function probeAccount(
   input:SignedRlsABInput,token:string,accountId:string,
-  transport:ReadTransport,expected:"OWN"|"OTHER"|"REJECT"
+  transport:ReadTransport,expected:"OWN"|"OTHER"|"REJECT",expectedOwner?:string
 ):Promise<void>{
   const url=new URL("/rest/v1/investment_accounts",host);
   url.searchParams.set("select","id,owner_user_id");
@@ -112,7 +112,8 @@ async function probeAccount(
     if(records.length!==0)throw new SignedRlsABBlocked();
     return;
   }
-  if(records.length!==1||records[0].id!==accountId)
+  if(records.length!==1||records[0].id!==accountId||
+    records[0].owner_user_id!==expectedOwner)
     throw new SignedRlsABBlocked();
 }
 
@@ -133,8 +134,8 @@ export async function verifySignedClerkRlsAB(
   const {actorA:a,actorB:b}=input;
   // Both positive owner checks are mandatory: empty responses never count as
   // independent actor proof.
-  await probeAccount(input,a.jwt,a.accountId,transport,"OWN");
-  await probeAccount(input,b.jwt,b.accountId,transport,"OWN");
+  await probeAccount(input,a.jwt,a.accountId,transport,"OWN",a.userId);
+  await probeAccount(input,b.jwt,b.accountId,transport,"OWN",b.userId);
   // Query the foreign ID deliberately WITHOUT an owner filter: only the
   // server's RLS is permitted to hide these rows.
   await probeAccount(input,a.jwt,b.accountId,transport,"OTHER");
