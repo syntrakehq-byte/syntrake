@@ -58,7 +58,10 @@ for select to investing_initial_provisioner using (true);
 -- The existing owner/membership COMMIT trigger SELECT ... FOR UPDATE
 -- needs UPDATE privilege, even though provisioning NEVER updates accounts.
 -- NO LOGIN is provisioned and browser roles retain no financial INSERT.
-grant update on investing.investment_accounts to investing_initial_provisioner;
+-- FOR UPDATE inside R0 owner-consistency trigger needs an UPDATE capability,
+-- but granting table-wide UPDATE would allow mutation of names/base currency.
+-- Limit to canonical owner column and enforce old/new owner equality via RLS.
+grant update(owner_user_id) on investing.investment_accounts to investing_initial_provisioner;
 
 create policy provisioner_identity_select on investing.identity_accounts
 for select to investing_initial_provisioner
