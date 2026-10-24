@@ -41,3 +41,16 @@ The probe fails closed on expired/incorrect/forged payload, production/other hos
 - Provide and verify restricted private writer/first-provisioner login only under explicit mandate; do not equate `service_role` with ownership.
 - Full browser two-session Clerk flow and live Preview read/write/readback remains outstanding, with user consent for any external operations.
 - **Formal paid Supabase rehearsals only after all of R2 is complete**: R2 phase and then cumulative R0→R2. This read-only probe is NOT either rehearsal.
+
+
+## Corrected Preview deployment gate (later R2-F security revision)
+
+**Independent source review detected a material contract defect:** earlier Drafts pinned Preview routes to the literal Git branch `candidate/investing-r2-preview-security-compat-20261024`. A subsequent Draft PR (#38 and onwards) was thereby **unable to exercise its own Preview read/write routes**, even with operator configuration. Replacing the string with each successive Draft branch would repeat the defect and make the code harder to audit.
+
+R2 routes now share `investing-core/server/previewDeploymentGate.ts`. A Preview request is permitted past the *first* gate only when **all** of the following hold:
+- `VERCEL_ENV=preview`, Git branch in `candidate/investing-r2...` namespace, valid 40-character lowercase hexadecimal `VERCEL_GIT_COMMIT_SHA` supplied by the deployment platform.
+- Privately configured `INVESTING_R2_APPROVED_PREVIEW_SHA` **exactly equals** the platform commit SHA; this setting must be supplied by the operator only **after independent exact-SHA audit**. There is no default in code.
+- The existing **separate** R2C / R2C4 / R2D enabled flags, known historical Preview Supabase ref, publishable key and dedicated DB DSN/TLS requirements still apply. Matching SHAs **never** substitutes for signed Clerk verification or account ownership.
+- Production and local dev remain unreachable via these candidate routes. Every new commit invalidates prior SHA approval; this includes documentation-only commits.
+
+**Do not enable the SHA in Vercel yet.** If the platform does not expose a trustworthy commit SHA at runtime, the gate deliberately stays closed and an alternative authenticated Vercel deployment metadata source must be proven before activation. The branch prefix alone must never be treated as release authority. This source change is code+CI only; it does not activate any environment.
