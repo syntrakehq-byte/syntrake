@@ -1,4 +1,4 @@
-import type {Pool} from "pg";
+import type {Pool,PoolClient} from "pg";
 
 /**
  * R2 Preview data-plane preflight. A successful GitHub PG17 test is NOT proof
@@ -32,7 +32,7 @@ type CatalogRow=Readonly<{
 export async function assertPreviewImportCatalogReady(
   pool:Pick<Pool,"connect">,
 ):Promise<void> {
-  let client:Awaited<ReturnType<Pool["connect"]>>|undefined;
+  let client:PoolClient|undefined;
   let opened=false;
   try {
     client=await pool.connect();
