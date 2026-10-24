@@ -24,7 +24,7 @@ const tr={
   recent:"Última escolha guardada",none:"Ainda não tens uma escolha guardada.",reload:"Atualizar",
   error:"Não foi possível confirmar os dados. Nenhuma situação financeira foi presumida.",
   blocked:"O serviço ainda não está disponível para esta sessão ou ambiente.",
-  noAccount:"Conta financeira: NÃO CRIADA",next:"Próxima etapa: criar conta e portfolio próprios, importar ou propor alternativas depois de validar os dados.",
+  noAccount:"Esta escolha não cria nem altera uma conta financeira.",reviewExisting:"Consultar contas Investing existentes (apenas leitura)",next:"Próxima etapa: criar conta e portfolio próprios, importar ou propor alternativas depois de validar os dados.",
   label:"R2-C · PREVIEW · APENAS INVESTING",
  },
  en:{
@@ -41,7 +41,7 @@ const tr={
   recent:"Last saved choice",none:"No saved choice yet.",reload:"Refresh",
   error:"Unable to verify onboarding data. No financial state was assumed.",
   blocked:"Onboarding is unavailable for this session or environment.",
-  noAccount:"Financial account: NOT CREATED",next:"Next step: provision your own account and portfolio, then import or construct alternatives after validation.",
+  noAccount:"This choice does not create or modify a financial account.",reviewExisting:"Review existing Investing accounts (read only)",next:"Next step: provision your own account and portfolio, then import or construct alternatives after validation.",
   label:"R2-C · PREVIEW · INVESTING ONLY",
  },
  fr:{
@@ -58,7 +58,7 @@ const tr={
   recent:"Dernier choix enregistré",none:"Aucun choix enregistré.",reload:"Actualiser",
   error:"Impossible de vérifier les données. Aucun état financier n'a été supposé.",
   blocked:"Ce service n'est pas disponible pour cette session ou cet environnement.",
-  noAccount:"Compte financier : NON CRÉÉ",next:"Étape suivante : créer un compte et un portefeuille propres, puis importer ou construire des alternatives après vérification.",
+  noAccount:"Ce choix ne crée ni ne modifie de compte financier.",reviewExisting:"Voir les comptes Investing existants (lecture seule)",next:"Étape suivante : créer un compte et un portefeuille propres, puis importer ou construire des alternatives après vérification.",
   label:"R2-C · PREVIEW · INVESTING UNIQUEMENT",
  },
 } satisfies Record<SiteLang,Record<string,string>>;
@@ -219,6 +219,7 @@ export default function InvestingOnboardingClient({lang}:{lang:SiteLang}){
  <aside className="mt-8 rounded-2xl border border-sky-500/20 bg-sky-900/15 p-7 text-sm leading-relaxed text-slate-300">
   <p className="flex items-center gap-2 font-semibold text-sky-200"><ShieldCheck size={18}/>{copy.disclaimer}</p>
   <p className="mt-4">{copy.next}</p>
+  <Link href="/investing/existing" className="mt-4 inline-block text-sky-300 underline">{copy.reviewExisting}</Link>
  </aside>
  </div>
  </main>
