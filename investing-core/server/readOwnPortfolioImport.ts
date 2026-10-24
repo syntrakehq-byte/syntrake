@@ -16,7 +16,7 @@ export class PortfolioImportReadBlocked extends Error {
 
 type VerifiedServerSession = Readonly<{ userId: string | null; sessionId: string | null }>;
 type ReadCommand = Readonly<{ portfolioId: string; snapshotId: string }>;
-type Coverage = "NOT_REPORTED" | "PARTIAL" | "ASSERTED_COMPLETE";
+type Coverage = "NOT_REPORTED" | "PARTIAL" | "ASSERTED_COMPLETE" | "LEGACY_COVERAGE_UNKNOWN";
 
 export type UnverifiedImportReadback = Readonly<{
   kind: "UNVERIFIED_IMPORT";
@@ -58,8 +58,8 @@ type HeaderRow = {
   source_as_of_utc: string;
   declared_portfolio_name: string;
   declared_base_currency: string;
-  reported_cash_coverage: string;
-  reported_position_coverage: string;
+  reported_cash_coverage: string | null;
+  reported_position_coverage: string | null;
   expected_cash_rows: number;
   expected_position_rows: number;
   expected_planned_rows: number;
@@ -172,8 +172,8 @@ export async function readOwnPortfolioImport(
       portfolioName: h.declared_portfolio_name,
       baseCurrency: currencyCode.parse(h.declared_base_currency.trim()),
       reportedCoverage: Object.freeze({
-        cash: coverage.parse(h.reported_cash_coverage),
-        positions: coverage.parse(h.reported_position_coverage),
+        cash: h.reported_cash_coverage === null ? "LEGACY_COVERAGE_UNKNOWN" as const : coverage.parse(h.reported_cash_coverage),
+        positions: h.reported_position_coverage === null ? "LEGACY_COVERAGE_UNKNOWN" as const : coverage.parse(h.reported_position_coverage),
       }),
       cashBalances: Object.freeze(cash.rows.map((c) => Object.freeze({
         ...parseMoney(c.currency, c.amount_minor), verification: "UNVERIFIED" as const,
