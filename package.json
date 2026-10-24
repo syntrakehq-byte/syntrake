@@ -11,7 +11,7 @@
     "verify:ci": "npm run lint && npx tsc --noEmit && npm run build",
     "audit": "npm audit",
     "audit:prod": "npm audit --omit=dev",
-    "test:investing": "tsx --test investing-core/tests/invariants.test.ts investing-core/tests/supabaseReadTransport.test.ts investing-core/tests/serverEntry.test.ts investing-core/tests/accountsReadHttp.test.ts investing-core/tests/accountDiscoveryViewModel.test.ts investing-core/tests/accountsReadProductionGate.test.ts investing-core/tests/firstProductionMigrationGate.test.ts investing-core/tests/portfolioImportDraft.test.ts investing-core/tests/onboardingIntent.test.ts investing-core/tests/initialPortfolio.test.ts investing-core/tests/existingAccountReview.test.ts",
+    "test:investing": "tsx --test investing-core/tests/invariants.test.ts investing-core/tests/supabaseReadTransport.test.ts investing-core/tests/serverEntry.test.ts investing-core/tests/accountsReadHttp.test.ts investing-core/tests/accountDiscoveryViewModel.test.ts investing-core/tests/accountsReadProductionGate.test.ts investing-core/tests/firstProductionMigrationGate.test.ts investing-core/tests/portfolioImportDraft.test.ts investing-core/tests/onboardingIntent.test.ts investing-core/tests/initialPortfolio.test.ts investing-core/tests/existingAccountReview.test.ts investing-core/tests/firstPortfolioPreviewHttp.test.ts",
     "test:investing:pg17": "tsx --test investing-core/tests/pg17.test.ts",
     "test:investing:pg17:readonly": "tsx --test investing-core/tests/pg17-release-readonly.test.ts"
   },
