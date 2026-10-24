@@ -65,6 +65,14 @@ For dated original inspection and limitations, preserved unedited: [Architecture
 
 **Documentation status:** this addendum exists in **PR #24 only** until its exact SHA is independently reviewed and explicitly authorized for integration into `main`. Functional R1 code acceptance in `main` is already real; documentation publishing is separate.
 
+## 2.3 R1 official Production promotion — 2026-10-24 (later than §2.2)
+
+**DEPLOYED:** `www.syntrake.com` now serves the exact previously approved merged R1 build `main@29f1c068769e34a84e87717ac8cc9286dd937938` through Vercel READY deployment `dpl_FkMG3sVQyAspj7bSpeVsrj5zG8xD`. This replaces the prior official alias `dpl_2Lh5ZP2iEViPtb3ikjdoVFTTpbV3` (SHA `d42ecf58...`), which is retained. Official read-back, site routes `200`, unauthenticated protected redirect `307`, account API denial `401`, forged selector `400`, registered Production R1 migration and table ACL/RLS audits passed after promotion. No new SQL/financial writes or Stripe work.
+
+**AUTHENTICATED POST-RELEASE USER REHEARSAL: PENDING.** A live Clerk session and owner-scoped R1 API returned correct empty-state on `r1.syntrake.com` before promotion. The same authenticated end-to-end flow on official `www.syntrake.com` must still be observed by an actual signed-in user; `GET /sign-in = 200` alone does not prove it. See [R1 closure §6](./closures/R1_INVESTING_TECHNICAL_CLOSURE_2026-10-24.md#6-official-production-promotion-and-read-only-postflight--2026-10-24-after-original-closure) and merged PR #27 release audit note.
+
+**Publication and acceptance remain separate.** R1 is deployed on www; technical scope accepted. R2 Draft stack still unmerged; PR #24 remains documentation-only candidate pending exact-SHA review and separate merge approval.
+
 ## 3. Process for next work
 
 1. For each architecture revision, independently review the candidate diff against the accepted predecessor and preserved V0. Verify scope, lineage and absence of unintended code, SQL, config or workflow changes.
