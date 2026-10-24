@@ -4,6 +4,7 @@ import test from "node:test";
 import {Client,Pool} from "pg";
 import {initializeFirstInvestingPortfolio,InitialPortfolioBlocked}
  from "../server/initializeFirstPortfolio";
+import {handlePrivateFirstPortfolioPost} from "../server/firstPortfolioPreviewHttp";
 
 const A={userId:"user_ci_initial_actor_a",sessionId:"ci_clerk_session_a"};
 const B={userId:"user_ci_initial_actor_b",sessionId:"ci_clerk_session_b"};
@@ -156,6 +157,51 @@ test("R2-C2 real PG17: atomic, owner-scoped initial portfolio under dedicated NO
     const count=await admin.query<{v:string}>(
       "SELECT count(*)::text AS v FROM investing.investment_accounts WHERE owner_user_id=$1",[legacy]);
     assert.equal(count.rows[0].v,"1");
+  });
+
+  await t.test("R2-C4 private HTTP→Clerk actor→PG17 replay preserves account IDs, no ledger writes",async()=>{
+    const environment={
+      VERCEL_ENV:"preview",
+      VERCEL_GIT_COMMIT_REF:"candidate/investing-r2c4-private-preview-initialization-20261024",
+      INVESTING_R2C_PREVIEW_MODE:"enabled",
+      INVESTING_R2C_SUPABASE_PROJECT_REF:"zkqgpejlkgootkvkebhd",
+      NEXT_PUBLIC_SUPABASE_URL:"https://zkqgpejlkgootkvkebhd.supabase.co",
+      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:"sb_publishable_ci_key_1234567890",
+      INVESTING_R2C4_PRIVATE_WRITE:"enabled",
+      INVESTING_R2C4_PROJECT_REF:"zkqgpejlkgootkvkebhd",
+      INVESTING_R2C4_PG_DSN:"postgresql://investing_initial_preview_runtime:ci@db.zkqgpejlkgootkvkebhd.supabase.co:5432/postgres",
+      INVESTING_R2C4_PG_CA_PEM:"-----BEGIN CERTIFICATE-----\\nCI_DUMMY\\n-----END CERTIFICATE-----",
+    };
+    const endpoint="https://preview.example/api/investing/portfolio/initialize";
+    const send=async(actor:{userId:string|null;sessionId:string|null},
+      input:unknown)=>{
+      const request=new Request(endpoint,{
+        method:"POST",headers:{"origin":"https://preview.example",
+          "content-type":"application/json"},body:JSON.stringify(input),
+      });
+      return handlePrivateFirstPortfolioPost(request,environment,async()=>actor,
+        ()=>({connect:()=>isolated.connect()}));
+    };
+    const replay=await send(A,command(key));
+    assert.equal(replay.status,201);
+    const payload=await replay.json();
+    assert.deepEqual(payload,{
+      state:"STRUCTURE_CREATED_UNFUNDED",
+      receipt:savedA,financialWrites:false,
+    });
+    const conflict=await send(B,command(key));
+    assert.equal(conflict.status,409);
+    assert.equal((await conflict.json()).error,"ALREADY_EXISTS_OR_CONFLICT");
+    const noIntent=await send(C,command(key));
+    assert.equal(noIntent.status,409);
+    assert.equal((await noIntent.json()).error,"NO_ONBOARDING_INTENT");
+    const noAuth=await send({userId:null,sessionId:null},command(key));
+    assert.equal(noAuth.status,401);
+    const financial=await admin.query<{tx:string;entries:string}>(
+      "SELECT (SELECT count(*)::text FROM investing.ledger_transactions) tx,"+
+      "(SELECT count(*)::text FROM investing.ledger_entries) entries",
+    );
+    assert.deepEqual(financial.rows[0],{tx:"0",entries:"0"});
   });
 
   await t.test("A/B RLS server actor may only read own receipts and identities",async()=>{
