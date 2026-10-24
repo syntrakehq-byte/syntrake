@@ -4,6 +4,7 @@ import { notFound, redirect } from "next/navigation";
 import { resolveRequestSiteLang } from "@/lib/i18n/requestSiteLang";
 import { isR2CPreviewEnabled } from "@/investing-core/server/onboardingTransport";
 import InvestingOnboardingClient from "./InvestingOnboardingClient";
+import { isR2C4PrivateWriteReady } from "@/investing-core/server/firstPortfolioPreviewHttp";
 export const runtime="nodejs";
 export const dynamic="force-dynamic";
 export const metadata:Metadata={
@@ -18,5 +19,5 @@ export default async function InvestingStartPage({
  if(!session.userId||!session.sessionId)
    redirect("/sign-in?redirect_url=%2Finvesting%2Fstart");
  const lang=await resolveRequestSiteLang(await searchParams);
- return <InvestingOnboardingClient lang={lang}/>;
+ return <InvestingOnboardingClient lang={lang} canCreateFirstPortfolio={isR2C4PrivateWriteReady(process.env)}/>;
 }
