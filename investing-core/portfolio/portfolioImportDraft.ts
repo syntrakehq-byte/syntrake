@@ -66,6 +66,11 @@ const snapshotSchema = z.object({
   asOf: utcTimestamp,
   portfolioName: z.string().trim().min(1).max(120),
   baseCurrency: currencyCode,
+  /** Completeness is an explicit user assertion, never inferred from missing rows. */
+  reportedCoverage: z.object({
+    cash: z.enum(["NOT_REPORTED", "PARTIAL", "ASSERTED_COMPLETE"]),
+    positions: z.enum(["NOT_REPORTED", "PARTIAL", "ASSERTED_COMPLETE"]),
+  }).strict(),
   cashBalances: z.array(z.object({
     currency: currencyCode,
     amountMinor: minorUnitString,
@@ -109,6 +114,10 @@ export type UnverifiedImportDraft = Readonly<{
   provenance: Readonly<{ kind: "USER_REPORTED"; source: "MANUAL_ENTRY" | "DOCUMENT_EXTRACTED"; sourceReference: string; asOf: string }>;
   portfolioName: string;
   baseCurrency: CurrencyCode;
+  reportedCoverage: Readonly<{
+    cash: "NOT_REPORTED" | "PARTIAL" | "ASSERTED_COMPLETE";
+    positions: "NOT_REPORTED" | "PARTIAL" | "ASSERTED_COMPLETE";
+  }>;
   cashBalances: readonly Readonly<{ currency: CurrencyCode; minor: bigint; verification: "UNVERIFIED" }>[];
   positions: readonly Readonly<{
     isin: string;
@@ -136,6 +145,21 @@ export function parsePortfolioImportDraft(input: unknown): UnverifiedImportDraft
   const snapshot = snapshotSchema.parse(input);
   if (snapshot.positions.length === 0 && snapshot.cashBalances.length === 0) {
     throw new Error("an import needs at least one reported cash balance or position");
+  }
+
+  // Missing rows never imply zero holdings/cash. A user may explicitly claim
+  // completeness; this is still an unverified *declaration*, not reconciliation.
+  const coveragePairs = [
+    [snapshot.reportedCoverage.cash, snapshot.cashBalances.length, "cash"],
+    [snapshot.reportedCoverage.positions, snapshot.positions.length, "positions"],
+  ] as const;
+  for (const [coverage, count, domain] of coveragePairs) {
+    if (coverage === "NOT_REPORTED" && count !== 0) {
+      throw new Error(domain + " rows contradict NOT_REPORTED coverage");
+    }
+    if (coverage === "PARTIAL" && count === 0) {
+      throw new Error(domain + " PARTIAL coverage requires at least one reported row");
+    }
   }
 
   const seenCash = new Set<string>();
@@ -187,6 +211,7 @@ export function parsePortfolioImportDraft(input: unknown): UnverifiedImportDraft
     }),
     portfolioName: snapshot.portfolioName,
     baseCurrency: snapshot.baseCurrency,
+    reportedCoverage: Object.freeze({ ...snapshot.reportedCoverage }),
     cashBalances: Object.freeze(cashBalances),
     positions: Object.freeze(positions),
     plannedContributions: Object.freeze(plannedContributions),
