@@ -20,6 +20,9 @@ type CatalogRow=Readonly<{
   privateImportRoleCanWrite:boolean;
   authenticatedCanInsert:boolean;
   writerCanPostLedger:boolean;
+  writerCanFinalize:boolean;
+  writerCanEditDeclaredCurrency:boolean;
+  writerCanDeleteSnapshot:boolean;
   privilegedProvisioningRpcExposed:boolean;
 }>;
 
@@ -60,6 +63,12 @@ export async function assertPreviewImportCatalogReady(
         "'investing.portfolio_import_snapshots','INSERT'),true) AS \"authenticatedCanInsert\","+
       "COALESCE(has_table_privilege('investing_import_writer',"+
         "'investing.ledger_transactions','INSERT'),true) AS \"writerCanPostLedger\","+
+      "COALESCE(has_column_privilege('investing_import_writer',"+
+        "'investing.portfolio_import_snapshots','snapshot_status','UPDATE'),false) AS \"writerCanFinalize\","+
+      "COALESCE(has_column_privilege('investing_import_writer',"+
+        "'investing.portfolio_import_snapshots','declared_base_currency','UPDATE'),true) AS \"writerCanEditDeclaredCurrency\","+
+      "COALESCE(has_table_privilege('investing_import_writer',"+
+        "'investing.portfolio_import_snapshots','DELETE'),true) AS \"writerCanDeleteSnapshot\","+
       "EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace "+
         "WHERE n.nspname='investing' AND p.proname='provision_first_portfolio' "+
         "AND p.prosecdef AND has_function_privilege('authenticated',p.oid,'EXECUTE')) "+
@@ -76,6 +85,9 @@ export async function assertPreviewImportCatalogReady(
       d.privateImportRoleCanWrite!==true ||
       d.authenticatedCanInsert!==false ||
       d.writerCanPostLedger!==false ||
+      d.writerCanFinalize!==true ||
+      d.writerCanEditDeclaredCurrency!==false ||
+      d.writerCanDeleteSnapshot!==false ||
       d.privilegedProvisioningRpcExposed!==false) {
       throw new PreviewImportCatalogBlocked();
     }

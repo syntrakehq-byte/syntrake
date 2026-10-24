@@ -9,6 +9,7 @@ const ready={
   missingCoverageColumns:"0",incompatibleImportTables:"0",
   safeWriterRole:true,privateImportRoleCanWrite:true,
   authenticatedCanInsert:false,writerCanPostLedger:false,
+  writerCanFinalize:true,writerCanEditDeclaredCurrency:false,writerCanDeleteSnapshot:false,
   privilegedProvisioningRpcExposed:false,
 };
 function mockCatalog(row:Record<string,unknown>|null=ready,fail=false){
@@ -45,6 +46,9 @@ test("R2 Preview rejects missing columns, absent/unsafe role, public writer, led
   {privateImportRoleCanWrite:false},
   {authenticatedCanInsert:true},
   {writerCanPostLedger:true},
+  {writerCanFinalize:false},
+  {writerCanEditDeclaredCurrency:true},
+  {writerCanDeleteSnapshot:true},
   {privilegedProvisioningRpcExposed:true},
  ];
  for(const bad of invalidRows){
