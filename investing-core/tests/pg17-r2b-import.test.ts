@@ -328,9 +328,9 @@ test("R2-B1 isolated PG17: owner A/B, immutable atomic import, negative capabili
     assert.equal(saved.receipt.ledgerChanged,false);
     assert.equal(saved.financialMovementsCreated,false);
     const snapshotId=saved.receipt.snapshotId as string;
-    const replay=await create(actorA,input);
-    assert.equal(replay.status,201);
-    assert.equal((await replay.json()).receipt.snapshotId,snapshotId);
+    const httpReplay=await create(actorA,input);
+    assert.equal(httpReplay.status,201);
+    assert.equal((await httpReplay.json()).receipt.snapshotId,snapshotId);
     const altered=await create(actorA,{...input,declaration:{
       ...input.declaration,reportedCoverage:{cash:"ASSERTED_COMPLETE",positions:"ASSERTED_COMPLETE"},
     }});
