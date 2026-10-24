@@ -50,7 +50,7 @@ export type ImportDeclarationComparison = Readonly<{
   financialWrites: false;
 }>;
 const order = (a:string,b:string) => a<b?-1:a>b?1:0;
-const positionKey = (p:{isin:string;mic:string;quoteCurrency:string}) =>
+const positionKey = (p:UnverifiedImportReadback["positions"][number]) =>
   JSON.stringify([p.isin,p.mic,p.quoteCurrency]);
 const difference = (before:bigint|undefined,after:bigint|undefined):DeclaredChange => {
   if(before===undefined || after===undefined) {
