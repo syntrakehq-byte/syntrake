@@ -4,13 +4,14 @@ import test from "node:test";
 import { Client, Pool } from "pg";
 import { savePortfolioImport, PortfolioImportBlocked } from "../server/savePortfolioImport";
 import { readOwnPortfolioImport, PortfolioImportReadBlocked } from "../server/readOwnPortfolioImport";
+import {handlePortfolioImportHttp} from "../server/importPreviewHttp";
 
 const A = "00000000-0000-4000-8000-0000000000a1";
 const B = "00000000-0000-4000-8000-0000000000b1";
 const PORT_A = "00000000-0000-4000-8000-0000000000a2";
 const PORT_B = "00000000-0000-4000-8000-0000000000b2";
-const actorA = { userId: "clerk_ci_investing_a", sessionId: "ci-session-a" };
-const actorB = { userId: "clerk_ci_investing_b", sessionId: "ci-session-b" };
+const actorA = { userId: "user_ci_investing_a", sessionId: "ci-session-a" };
+const actorB = { userId: "user_ci_investing_b", sessionId: "ci-session-b" };
 const draft = () => ({
   schemaVersion: "R2_IMPORT_DRAFT_V1" as const,
   source: "MANUAL_ENTRY" as const,
@@ -294,6 +295,83 @@ test("R2-B1 isolated PG17: owner A/B, immutable atomic import, negative capabili
       "'Mismatch','EUR','MANUAL_ENTRY','sql-coverage-source-0001',"+
       "'2026-10-22T18:00:00.000Z',1,0,0,'NOT_REPORTED','ASSERTED_COMPLETE')",
       [A,PORT_A,actorA.userId,"c".repeat(64)]), /check constraint/);
+    // R2-D full HTTP transport ↔ private role ↔ PostgreSQL readback.
+    // This is ISOLATED PG17 with synthetic actors, never remote Supabase.
+    const preview={
+      VERCEL_ENV:"preview",
+      VERCEL_GIT_COMMIT_REF:"candidate/investing-r2d-import-flow-20261024",
+      INVESTING_R2C_PREVIEW_MODE:"enabled",
+      INVESTING_R2C_SUPABASE_PROJECT_REF:"zkqgpejlkgootkvkebhd",
+      NEXT_PUBLIC_SUPABASE_URL:"https://zkqgpejlkgootkvkebhd.supabase.co",
+      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:"sb_publishable_ci_key_1234567890",
+      INVESTING_R2D_IMPORT_ENABLED:"enabled",
+      INVESTING_R2D_PROJECT_REF:"zkqgpejlkgootkvkebhd",
+      INVESTING_R2D_PG_DSN:"postgresql://investing_import_preview_runtime:ci@db.zkqgpejlkgootkvkebhd.supabase.co:5432/postgres",
+      INVESTING_R2D_PG_CA_PEM:"-----BEGIN CERTIFICATE-----\\nCI_DUMMY\\n-----END CERTIFICATE-----",
+    };
+    const endpoint="https://preview.example/api/investing/portfolio/import";
+    const factory=()=>({connect:()=>pool!.connect()});
+    const input={
+      portfolioId:PORT_A,idempotencyKey:"ci-r2d-http-import-0001",
+      declaration:{...draft(),sourceReference:"ci-r2d-http-source-0001",
+        cashBalances:[],reportedCoverage:{cash:"NOT_REPORTED",positions:"ASSERTED_COMPLETE"}},
+    };
+    const create=(who:typeof actorA,command:unknown)=>handlePortfolioImportHttp(
+      new Request(endpoint,{method:"POST",headers:{"origin":"https://preview.example",
+        "content-type":"application/json"},body:JSON.stringify(command)}),
+      preview,async()=>who,factory);
+    const newOne=await create(actorA,input);
+    assert.equal(newOne.status,201);
+    const saved=await newOne.json();
+    assert.equal(saved.state,"USER_REPORTED_UNVERIFIED_IMPORT");
+    assert.equal(saved.receipt.kind,"UNVERIFIED_IMPORT");
+    assert.equal(saved.receipt.ledgerChanged,false);
+    assert.equal(saved.financialMovementsCreated,false);
+    const snapshotId=saved.receipt.snapshotId as string;
+    const replay=await create(actorA,input);
+    assert.equal(replay.status,201);
+    assert.equal((await replay.json()).receipt.snapshotId,snapshotId);
+    const altered=await create(actorA,{...input,declaration:{
+      ...input.declaration,reportedCoverage:{cash:"ASSERTED_COMPLETE",positions:"ASSERTED_COMPLETE"},
+    }});
+    assert.equal(altered.status,409);
+    const stolen=await create(actorB,input);
+    assert.equal(stolen.status,403);
+
+    const list=(who:typeof actorA,portfolioId:string)=>handlePortfolioImportHttp(
+      new Request(endpoint+"?"+new URLSearchParams({portfolioId})),
+      preview,async()=>who,factory);
+    const history=await list(actorA,PORT_A);
+    assert.equal(history.status,200);
+    const h=await history.json();
+    assert.equal(h.history.portfolioId,PORT_A);
+    assert.equal(h.history.valuation,"UNAVAILABLE");
+    assert.ok(h.history.records.some((item:{snapshotId:string})=>item.snapshotId===snapshotId));
+    assert.equal((await list(actorB,PORT_A)).status,404);
+    const detail=await handlePortfolioImportHttp(
+      new Request(endpoint+"?"+new URLSearchParams({portfolioId:PORT_A,snapshotId})),
+      preview,async()=>actorA,factory);
+    assert.equal(detail.status,200);
+    const d=await detail.json();
+    assert.equal(d.snapshot.snapshotId,snapshotId);
+    assert.equal(d.snapshot.portfolioId,PORT_A);
+    assert.equal(d.snapshot.reportedCoverage.cash,"NOT_REPORTED");
+    assert.equal(d.snapshot.verifiedCash,"UNAVAILABLE");
+    assert.equal(d.snapshot.valuation,"UNAVAILABLE");
+    assert.deepEqual(d.snapshot.cashBalances,[]);
+    assert.equal(d.snapshot.positions[0].quantityAtoms,"1000000000001");
+    assert.equal(d.snapshot.positions[0].reportedCostBasis,null);
+    assert.equal(d.snapshot.plannedContributions[0].minor,"10000");
+    assert.equal(d.snapshot.ledgerChanged,false);
+    const stolenDetail=await handlePortfolioImportHttp(
+      new Request(endpoint+"?"+new URLSearchParams({portfolioId:PORT_A,snapshotId})),
+      preview,async()=>actorB,factory);
+    assert.equal(stolenDetail.status,404);
+    const untouched=await admin.query<{transactions:string;entries:string}>(
+      "SELECT (SELECT count(*)::text FROM investing.ledger_transactions) transactions,"+
+      "(SELECT count(*)::text FROM investing.ledger_entries) entries");
+    assert.deepEqual(untouched.rows[0],{transactions:"0",entries:"0"});
+
   } finally {
     await pool?.end();
     await admin.end();
