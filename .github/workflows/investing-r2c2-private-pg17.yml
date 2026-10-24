@@ -1,0 +1,44 @@
+name: investing-r2c2-private-pg17
+
+on:
+  pull_request:
+    paths:
+      - "investing-core/**"
+      - "supabase/release-candidates/20261023063000_r2c2_first_portfolio.sql"
+      - ".github/workflows/investing-r2c2-private-pg17.yml"
+      - "package.json"
+
+permissions:
+  contents: read
+
+jobs:
+  first-portfolio-private-pg17:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: syntrake_r2c2_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd="pg_isready -U postgres -d syntrake_r2c2_ci"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: R0 R1 R2-A B C regressions, R2-C2 contract, strict TS
+        run: |
+          npm run test:investing
+          npx tsc -p tsconfig.investing.json --noEmit
+      - name: Restricted NOLOGIN first-account PG17 atomic A/B tests
+        run: npx tsx --test investing-core/tests/pg17-r2c2-initial-portfolio.test.ts
+        env:
+          INVESTING_PG17_R2C2_URL: postgresql://postgres:postgres@127.0.0.1:5432/syntrake_r2c2_ci
