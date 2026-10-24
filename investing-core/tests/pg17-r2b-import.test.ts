@@ -5,6 +5,7 @@ import { Client, Pool } from "pg";
 import { savePortfolioImport, PortfolioImportBlocked } from "../server/savePortfolioImport";
 import { readOwnPortfolioImport, PortfolioImportReadBlocked } from "../server/readOwnPortfolioImport";
 import {handlePortfolioImportHttp} from "../server/importPreviewHttp";
+import {listOwnPortfolioImports} from "../server/listOwnPortfolioImports";
 
 const A = "00000000-0000-4000-8000-0000000000a1";
 const B = "00000000-0000-4000-8000-0000000000b1";
@@ -371,6 +372,50 @@ test("R2-B1 isolated PG17: owner A/B, immutable atomic import, negative capabili
       "SELECT (SELECT count(*)::text FROM investing.ledger_transactions) transactions,"+
       "(SELECT count(*)::text FROM investing.ledger_entries) entries");
     assert.deepEqual(untouched.rows[0],{transactions:"0",entries:"0"});
+
+    // Model actual historical Preview imports that had NO completeness fields.
+    // The live Preview has two such rows; simulate only with disposable PG17.
+    // This deliberate one-time test-schema compatibility change is not an app migration.
+    await admin.query(
+      "ALTER TABLE investing.portfolio_import_snapshots "+
+      "ALTER COLUMN reported_cash_coverage DROP NOT NULL, "+
+      "ALTER COLUMN reported_position_coverage DROP NOT NULL");
+    await admin.query("BEGIN");
+    const legacy=await admin.query<{id:string}>(
+      "INSERT INTO investing.portfolio_import_snapshots "+
+      "(investment_account_id,portfolio_id,actor_user_id,idempotency_key,payload_sha256,"+
+      "import_schema_version,declared_portfolio_name,declared_base_currency,source_kind,"+
+      "source_reference,source_as_of,expected_cash_rows,expected_position_rows,expected_planned_rows) "+
+      "VALUES ($1,$2,$3,'ci-legacy-snapshot-001',$4,'R2_IMPORT_DRAFT_V1',"+
+      "'Historical','EUR','MANUAL_ENTRY','historical-source-001',"+
+      "'2026-10-22T18:00:00.000Z',0,1,0) RETURNING id",
+      [A,PORT_A,actorA.userId,"d".repeat(64)]);
+    const legacyId=legacy.rows[0].id;
+    await admin.query(
+      "INSERT INTO investing.portfolio_import_positions "+
+      "(snapshot_id,investment_account_id,portfolio_id,isin,mic,quote_currency,quantity_atoms) "+
+      "VALUES ($1,$2,$3,'US0378331005','XNAS','USD',1000000000000)",
+      [legacyId,A,PORT_A]);
+    await admin.query(
+      "UPDATE investing.portfolio_import_snapshots SET snapshot_status='finalized' WHERE id=$1",
+      [legacyId]);
+    await admin.query("COMMIT");
+    const legacyRead=await readOwnPortfolioImport(pool,actorA,{
+      portfolioId:PORT_A,snapshotId:legacyId,
+    });
+    assert.equal(legacyRead.reportedCoverage.cash,"LEGACY_COVERAGE_UNKNOWN");
+    assert.equal(legacyRead.reportedCoverage.positions,"LEGACY_COVERAGE_UNKNOWN");
+    assert.equal(legacyRead.verifiedCash,"UNAVAILABLE");
+    assert.equal(legacyRead.positions.length,1);
+    assert.equal(legacyRead.cashBalances.length,0);
+    const legacyHistory=await listOwnPortfolioImports(pool,actorA,PORT_A);
+    const legacyItem=legacyHistory.records.find(x=>x.snapshotId===legacyId);
+    assert.ok(legacyItem);
+    assert.equal(legacyItem.reportedCoverage.cash,"LEGACY_COVERAGE_UNKNOWN");
+    assert.equal(legacyItem.reportedCoverage.positions,"LEGACY_COVERAGE_UNKNOWN");
+    await assert.rejects(
+      readOwnPortfolioImport(pool,actorB,{portfolioId:PORT_A,snapshotId:legacyId}),
+      (e:unknown)=>e instanceof PortfolioImportReadBlocked&&e.code==="NOT_AUTHORIZED");
 
   } finally {
     await pool?.end();
