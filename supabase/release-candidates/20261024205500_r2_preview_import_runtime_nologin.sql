@@ -44,7 +44,13 @@ BEGIN
      OR NOT COALESCE(has_table_privilege('investing_import_writer',
          'investing.portfolio_import_snapshots','INSERT'),false)
      OR COALESCE(has_table_privilege('investing_import_writer',
-         'investing.ledger_transactions','INSERT'),true) THEN
+         'investing.ledger_transactions','INSERT'),true)
+     OR NOT COALESCE(has_column_privilege('investing_import_writer',
+         'investing.portfolio_import_snapshots','snapshot_status','UPDATE'),false)
+     OR COALESCE(has_column_privilege('investing_import_writer',
+         'investing.portfolio_import_snapshots','declared_base_currency','UPDATE'),true)
+     OR COALESCE(has_table_privilege('investing_import_writer',
+         'investing.portfolio_import_snapshots','DELETE'),true) THEN
     RAISE EXCEPTION 'PREVIEW_IMPORT_WRITER_GRANTS_DRIFT' USING errcode='55000';
   END IF;
 END
