@@ -4,6 +4,7 @@ import {isR2DImportReady,makeImportPool} from "./importPreviewRuntime";
 import {savePortfolioImport,PortfolioImportBlocked} from "./savePortfolioImport";
 import {readOwnPortfolioImport,PortfolioImportReadBlocked} from "./readOwnPortfolioImport";
 import {listOwnPortfolioImports} from "./listOwnPortfolioImports";
+import {assertPreviewImportCatalogReady} from "./verifyPreviewImportCatalog";
 import {compareImportDeclarations,ImportComparisonBlocked} from "../portfolio/compareImportDeclarations";
 
 type Env=Readonly<Record<string,string|undefined>>;
@@ -111,6 +112,10 @@ export async function handlePortfolioImportHttp(
   let pool:ImportPool|undefined;
   try{
     pool=factory(env);
+    // One read-only catalog check per Preview request until migrations,
+    // least-privilege roles and legacy SECDEF RPC are independently proven.
+    // A paid Supabase rehearsal is NOT triggered by this check.
+    await assertPreviewImportCatalogReady(pool);
     if(command){
       const saved=await savePortfolioImport(pool,actor,command);
       return json(201,{state:"USER_REPORTED_UNVERIFIED_IMPORT",receipt:saved,

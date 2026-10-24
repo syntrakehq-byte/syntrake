@@ -18,7 +18,7 @@ export type ActorProvider = () => Promise<ClerkSession>;
 export type FirstPortfolioPool = Readonly<{connect:()=>Promise<PoolClient>}>;
 export type PgFactory = (environment: Env) => FirstPortfolioPool & {end?:()=>Promise<void>};
 
-export const R2C4_BRANCH = "candidate/investing-r2e-declaration-changes-20261024";
+export const R2C4_BRANCH = "candidate/investing-r2-preview-security-compat-20261024";
 export const R2C4_PREVIEW_REF = "zkqgpejlkgootkvkebhd";
 const USERNAME = "investing_initial_preview_runtime";
 const MAX_BODY_BYTES = 1024;
