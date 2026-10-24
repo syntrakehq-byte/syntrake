@@ -1,0 +1,71 @@
+name: investing-release-operator-powershell
+
+on:
+  pull_request:
+    paths:
+      - 'investing-core/releases/Invoke-R1ProductionMigration.ps1'
+      - '.github/workflows/investing-release-operator-powershell.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  powershell-contract:
+    name: Windows PowerShell offline syntax and hazardous-command denylist
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Parse PowerShell without executing any migration or authentication
+        shell: powershell
+        run: |
+          $path = "investing-core/releases/Invoke-R1ProductionMigration.ps1"
+          $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $path))
+          if ($bytes.Length -lt 3 -or $bytes[0] -ne 239 -or $bytes[1] -ne 187 -or $bytes[2] -ne 191) {
+            throw "BLOCKED: script requires UTF8 BOM for Windows PowerShell 5.1"
+          }
+          $tokens = $null
+          $errors = $null
+          $ast = [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $path),[ref]$tokens,[ref]$errors)
+          if ($null -eq $ast -or $errors.Count -gt 0) {
+            foreach ($error in $errors) { Write-Host $error.Message }
+            throw "BLOCKED: PowerShell parser errors"
+          }
+          $text = [IO.File]::ReadAllText((Resolve-Path $path))
+          foreach ($required in @(
+            'd42ecf58ca46c0e33d866cced2cdf14aa36eced0',
+            'vbazzxqyuqcrmjytaboc',
+            'f23fadf42d050a7d45f84ef166f94168256eb892',
+            '20261020180000_investing_first_readonly_release.sql',
+            '20261017191056_remote_schema.sql',
+            'Assert-DryRun',
+            'Validate-History',
+            'Read-Host',
+            'Supabase -arguments @("db", "push", "--linked")'
+          )) {
+            if (-not $text.Contains($required)) { throw "BLOCKED: missing required production guard contract" }
+          }
+          $never = @('reset', 'repair', '--include-all', '--include-seed', '--include-roles')
+          $calls = [regex]::Matches($text, '(?m)^\s*Supabase\s+-arguments\s+@\([^\r\n]*')
+          if ($calls.Count -ne 4) { throw "BLOCKED: unexpected number of Supabase operator calls" }
+          foreach ($call in $calls) {
+            foreach ($hazard in $never) {
+              if ($call.Value.Contains($hazard)) { throw "BLOCKED: dangerous command invoked" }
+            }
+          }
+          if ([regex]::Matches($text, '(?m)^\s*Supabase -arguments @\("db", "push", "--linked"\)').Count -ne 1) {
+            throw "BLOCKED: exactly one guarded apply invocation required"
+          }
+          Write-Host "WINDOWS_POWERSHELL_PARSE_AND_RELEASE_GUARDS_PASS"
+      - name: Confirm SQL in accepted Git tree still unchanged
+        shell: pwsh
+        run: |
+          $path = "supabase/release-candidates/20261020180000_investing_first_readonly_release.sql"
+          $out = (git hash-object $path).Trim()
+          if ($out -cne "f23fadf42d050a7d45f84ef166f94168256eb892") {
+            throw "BLOCKED: candidate SQL blob drifted"
+          }
+          Write-Host "EXACT_AUDITED_SQL_BLOB_PASS"
