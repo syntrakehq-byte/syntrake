@@ -2,13 +2,13 @@ import {z} from "zod";
 import type {Pool} from "pg";
 import {PortfolioImportReadBlocked} from "./readOwnPortfolioImport";
 type Actor=Readonly<{userId:string|null;sessionId:string|null}>;
+type Coverage="NOT_REPORTED"|"PARTIAL"|"ASSERTED_COMPLETE"|"LEGACY_COVERAGE_UNKNOWN";
 export type ImportList=Readonly<{
   kind:"UNVERIFIED_IMPORT_HISTORY";
   portfolioId:string;
   records:readonly Readonly<{
     snapshotId:string; sourceReference:string; asOf:string;
-    reportedCoverage:Readonly<{cash:"NOT_REPORTED"|"PARTIAL"|"ASSERTED_COMPLETE";
-      positions:"NOT_REPORTED"|"PARTIAL"|"ASSERTED_COMPLETE"}>;
+    reportedCoverage:Readonly<{cash:Coverage;positions:Coverage}>;
     evidenceStatus:"UNVERIFIED";
   }>[];
   hasMore:boolean;
@@ -38,7 +38,7 @@ export async function listOwnPortfolioImports(
     if(owner.rows.length!==1)throw new PortfolioImportReadBlocked("NOT_AUTHORIZED");
     const rows=await db.query<{
       id:string;source_reference:string;as_of:string;
-      reported_cash_coverage:string;reported_position_coverage:string;evidence_status:string;
+      reported_cash_coverage:string|null;reported_position_coverage:string|null;evidence_status:string;
     }>(
       "SELECT id,source_reference,"+
       "to_char(source_as_of AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS as_of,"+
@@ -54,8 +54,8 @@ export async function listOwnPortfolioImports(
         sourceReference:v.source_reference,
         asOf:v.as_of,
         reportedCoverage:Object.freeze({
-          cash:coverage.parse(v.reported_cash_coverage),
-          positions:coverage.parse(v.reported_position_coverage),
+          cash:v.reported_cash_coverage===null?"LEGACY_COVERAGE_UNKNOWN" as const:coverage.parse(v.reported_cash_coverage),
+          positions:v.reported_position_coverage===null?"LEGACY_COVERAGE_UNKNOWN" as const:coverage.parse(v.reported_position_coverage),
         }),
         evidenceStatus:"UNVERIFIED" as const,
       });
