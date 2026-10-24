@@ -3,7 +3,7 @@ import { isR2CPreviewEnabled } from "./onboardingTransport";
 
 /** Dedicated PREVIEW-only import capability; no financial posting authority. */
 type Env = Readonly<Record<string, string | undefined>>;
-export const R2D_BRANCH = "candidate/investing-r2d-import-flow-20261024";
+export const R2D_BRANCH = "candidate/investing-r2e-declaration-changes-20261024";
 const PROJECT = "zkqgpejlkgootkvkebhd";
 const USER = "investing_import_preview_runtime";
 export function isR2DImportReady(env:Env):boolean {
