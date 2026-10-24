@@ -92,12 +92,13 @@ test("R2-G candidate: dormant import runtime, no bypass, SET-only membership, gu
         "@127.0.0.1:5432/syntrake_r2g_role_ci"});
       await client.connect();
       try{
-        const noInherited=await client.query<{has_import:boolean;has_ledger:boolean}>(
-          "SELECT has_table_privilege(current_user,"+
-          "'investing.portfolio_import_snapshots','INSERT') AS has_import,"+
-          "has_table_privilege(current_user,"+
-          "'investing.ledger_transactions','INSERT') AS has_ledger");
-        assert.deepEqual(noInherited.rows,[{has_import:false,has_ledger:false}]);
+        // Before SET ROLE, the dedicated runtime deliberately lacks even
+        // USAGE on the Investing schema. Calling has_table_privilege() with a
+        // qualified regclass string would itself error on the missing USAGE.
+        await assert.rejects(
+          client.query("SELECT count(*) FROM investing.portfolio_import_snapshots"),
+          /permission denied for schema investing/,
+        );
         await client.query("BEGIN");
         await client.query("SET LOCAL ROLE investing_import_writer");
         const actor=await client.query<{current_role:string;original_login:string;has_import:boolean;has_ledger:boolean}>(
