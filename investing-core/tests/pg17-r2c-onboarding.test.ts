@@ -87,6 +87,53 @@ test("R2-C Postgres17: signed-sub RLS actor A/B and append-only onboarding; fina
     await db.query("rollback to savepoint denied_mutate_a");
    });
   });
+  await t.test("NEEDS_PORTFOLIO path is independent, append-only and has no financial balance",async()=>{
+    await asActor(a,async()=>{
+      const row=await db.query<{id:string}>(
+        "INSERT INTO investing.onboarding_intents "+
+        "(actor_user_id,idempotency_key,payload_sha256,pathway,objective,horizon_years,loss_capacity) "+
+        "VALUES ($1,$2,$3,'NEEDS_PORTFOLIO','RETIREMENT',25,'MEDIUM') RETURNING id",
+        [a,"00000000-0000-4000-8000-000000000041","b".repeat(64)],
+      );
+      assert.equal(row.rows.length,1);
+      const events=await db.query<{
+        pathway:string;objective:string|null;import_source:string|null;horizon_years:number|null;
+        evidence:string;financial_state:string;
+      }>(
+        "SELECT pathway,objective,import_source,horizon_years,evidence,financial_state "+
+        "FROM investing.onboarding_intents ORDER BY created_at,id",
+      );
+      assert.equal(events.rows.length,2,"historical HAS_PORTFOLIO event must be preserved");
+      assert.ok(events.rows.some(x=>x.pathway==="HAS_PORTFOLIO"&&x.import_source==="MANUAL_ENTRY"));
+      assert.ok(events.rows.some(x=>x.pathway==="NEEDS_PORTFOLIO"&&
+        x.objective==="RETIREMENT"&&x.horizon_years===25&&x.import_source===null));
+      for(const event of events.rows){
+        assert.equal(event.evidence,"USER_REPORTED");
+        assert.equal(event.financial_state,"NOT_PROVISIONED");
+      }
+      await db.query("savepoint invalid_pathway");
+      await assert.rejects(db.query(
+        "INSERT INTO investing.onboarding_intents "+
+        "(actor_user_id,idempotency_key,payload_sha256,pathway,objective,horizon_years,loss_capacity,import_source) "+
+        "VALUES ($1,$2,$3,'NEEDS_PORTFOLIO','RETIREMENT',25,'MEDIUM','MANUAL_ENTRY')",
+        [a,"00000000-0000-4000-8000-000000000042","b".repeat(64)]),/check constraint/);
+      await db.query("rollback to savepoint invalid_pathway");
+      await db.query("savepoint immutable_delete");
+      await assert.rejects(db.query(
+        "DELETE FROM investing.onboarding_intents WHERE id=$1",[row.rows[0].id]),/permission denied/);
+      await db.query("rollback to savepoint immutable_delete");
+    });
+    await asActor(b,async()=>{
+      assert.equal((await db.query("SELECT id FROM investing.onboarding_intents")).rowCount,1,
+        "owner B must not see A's second onboarding event");
+    });
+    const financial=await db.query<{accounts:number;entries:number}>(
+      "SELECT (SELECT count(*)::int FROM investing.investment_accounts) accounts,"+
+      "(SELECT count(*)::int FROM investing.ledger_entries) entries",
+    );
+    assert.deepEqual(financial.rows[0],{accounts:0,entries:0});
+  });
+
   await t.test("missing JWT and anon cannot read, write or infer user financial state",async()=>{
    await asActor("unrecognized",async()=>{
     assert.equal((await db.query("select id from investing.onboarding_intents")).rowCount,0);
@@ -99,7 +146,7 @@ test("R2-C Postgres17: signed-sub RLS actor A/B and append-only onboarding; fina
     "(select count(*)::int from investing.ledger_entries) ledger,"+
     "(select count(*)::int from investing.investment_accounts) accounts,"+
     "(select count(*)::int from pg_namespace where nspname='trading') trading");
-   assert.deepEqual(last.rows[0],{onboarding:2,ledger:0,accounts:0,trading:0});
+   assert.deepEqual(last.rows[0],{onboarding:3,ledger:0,accounts:0,trading:0});
   });
  }finally{await db.end();}
 });
