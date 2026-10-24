@@ -30,6 +30,9 @@
 
 **P1 — Migration lineage divergence.** Preview registry contains historical R2-B/R2-C/C2 migrations from 2026-10-22/23, whereas Production only has R0/R1 lineage. Git PR #35 is stacked over Draft PR #28/#30/#31/#32/#33/#34; CI PG17 spins up clean schema from `release-candidates`. **A green fresh PG17 suite does not prove the historical Preview DB is ready for the current SHA**. Never `db push` the newer whole R2 release-candidate SQL on top of Preview as though clean, or rewrite migration history to claim equivalence.
 
+
+**Supabase Security Advisor independent warning:** live Preview `get_advisors(type=security)` explicitly reports **`authenticated_security_definer_function_executable` (WARN)** for `investing.provision_first_portfolio(...)` via `/rest/v1/rpc/provision_first_portfolio`. See https://supabase.com/docs/guides/database/database-linter?lint=0029_authenticated_security_definer_function_executable . This warning establishes accessible privileged capability, **not** an exploit or an instruction to revoke without review. Production `get_advisors` reports only `rls_enabled_no_policy` INFO for `investing.operation_idempotency_keys`; table is not granted to public callers by default (validate with catalog before treating as safe).
+
 ## Required remedial sequence (not executed)
 
 1. Preserve current Git accepted predecessor and Preview historical snapshots, record catalog hashes and registry. Do not delete historical database state or rewrite old migrations.
