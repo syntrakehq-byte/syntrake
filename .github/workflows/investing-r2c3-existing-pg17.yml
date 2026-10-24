@@ -1,0 +1,41 @@
+name: investing-r2c3-existing-pg17
+
+on:
+  pull_request:
+    paths:
+      - "investing-core/**"
+      - "app/api/investing/existing-account/**"
+      - "app/investing/existing/**"
+      - ".github/workflows/investing-r2c3-existing-pg17.yml"
+permissions:
+  contents: read
+jobs:
+  existing-account-isolated-pg17:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: syntrake_r2c3_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd="pg_isready -U postgres -d syntrake_r2c3_ci"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: R2-C3 functional contract and strict TypeScript
+        run: |
+          npm run test:investing
+          npx tsc -p tsconfig.investing.json --noEmit
+      - name: R2-C3 A/B own accounts from canonical R0-R1 PG17 schema
+        run: npx tsx --test investing-core/tests/pg17-r2c3-existing-account.test.ts
+        env:
+          INVESTING_PG17_R2C3_URL: postgresql://postgres:postgres@127.0.0.1:5432/syntrake_r2c3_ci
