@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { Client, Pool } from "pg";
 import { savePortfolioImport, PortfolioImportBlocked } from "../server/savePortfolioImport";
+import { readOwnPortfolioImport, PortfolioImportReadBlocked } from "../server/readOwnPortfolioImport";
 
 const A = "00000000-0000-4000-8000-0000000000a1";
 const B = "00000000-0000-4000-8000-0000000000b1";
@@ -101,6 +102,45 @@ test("R2-B1 isolated PG17: owner A/B, immutable atomic import, negative capabili
     assert.equal(first.ledgerChanged,false);
     const replay=await savePortfolioImport(pool,actorA,command);
     assert.deepEqual(first,replay);
+
+    // True role-restricted owner readback: no admin bypass, no browser session.
+    const read = await readOwnPortfolioImport(pool,actorA,{portfolioId:PORT_A,snapshotId:first.snapshotId});
+    assert.equal(read.snapshotId,first.snapshotId);
+    assert.equal(read.portfolioId,PORT_A);
+    assert.equal(read.kind,"UNVERIFIED_IMPORT");
+    assert.equal(read.evidenceStatus,"UNVERIFIED");
+    assert.equal(read.provenance.sourceReference,draft().sourceReference);
+    assert.equal(read.provenance.asOf,"2026-10-22T18:00:00.000Z");
+    assert.equal(read.reportedCoverage.cash,"PARTIAL");
+    assert.equal(read.reportedCoverage.positions,"PARTIAL");
+    assert.deepEqual(read.cashBalances.map(c=>[c.currency,c.minor]),[
+      ["EUR",32500n],["USD",9007199254740993n],
+    ]);
+    assert.equal(read.positions[0]?.quantityAtoms,1000000000001n);
+    assert.equal(read.positions[0]?.reportedCostBasis,null);
+    assert.deepEqual(read.plannedContributions.map(c=>[c.minor,c.dueDate,c.realized]),[
+      [10000n,"2026-11-01",false],
+    ]);
+    assert.equal(read.verifiedCash,"UNAVAILABLE");
+    assert.equal(read.valuation,"UNAVAILABLE");
+    assert.equal(read.performance,"UNAVAILABLE");
+    assert.equal(read.ledgerChanged,false);
+    assert.equal(Object.isFrozen(read),true);
+    assert.equal(Object.isFrozen(read.reportedCoverage),true);
+
+    await assert.rejects(
+      readOwnPortfolioImport(pool,actorB,{portfolioId:PORT_A,snapshotId:first.snapshotId}),
+      (e:unknown)=>e instanceof PortfolioImportReadBlocked&&e.code==="NOT_AUTHORIZED");
+    await assert.rejects(
+      readOwnPortfolioImport(pool,{userId:null,sessionId:null},{portfolioId:PORT_A,snapshotId:first.snapshotId}),
+      (e:unknown)=>e instanceof PortfolioImportReadBlocked&&e.code==="UNAUTHENTICATED");
+    await assert.rejects(
+      readOwnPortfolioImport(pool,actorA,{portfolioId:PORT_A,snapshotId:"forged"}),
+      (e:unknown)=>e instanceof PortfolioImportReadBlocked&&e.code==="INVALID_INPUT");
+    await assert.rejects(
+      readOwnPortfolioImport(pool,actorA,{portfolioId:PORT_A,snapshotId:PORT_B}),
+      (e:unknown)=>e instanceof PortfolioImportReadBlocked&&e.code==="NOT_FOUND");
+
     const journalCount=await admin.query<{count:string}>("select count(*)::text as count from investing.ledger_transactions");
     assert.equal(journalCount.rows[0].count,"0");
     const snapshots=await admin.query<{id:string;declared_base_currency:string; evidence_status:string; reported_cash_coverage:string;reported_position_coverage:string}>(
@@ -150,6 +190,14 @@ test("R2-B1 isolated PG17: owner A/B, immutable atomic import, negative capabili
       savePortfolioImport(pool,actorB,{portfolioId:PORT_B,idempotencyKey:"import-b-concurrent1",declaration:draft()}),
     ]);
     assert.deepEqual(concurrent[0],concurrent[1]);
+    const ownB = await readOwnPortfolioImport(pool,actorB,{
+      portfolioId:PORT_B,snapshotId:concurrent[0].snapshotId,
+    });
+    assert.equal(ownB.portfolioId,PORT_B);
+    assert.equal(ownB.provenance.sourceReference,draft().sourceReference);
+    await assert.rejects(
+      readOwnPortfolioImport(pool,actorA,{portfolioId:PORT_B,snapshotId:concurrent[0].snapshotId}),
+      (e:unknown)=>e instanceof PortfolioImportReadBlocked&&e.code==="NOT_AUTHORIZED");
     const bRows=await admin.query<{count:string}>(
       "select count(*)::text as count from investing.portfolio_import_snapshots where portfolio_id=$1",[PORT_B]);
     assert.equal(bRows.rows[0].count,"1");
@@ -226,6 +274,14 @@ test("R2-B1 isolated PG17: owner A/B, immutable atomic import, negative capabili
       "SELECT count(*)::text count FROM investing.portfolio_import_cash WHERE snapshot_id=$1",
       [noCash.snapshotId]);
     assert.equal(absentRows.rows[0].count,"0");
+    const noCashRead=await readOwnPortfolioImport(pool,actorA,{
+      portfolioId:PORT_A,snapshotId:noCash.snapshotId,
+    });
+    assert.deepEqual(noCashRead.cashBalances,[]);
+    assert.equal(noCashRead.reportedCoverage.cash,"NOT_REPORTED");
+    assert.equal(noCashRead.reportedCoverage.positions,"ASSERTED_COMPLETE");
+    assert.equal(noCashRead.verifiedCash,"UNAVAILABLE");
+    assert.equal(noCashRead.ledgerChanged,false);
 
     // DB check must reject even privileged/synthetic callers that lie about scope.
     await assert.rejects(admin.query(
