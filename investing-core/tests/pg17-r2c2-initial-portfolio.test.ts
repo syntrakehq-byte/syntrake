@@ -45,6 +45,15 @@ test("R2-C2 real PG17: atomic, owner-scoped initial portfolio under dedicated NO
    "has_column_privilege('investing_initial_provisioner','investing.investment_accounts','owner_user_id','UPDATE') can_change_owner");
   assert.deepEqual(privilege.rows[0],{anon:false,auth:false,provision:true,can_login:false,ledger:false,
     can_change_name:false,can_change_owner:true});
+  const privilegedRpc = await admin.query<{absent:boolean}>(
+    "SELECT to_regprocedure('investing.provision_first_portfolio(uuid,text,text,text)') IS NULL AS absent");
+  assert.equal(privilegedRpc.rows[0].absent,true,
+    "R2-C2 MUST NOT expose historical SECURITY DEFINER RPC to authenticated");
+  const roleGrant = await admin.query<{role_bypass:boolean;schema_create:boolean}>(
+    "SELECT rolbypassrls AS role_bypass,"+
+    "has_schema_privilege('investing_initial_provisioner','investing','CREATE') AS schema_create "+
+    "FROM pg_roles WHERE rolname='investing_initial_provisioner'");
+  assert.deepEqual(roleGrant.rows[0],{role_bypass:false,schema_create:false});
   await admin.query("INSERT INTO investing.onboarding_intents(actor_user_id,idempotency_key,payload_sha256,pathway,import_source) values "+
    "($1,'00000000-0000-4000-8000-000000000311',repeat('a',64),'HAS_PORTFOLIO','MANUAL_ENTRY'),"+
    "($2,'00000000-0000-4000-8000-000000000312',repeat('b',64),'HAS_PORTFOLIO','MANUAL_ENTRY')",
@@ -86,6 +95,32 @@ test("R2-C2 real PG17: atomic, owner-scoped initial portfolio under dedicated NO
    await assert.rejects(initializeFirstInvestingPortfolio(isolated,A,command("00000000-0000-4000-8000-000000000322")),
     (e:unknown)=>e instanceof InitialPortfolioBlocked&&e.code==="INITIAL_PORTFOLIO_ALREADY_EXISTS");
   });
+  await t.test("private role cannot mutate holdings, account labels or create ledger money",async()=>{
+    const db=await isolated.connect();let opened=false;
+    try{
+      await db.query("BEGIN");opened=true;
+      await db.query("SET LOCAL ROLE investing_initial_provisioner");
+      await db.query("SELECT set_config('syntrake.actor_user_id',$1,true)",[A.userId]);
+      await db.query("SAVEPOINT blocked_label");
+      await assert.rejects(db.query(
+        "UPDATE investing.investment_accounts SET name='FORGED' WHERE id=$1",
+        [savedA!.accountId]),/permission denied/);
+      await db.query("ROLLBACK TO SAVEPOINT blocked_label");
+      await db.query("SAVEPOINT blocked_ledger");
+      await assert.rejects(db.query(
+        "INSERT INTO investing.ledger_transactions "+
+        "(investment_account_id,idempotency_user_id,idempotency_key,provenance) "+
+        "VALUES ($1,$2,'fake-financial-posting-001','{}')",
+        [savedA!.accountId,A.userId]),/permission denied/);
+      await db.query("ROLLBACK TO SAVEPOINT blocked_ledger");
+      await db.query("ROLLBACK");opened=false;
+    }finally{if(opened)await db.query("ROLLBACK").catch(()=>undefined);db.release();}
+    const label=await admin.query<{name:string}>(
+      "SELECT name FROM investing.investment_accounts WHERE id=$1",
+      [savedA!.accountId]);
+    assert.equal(label.rows[0].name,"Investing Principal");
+  });
+
   await t.test("B: 4 concurrent identical initial requests produce one account only",async()=>{
    const requests=Array.from({length:4},()=>initializeFirstInvestingPortfolio(isolated,B,command("00000000-0000-4000-8000-000000000323")));
    const results=await Promise.all(requests);
