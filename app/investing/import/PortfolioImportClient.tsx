@@ -60,7 +60,7 @@ export default function PortfolioImportClient({lang}:{lang:SiteLang}){
  const [error,setError]=useState(false);
  const [saving,setSaving]=useState(false);
  const [done,setDone]=useState(false);
- const attempt=useRef<{key:string;source:string}|null>(null);
+ const attempt=useRef<{key:string;source:string;asOf:string}|null>(null);
  const allowed=!!user&&readyFor===user&&portfolios.length>0&&!!selected&&portfolios.includes(selected);
  useEffect(()=>{
    if(!user)return;
@@ -125,13 +125,13 @@ export default function PortfolioImportClient({lang}:{lang:SiteLang}){
    // Form values are strings; never convert quantities/money through JS floats.
    if(!attempt.current){
      const id=crypto.randomUUID();
-     attempt.current={key:"import-"+id,source:"manual-"+id};
+     attempt.current={key:"import-"+id,source:"manual-"+id,asOf:new Date().toISOString()};
    }
    const key=attempt.current;
    const declaration={
      schemaVersion:"R2_IMPORT_DRAFT_V1",
      source:"MANUAL_ENTRY",sourceReference:key.source,
-     asOf:new Date().toISOString(),
+     asOf:key.asOf,
      portfolioName:name,baseCurrency,reportedCoverage:{
        cash:cashCoverage,positions:assetCoverage,
      },cashBalances:cash,positions:assets.map(p=>({
