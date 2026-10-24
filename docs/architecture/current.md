@@ -55,6 +55,16 @@ For dated original inspection and limitations, preserved unedited: [Architecture
 
 **Next sequential phase:** R1 evidence reconciliation/closure before R2. This index addendum itself is **candidate documentation** until PR #24 is reviewed and explicitly authorized for merge to accepted `main`.
 
+## 2.2 R1 Investing technical closure — 2026-10-24 (later decision)
+
+**R1 INVESTING FINANCIAL FOUNDATION — ACCEPTED / CLOSED IN PROVED TECHNICAL SCOPE.** The merged canonical Investing implementation now includes PR #27 at `main@29f1c068769e34a84e87717ac8cc9286dd937938`. The R1 code has been subjected to real PG17/synthetic-A/C evidence, Production read-only migration validation, real Clerk authenticated empty-account discovery in `r1.syntrake.com`, and no-cookie/no-query `401 UNAUTHENTICATED` API rehearsal. The original dated R1 snapshot above is preserved as historical context, not an up-to-date gate decision.
+
+**Full scope, limitations and provenance:** [R1 Investing technical closure](./closures/R1_INVESTING_TECHNICAL_CLOSURE_2026-10-24.md). This technical acceptance does **not** say the latest R1 UI is published on `www.syntrake.com`; the official-domain promotion is a separate, unperformed release gate. The user explicitly directed **no further Stripe work**, so commercial billing/webhook state is **out of scope and unverified**, not silently passed or deleted.
+
+**NEXT ACTIVE PHASE: R2 — Investing living portfolio, starting with existing-candidate audit.** All R2 PRs #20–#23, #25 and #26 remain Draft and unmerged as of this 2026-10-24 verification, stacked on an older accepted baseline. They require a fresh main-relative lineage/diff, auth/tenant/SECURITY DEFINER, financial truth and Preview/Production migration audit before implementing, merging or releasing. No automatic reuse of expired Preview evidence as Production authority.
+
+**Documentation status:** this addendum exists in **PR #24 only** until its exact SHA is independently reviewed and explicitly authorized for integration into `main`. Functional R1 code acceptance in `main` is already real; documentation publishing is separate.
+
 ## 3. Process for next work
 
 1. For each architecture revision, independently review the candidate diff against the accepted predecessor and preserved V0. Verify scope, lineage and absence of unintended code, SQL, config or workflow changes.
