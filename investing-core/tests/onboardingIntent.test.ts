@@ -10,6 +10,8 @@ import {handleInvestingOnboardingHttp} from "../server/onboardingHttp";
 const preview={
  VERCEL_ENV:"preview",
  VERCEL_GIT_COMMIT_REF:"candidate/investing-r2-preview-security-compat-20261024",
+ VERCEL_GIT_COMMIT_SHA:"1111111111111111111111111111111111111111",
+ INVESTING_R2_APPROVED_PREVIEW_SHA:"1111111111111111111111111111111111111111",
  INVESTING_R2C_PREVIEW_MODE:"enabled",
  INVESTING_R2C_SUPABASE_PROJECT_REF:"zkqgpejlkgootkvkebhd",
  NEXT_PUBLIC_SUPABASE_URL:"https://zkqgpejlkgootkvkebhd.supabase.co",
@@ -64,7 +66,7 @@ test("R2-C Preview gate pins isolated branch and Supabase ref, Production always
  for(const env of [
   {...preview,VERCEL_ENV:"production"},
   {...preview,VERCEL_GIT_COMMIT_REF:"main"},
-  {...preview,VERCEL_GIT_COMMIT_REF:"candidate/investing-r2b1-persistent-import-20261022"},
+  {...preview,VERCEL_GIT_COMMIT_SHA:"2222222222222222222222222222222222222222"},
   {...preview,INVESTING_R2C_PREVIEW_MODE:""},
   {...preview,INVESTING_R2C_SUPABASE_PROJECT_REF:"vbazzxqyuqcrmjytaboc"},
   {...preview,NEXT_PUBLIC_SUPABASE_URL:"https://vbazzxqyuqcrmjytaboc.supabase.co"},
