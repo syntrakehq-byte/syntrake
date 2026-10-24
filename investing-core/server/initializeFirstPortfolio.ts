@@ -72,6 +72,15 @@ export async function initializeFirstInvestingPortfolio(
       await db.query("COMMIT");open=false;
       return receipt(row.account_id,row.portfolio_id);
     }
+    // Legacy users may already have an account without a first-provisioning
+    // receipt (R0/R1). NEVER create another account to hide a missing receipt.
+    // A separate owner-scoped reconciliation/read-only journey handles them.
+    const existing=await db.query<{id:string}>(
+      "SELECT id FROM investing.investment_accounts WHERE owner_user_id=$1 LIMIT 1",
+      [actor.userId],
+    );
+    if(existing.rows.length>0)
+      throw new InitialPortfolioBlocked("INITIAL_PORTFOLIO_ALREADY_EXISTS");
     const intent=await db.query<{id:string}>(
       "SELECT id FROM investing.onboarding_intents "+
       "WHERE actor_user_id=$1 AND evidence='USER_REPORTED' "+
