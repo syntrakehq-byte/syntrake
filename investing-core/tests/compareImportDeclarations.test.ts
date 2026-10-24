@@ -138,7 +138,7 @@ test("R2-E duplicate currency / instrument identity fails instead of summing",()
    (e:unknown)=>e instanceof ImportComparisonBlocked&&e.code==="INCONSISTENT_SNAPSHOT");
 });
 test("R2-E source not verified, ledger-inconsistent snapshots rejected",()=>{
- const bad=after({ledgerChanged:true});
+ const bad={...after(),ledgerChanged:true} as unknown as UnverifiedImportReadback;
  assert.throws(()=>compareImportDeclarations(snapshot(),bad),
    (e:unknown)=>e instanceof ImportComparisonBlocked&&e.code==="INCONSISTENT_SNAPSHOT");
 });
