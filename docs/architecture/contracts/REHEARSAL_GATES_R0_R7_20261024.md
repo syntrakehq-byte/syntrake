@@ -1,7 +1,7 @@
 # SYNTRAKE — Contrato de rehearsal Supabase por fase R0–R7
 
 **Data:** 2026-10-24. **Estado:** CANDIDATE — revisão necessária antes de integrar na `main`.  
-**Regra solicitada pelo proprietário:** após completar cada fase Rn, executar **dois ensaios independentes por âmbito** antes de aceitar a fase: (1) rehearsal de Rn e (2) rehearsal cumulativo R0→Rn. Não confundir PASS de CI com rehearsal remoto.  
+**Regra final solicitada pelo proprietário (2026-10-24):** **só quando um R inteiro estiver totalmente implementado e pronto a fechar** executar dois rehearsals Supabase, nesta ordem: (1) rehearsal do R completo e (2) rehearsal cumulativo R0→R completo. **Nunca executar o rehearsal formal pelo simples fecho de um sub-slice** (R2-A/R2-B/R2-C, R3-A/R3-B/R3-C, etc.). CI/local PG17 e testes de integração isolados podem executar durante o desenvolvimento, mas não são os dois rehearsals formais. Não confundir PASS de CI com rehearsal remoto.  
 **Predecessor da proposta:** `main@29f1c068769e34a84e87717ac8cc9286dd937938`.  
 **Repetir apenas fases novas:** R0 e R1 mantêm as aceitações técnicas anteriores; serão reexercitados no rehearsal cumulativo de R2. Não se exige reabri-los automaticamente sem risco novo.
 
@@ -10,20 +10,19 @@
 | Quando o slice/fase está candidato a fecho | Rehearsal específico (Rn) | Rehearsal cumulativo |
 |---|---|---|
 | **R2** (portfolios vivos) | R2-E2E: `import/construir → persistir → ler → corrigir → reconciliar quando possível`, ownership, precisão, transações/isolamento e financial truth | **R0→R2:** Clerk A/B JWT efetivos no endpoint/SQL autorizado + R1 ledger/ACL/RLS + R2 ambos os percursos financeiros, concorrência, regressões negativas |
-| **R3-A** (operations) | Jobs sem browser, leases, crash, replay, retry, alerta e isolamento de autoridade | R0→R3-A: R0/R1/R2 + R3-A; não simular que R3-B já existe |
-| **R3-B** (market data) | Instrument Master/adapter, 1D/FX, quality, quotas, corp actions, rights e as-of sem leakage | R0→R3-B: fases/capacidades realmente aceites, incluindo R3-A caso aceite; verificar integração R2 e preço/cash sem inventar |
+| **R3** (completo: operations + market data, incluindo todos os sub-slices que forem aprovados para R3) | Jobs sem browser, leases, crash/retry e A/B; Instrument Master, adapter, preços/FX, quality, quotas, corp actions, rights/as-of; integração entre operações, R2 e mercado | **R0→R3:** R0/R1/R2 e todo o R3 completo; não executar `R3_PHASE` nem `R0_TO_R3_CUMULATIVE` ao terminar R3-A, R3-B ou R3-C isoladamente |
 | **R4** (Investing analysis/decision) | Golden vectors de valuation/performance/risk/suitability e `NO ACTION`, faltas/stale/custos | R0→R4: reexecutar gates aceites e journey Investing end-to-end |
 | **R5** (Trading decision) | Trading book isolado, sizing/custos/risco, `NO TRADE`, provenance; testar sem depender de Investing R4 | R0→R5: regressões de todos os gates aceites até R5, mais cross-domain isolation |
 | **R6** (Advisory/Shadow/Paper) | R6 por domínio, provider sandbox verdadeiro, order events, rejects/fills, reconciliação e kill switch | R0→R6: regressão de identidades/ledger/dados/engines/ops/execução; nenhum capital real |
 | **R7** (Live readiness) | **Ensaio sem envio de ordens reais**, mandato, acesso broker, fail-closed, recovery, kill switches, compliance; autorização Live separada | R0→R7: regression integrada de tudo que foi aceite; rehearsal não autoriza ativação Live |
 
-**Não-linearidade:** R3-A/R3-B são independentes e podem ser aceites em ordem diferente. Um ensaio cumulativo só declara cobertura de capacidades efetivamente implementadas e aceites na fotografia do SHA; nunca afirma que R5 é dependência de R4 nem que R7 Live foi exercido com dinheiro.
+**Não-linearidade:** R3-A/R3-B continuam a poder ser **desenvolvidos e testados** em paralelo; **R3 só fecha com ambas as capacidades e todos os slices exigidos aprovados**, após os dois rehearsals formais de R3 completo. Um ensaio cumulativo só declara cobertura de capacidades efetivamente implementadas na fotografia do SHA; nunca afirma que R5 é dependência de R4 nem que R7 Live foi exercido com dinheiro.
 
 ## 2. Definição rigorosa dos dois ensaios
 
-### A. Rehearsal específico da fase — `R<n>_PHASE`
+### A. Rehearsal específico do R completo — `R<n>_PHASE`
 
-- Carrega **baseline técnico real exigido** pela fase, por exemplo R0/R1 para testar R2; «específico» significa que as asserções principais são próprias de R2, não que R2 executa sobre DB vazia.
+- **Não iniciar este ensaio antes de todos os sub-slices do R estarem implementados e terem passado os seus gates técnicos.** Carrega o baseline técnico real exigido pelo R, por exemplo R0/R1 para testar R2; «específico» significa que as asserções principais são próprias de R2, não que R2 executa sobre DB vazia.
 - Exercita happy paths e negativos com as mesmas interfaces de produção, sem mocks onde o gate exige verdade externa.
 - Separa claramente `POSTGRES_17_ISOLATED`, `SUPABASE_BRANCH_REAL`, `SYNTHETIC_TEST_FIXTURE`, `REAL_CLERK_JWT`, `BROKER_DEMO` e `PRODUCTION_READ_ONLY` nos resultados.
 - Produz relatório imutável associado a candidate SHA, migration set/sums, fixture version, provider/ref, instante de execução, evidence, cleanup e falhas residuais.
@@ -75,7 +74,7 @@ Registo versionado na PR/repo com, pelo menos:
 | Teardown | Delete/readback da branch isolada ou motivo documentado para retenção |
 | Gate reviewer e owner authorization | Sim, sem autopromoção de builder |
 
-**Regra de saída:** `ACCEPT_Rn = audited_candidate_sha ∧ existing_gates ∧ phase_rehearsal_PASS ∧ cumulative_rehearsal_PASS ∧ cleanup_verified ∧ explicit_acceptance`. Para release Production, aplicar gate de produção adicional. Estas expressões são política proposta, não triggers reais já instaladas.
+**Regra de saída:** `ACCEPT_Rn = every_required_subslice_implemented_and_gated ∧ audited_candidate_sha ∧ existing_gates ∧ phase_rehearsal_PASS ∧ cumulative_rehearsal_PASS ∧ cleanup_verified ∧ explicit_acceptance`. Para release Production, aplicar gate de produção adicional. Estas expressões são política proposta, não triggers reais já instaladas.
 
 ## 6. Estado em 2026-10-24 (leitura de Supabase, sem writes)
 
