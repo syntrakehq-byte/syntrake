@@ -3,12 +3,10 @@ import { isR2CPreviewEnabled } from "./onboardingTransport";
 
 /** Dedicated PREVIEW-only import capability; no financial posting authority. */
 type Env = Readonly<Record<string, string | undefined>>;
-export const R2D_BRANCH = "candidate/investing-r2-preview-security-compat-20261024";
 const PROJECT = "zkqgpejlkgootkvkebhd";
 const USER = "investing_import_preview_runtime";
 export function isR2DImportReady(env:Env):boolean {
   if (!isR2CPreviewEnabled(env) || env.VERCEL_ENV!=="preview" ||
-      env.VERCEL_GIT_COMMIT_REF!==R2D_BRANCH ||
       env.INVESTING_R2D_IMPORT_ENABLED!=="enabled" ||
       env.INVESTING_R2D_PROJECT_REF!==PROJECT) return false;
   const ca=env.INVESTING_R2D_PG_CA_PEM?.replace(/\\n/g,"\n");

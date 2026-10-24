@@ -4,6 +4,8 @@ import {handlePortfolioImportHttp} from "../server/importPreviewHttp";
 import {isR2DImportReady} from "../server/importPreviewRuntime";
 const env={
   VERCEL_ENV:"preview",VERCEL_GIT_COMMIT_REF:"candidate/investing-r2-preview-security-compat-20261024",
+  VERCEL_GIT_COMMIT_SHA:"1111111111111111111111111111111111111111",
+  INVESTING_R2_APPROVED_PREVIEW_SHA:"1111111111111111111111111111111111111111",
   INVESTING_R2C_PREVIEW_MODE:"enabled",
   INVESTING_R2C_SUPABASE_PROJECT_REF:"zkqgpejlkgootkvkebhd",
   NEXT_PUBLIC_SUPABASE_URL:"https://zkqgpejlkgootkvkebhd.supabase.co",

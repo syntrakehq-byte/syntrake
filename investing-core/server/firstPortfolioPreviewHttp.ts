@@ -18,7 +18,6 @@ export type ActorProvider = () => Promise<ClerkSession>;
 export type FirstPortfolioPool = Readonly<{connect:()=>Promise<PoolClient>}>;
 export type PgFactory = (environment: Env) => FirstPortfolioPool & {end?:()=>Promise<void>};
 
-export const R2C4_BRANCH = "candidate/investing-r2-preview-security-compat-20261024";
 export const R2C4_PREVIEW_REF = "zkqgpejlkgootkvkebhd";
 const USERNAME = "investing_initial_preview_runtime";
 const MAX_BODY_BYTES = 1024;
@@ -26,7 +25,6 @@ const MAX_BODY_BYTES = 1024;
 export function isR2C4PrivateWriteReady(env: Env): boolean {
   if (!isR2CPreviewEnabled(env) ||
       env.VERCEL_ENV !== "preview" ||
-      env.VERCEL_GIT_COMMIT_REF !== R2C4_BRANCH ||
       env.INVESTING_R2C4_PRIVATE_WRITE !== "enabled" ||
       env.INVESTING_R2C4_PROJECT_REF !== R2C4_PREVIEW_REF) return false;
   const trust = env.INVESTING_R2C4_PG_CA_PEM?.replace(/\\n/g,"\n");

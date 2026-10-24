@@ -2,6 +2,7 @@ import {
   inspectOwnExistingInvestingAccounts, ExistingAccountReadBlocked,
   type VerifiedClerkSession, type Transport,
 } from "./existingAccountReview";
+import {isR2CPreviewEnabled} from "./onboardingTransport";
 
 type Env = Readonly<Record<string, string | undefined>>;
 type Load = () => Promise<VerifiedClerkSession>;
@@ -18,9 +19,7 @@ export async function handleExistingAccountReviewGet(
   request: Request, env: Env, load: Load, transport: Transport = fetch,
 ): Promise<Response> {
   // No write, no account creation and no financial valuation endpoints.
-  if (env.VERCEL_ENV !== "preview" ||
-      env.VERCEL_GIT_COMMIT_REF !==
-        "candidate/investing-r2-preview-security-compat-20261024") {
+  if (!isR2CPreviewEnabled(env)) {
     return json(404, { error: "NOT_FOUND" });
   }
   let path: URL;

@@ -2,7 +2,7 @@ import { onboardingCommandSchema, onboardingFingerprint, parseStoredOnboardingRo
   type OnboardingEvent, type OnboardingCommand } from "../onboarding/onboardingIntent";
 
 export const R2C_PREVIEW_PROJECT = "zkqgpejlkgootkvkebhd";
-export const R2C_PREVIEW_BRANCH = "candidate/investing-r2-preview-security-compat-20261024";
+import {isApprovedR2PreviewDeployment} from "./previewDeploymentGate";
 type Config = Readonly<Record<string,string | undefined>>;
 type ClerkActor = Readonly<{
   userId: string | null;
@@ -18,8 +18,7 @@ export class OnboardingBlocked extends Error {
   }
 }
 export function isR2CPreviewEnabled(env:Config): boolean {
-  return env.VERCEL_ENV==="preview"
-    && env.VERCEL_GIT_COMMIT_REF===R2C_PREVIEW_BRANCH
+  return isApprovedR2PreviewDeployment(env)
     && env.INVESTING_R2C_PREVIEW_MODE==="enabled"
     && env.INVESTING_R2C_SUPABASE_PROJECT_REF===R2C_PREVIEW_PROJECT
     && env.NEXT_PUBLIC_SUPABASE_URL==="https://"+R2C_PREVIEW_PROJECT+".supabase.co"
