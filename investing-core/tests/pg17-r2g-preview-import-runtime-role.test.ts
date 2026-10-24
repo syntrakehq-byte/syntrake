@@ -43,6 +43,18 @@ test("R2-G candidate: dormant import runtime, no bypass, SET-only membership, gu
       assert.equal(check.rows[0].exists,false);
     });
 
+    await t.test("overprivileged immutable-field UPDATE causes atomic refusal",async()=>{
+      await admin.query("BEGIN");
+      await admin.query("GRANT UPDATE(declared_base_currency) ON "+
+        "investing.portfolio_import_snapshots TO investing_import_writer");
+      await assert.rejects(admin.query(sql),/PREVIEW_IMPORT_WRITER_GRANTS_DRIFT/);
+      await admin.query("ROLLBACK");
+      const check=await admin.query<{exists:boolean}>(
+        "SELECT EXISTS(SELECT 1 FROM pg_roles WHERE "+
+        "rolname='investing_import_preview_runtime') AS exists");
+      assert.equal(check.rows[0].exists,false);
+    });
+
     await t.test("exact approved-style PG17 candidate creates NOLOGIN with SET, not inherited grants",async()=>{
       await admin.query(sql);
       const result=await admin.query<{
