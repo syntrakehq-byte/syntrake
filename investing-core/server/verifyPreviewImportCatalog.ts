@@ -38,6 +38,9 @@ export async function assertPreviewImportCatalogReady(
     client=await pool.connect();
     await client.query("BEGIN READ ONLY");
     opened=true;
+    // Prove the external restricted login can assume the intended NOLOGIN
+    // role; all catalog checks happen under precisely that capability.
+    await client.query("SET LOCAL ROLE investing_import_writer");
     const result=await client.query<CatalogRow>(
       "SELECT "+
       "(2 - (SELECT count(*) FROM pg_attribute "+
