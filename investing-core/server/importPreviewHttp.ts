@@ -4,6 +4,7 @@ import {isR2DImportReady,makeImportPool} from "./importPreviewRuntime";
 import {savePortfolioImport,PortfolioImportBlocked} from "./savePortfolioImport";
 import {readOwnPortfolioImport,PortfolioImportReadBlocked} from "./readOwnPortfolioImport";
 import {listOwnPortfolioImports} from "./listOwnPortfolioImports";
+import {compareImportDeclarations,ImportComparisonBlocked} from "../portfolio/compareImportDeclarations";
 
 type Env=Readonly<Record<string,string|undefined>>;
 export type ImportActor=Readonly<{userId:string|null;sessionId:string|null}>;
@@ -66,7 +67,7 @@ export async function handlePortfolioImportHttp(
       return json(413,{error:"PAYLOAD_TOO_LARGE"});
   }
   let command: z.infer<typeof postSchema>|undefined;
-  let portfolioId:string|undefined,snapshotId:string|undefined;
+  let portfolioId:string|undefined,snapshotId:string|undefined,baselineSnapshotId:string|undefined;
   if(request.method==="POST"){
     let input:unknown;
     try{input=await readLimitedBody(request);}catch(error){
@@ -79,9 +80,11 @@ export async function handlePortfolioImportHttp(
     command=parsed.data;
   }else{
     const keys=[...url.searchParams.keys()];
-    if(!keys.includes("portfolioId")||keys.some(k=>k!=="portfolioId"&&k!=="snapshotId")||
-      keys.length>2||url.searchParams.getAll("portfolioId").length!==1||
-      url.searchParams.getAll("snapshotId").length>1) {
+    if(!keys.includes("portfolioId")||
+      keys.some(k=>k!=="portfolioId"&&k!=="snapshotId"&&k!=="baselineSnapshotId")||
+      keys.length>3||url.searchParams.getAll("portfolioId").length!==1||
+      url.searchParams.getAll("snapshotId").length>1||
+      url.searchParams.getAll("baselineSnapshotId").length>1) {
       return json(400,{error:"INVALID_INPUT"});
     }
     const p=uuid.safeParse(url.searchParams.get("portfolioId"));
@@ -92,6 +95,13 @@ export async function handlePortfolioImportHttp(
       const parsed=uuid.safeParse(snapshot);
       if(!parsed.success)return json(400,{error:"INVALID_INPUT"});
       snapshotId=parsed.data;
+    }
+    const baseline=url.searchParams.get("baselineSnapshotId");
+    if(baseline!==null){
+      const parsed=uuid.safeParse(baseline);
+      if(!parsed.success||!snapshotId||parsed.data===snapshotId)
+        return json(400,{error:"INVALID_INPUT"});
+      baselineSnapshotId=parsed.data;
     }
   }
   let actor:ImportActor;
@@ -108,6 +118,16 @@ export async function handlePortfolioImportHttp(
     }
     if(!portfolioId)return json(400,{error:"INVALID_INPUT"});
     if(snapshotId){
+      if(baselineSnapshotId){
+        // Both readbacks independently enforce real owner membership, actor
+        // and finalized/immutable state. No inferred cash, fills or P&L.
+        const before=await readOwnPortfolioImport(pool,actor,{
+          portfolioId,snapshotId:baselineSnapshotId});
+        const after=await readOwnPortfolioImport(pool,actor,{portfolioId,snapshotId});
+        const comparison=compareImportDeclarations(before,after);
+        return json(200,{state:"UNVERIFIED_DECLARATION_COMPARISON",
+          comparison,financialMovementsCreated:false});
+      }
       const data=await readOwnPortfolioImport(pool,actor,{portfolioId,snapshotId});
       // Lossless string encoding; native bigint cannot be JSON serialized.
       return json(200,{state:"UNVERIFIED_IMPORT_READBACK",
@@ -125,6 +145,11 @@ export async function handlePortfolioImportHttp(
     return json(200,{state:"UNVERIFIED_IMPORT_HISTORY",history,
       financialMovementsCreated:false});
   }catch(error){
+    if(error instanceof ImportComparisonBlocked){
+      if(error.code==="INVALID_CHRONOLOGY"||error.code==="IDENTICAL_SNAPSHOT")
+        return json(409,{error:"COMPARISON_NOT_POSSIBLE"});
+      return json(503,{error:"COMPARISON_UNAVAILABLE"});
+    }
     if(error instanceof PortfolioImportBlocked){
       if(error.code==="INVALID_INPUT")return json(400,{error:"INVALID_INPUT"});
       if(error.code==="UNAUTHENTICATED")return json(401,{error:"UNAUTHENTICATED"});

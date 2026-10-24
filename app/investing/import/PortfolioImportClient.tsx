@@ -28,10 +28,27 @@ type ImportRead={
     provenance:{sourceReference:string;asOf:string};
   };
 };
+type DifferenceRow=Readonly<{
+  state:"TWO_REPORTED_VALUES"|"NOT_COMPARABLE_MISSING_REPORT";
+  before:string|null;after:string|null;reportedDifference:string|null;
+  financialMovement:"UNAVAILABLE";
+}>;
+type DeclarationComparison=Readonly<{
+  kind:"UNVERIFIED_DECLARATION_COMPARISON_V1";
+  portfolioId:string;beforeSnapshotId:string;afterSnapshotId:string;
+  beforeAsOf:string;afterAsOf:string;
+  evidence:"USER_REPORTED_UNVERIFIED";
+  cash:readonly {currency:string;change:DifferenceRow}[];
+  positions:readonly {isin:string;mic:string;quoteCurrency:string;change:DifferenceRow}[];
+  ledgerMovements:"UNAVAILABLE";buySellReconstruction:"UNAVAILABLE";
+  realizedContributions:"UNAVAILABLE";income:"UNAVAILABLE";
+  fxConversion:"UNAVAILABLE";valuation:"UNAVAILABLE";performance:"UNAVAILABLE";
+  recommendations:"NOT_PERFORMED";financialWrites:false;
+}>;
 const copy={
- pt:{title:"Importar um portfolio declarado",lead:"Importação manual de cash e instrumentos com ISIN/MIC. Os valores são declarações não verificadas: não representam saldo confirmado, valorização ou operações.",label:"Portfolio próprio",name:"Nome declarado",currency:"Moeda base",cash:"Cash declarado (unidades menores: cêntimos em EUR)",assets:"Posições declaradas (ISIN/MIC)",cashCoverage:"Cobertura de cash",assetCoverage:"Cobertura de posições",addCash:"Adicionar moeda",addAsset:"Adicionar posição",remove:"Remover",submit:"Guardar importação sem movimentar dinheiro",saved:"Snapshot não verificado guardado",recent:"Histórico guardado (máx. 20 mais recentes)",open:"Consultar snapshot",notReady:"Conta inexistente, várias contas ou acesso indisponível. Importação bloqueada.",error:"Erro de autorização, dados ou comunicação. Confirma o histórico antes de repetir.",none:"Não foram observadas importações deste portfolio.",unknown:"SEM VALORIZAÇÃO · CASH NÃO VERIFICADO · SEM PERFORMANCE",back:"Voltar ao Investing",source:"Referência de origem",asOf:"Data declarada",quantity:"Quantidade (decimal exato)",cost:"Custo de aquisição: desconhecido",historyMore:"Existem outras importações; esta lista não está completa.",unreported:"Não declarado",partial:"Parcial",complete:"Completo, declarado pelo utilizador",legacy:"Cobertura histórica DESCONHECIDA; não concluir saldo zero nem totalidade das posições"},
- en:{title:"Import a declared portfolio",lead:"Manual import of cash and ISIN/MIC instruments. These are unverified declarations, not broker-confirmed funds, valuations or trades.",label:"Own portfolio",name:"Declared name",currency:"Base currency",cash:"Declared cash (minor units, cents in EUR)",assets:"Declared positions (ISIN/MIC)",cashCoverage:"Cash coverage",assetCoverage:"Positions coverage",addCash:"Add currency",addAsset:"Add position",remove:"Remove",submit:"Save import without moving money",saved:"Unverified snapshot saved",recent:"Saved history (20 latest max)",open:"View snapshot",notReady:"Account missing, multiple accounts or unavailable. Import blocked.",error:"Authorization, data or connection error. Check history before retrying.",none:"No imports observed for this portfolio.",unknown:"NO VALUATION · UNVERIFIED CASH · NO PERFORMANCE",back:"Back to Investing",source:"Source reference",asOf:"Declared date",quantity:"Quantity (exact decimal)",cost:"Cost basis: unknown",historyMore:"Additional imports exist; this list is incomplete.",unreported:"Not reported",partial:"Partial",complete:"Complete, user declared",legacy:"Legacy coverage UNKNOWN; neither zero cash nor complete holdings can be assumed"},
- fr:{title:"Importer un portefeuille déclaré",lead:"Import manuel de liquidités et instruments ISIN/MIC. Déclarations non vérifiées, sans solde confirmé, valorisation ou transactions.",label:"Mon portefeuille",name:"Nom déclaré",currency:"Devise de base",cash:"Liquidités déclarées (unités mineures, centimes en EUR)",assets:"Positions déclarées (ISIN/MIC)",cashCoverage:"Couverture liquidités",assetCoverage:"Couverture positions",addCash:"Ajouter devise",addAsset:"Ajouter position",remove:"Supprimer",submit:"Enregistrer sans mouvement financier",saved:"Snapshot non vérifié enregistré",recent:"Historique (20 derniers au maximum)",open:"Voir snapshot",notReady:"Compte absent, comptes multiples ou service indisponible. Import bloqué.",error:"Erreur de données, d'autorisation ou de connexion. Vérifier l'historique avant de réessayer.",none:"Aucun import observé pour ce portefeuille.",unknown:"SANS VALORISATION · LIQUIDITÉS NON VÉRIFIÉES · SANS PERFORMANCE",back:"Retour à Investing",source:"Référence d'origine",asOf:"Date déclarée",quantity:"Quantité (décimal exact)",cost:"Coût d'acquisition : inconnu",historyMore:"D'autres imports existent; cette liste est incomplète.",unreported:"Non déclaré",partial:"Partiel",complete:"Complet, déclaré par l'utilisateur",legacy:"Couverture historique INCONNUE : ni solde nul ni positions complètes présumés"},
+ pt:{title:"Importar um portfolio declarado",lead:"Importação manual de cash e instrumentos com ISIN/MIC. Os valores são declarações não verificadas: não representam saldo confirmado, valorização ou operações.",label:"Portfolio próprio",name:"Nome declarado",currency:"Moeda base",cash:"Cash declarado (unidades menores: cêntimos em EUR)",assets:"Posições declaradas (ISIN/MIC)",cashCoverage:"Cobertura de cash",assetCoverage:"Cobertura de posições",addCash:"Adicionar moeda",addAsset:"Adicionar posição",remove:"Remover",submit:"Guardar importação sem movimentar dinheiro",saved:"Snapshot não verificado guardado",recent:"Histórico guardado (máx. 20 mais recentes)",open:"Consultar snapshot",notReady:"Conta inexistente, várias contas ou acesso indisponível. Importação bloqueada.",error:"Erro de autorização, dados ou comunicação. Confirma o histórico antes de repetir.",none:"Não foram observadas importações deste portfolio.",unknown:"SEM VALORIZAÇÃO · CASH NÃO VERIFICADO · SEM PERFORMANCE",back:"Voltar ao Investing",source:"Referência de origem",asOf:"Data declarada",quantity:"Quantidade (decimal exato)",cost:"Custo de aquisição: desconhecido",historyMore:"Existem outras importações; esta lista não está completa.",unreported:"Não declarado",partial:"Parcial",complete:"Completo, declarado pelo utilizador",legacy:"Cobertura histórica DESCONHECIDA; não concluir saldo zero nem totalidade das posições",compare:"Comparar as duas declarações mais recentes",comparison:"Diferenças entre declarações não verificadas",difference:"Diferença declarada",notReported:"Não comparável: não declarado num dos snapshots",notTransactions:"Diferenças declaradas não provam compras/vendas, depósitos, retornos ou dividendos"},
+ en:{title:"Import a declared portfolio",lead:"Manual import of cash and ISIN/MIC instruments. These are unverified declarations, not broker-confirmed funds, valuations or trades.",label:"Own portfolio",name:"Declared name",currency:"Base currency",cash:"Declared cash (minor units, cents in EUR)",assets:"Declared positions (ISIN/MIC)",cashCoverage:"Cash coverage",assetCoverage:"Positions coverage",addCash:"Add currency",addAsset:"Add position",remove:"Remove",submit:"Save import without moving money",saved:"Unverified snapshot saved",recent:"Saved history (20 latest max)",open:"View snapshot",notReady:"Account missing, multiple accounts or unavailable. Import blocked.",error:"Authorization, data or connection error. Check history before retrying.",none:"No imports observed for this portfolio.",unknown:"NO VALUATION · UNVERIFIED CASH · NO PERFORMANCE",back:"Back to Investing",source:"Source reference",asOf:"Declared date",quantity:"Quantity (exact decimal)",cost:"Cost basis: unknown",historyMore:"Additional imports exist; this list is incomplete.",unreported:"Not reported",partial:"Partial",complete:"Complete, user declared",legacy:"Legacy coverage UNKNOWN; neither zero cash nor complete holdings can be assumed",compare:"Compare the two most recent declarations",comparison:"Differences between unverified declarations",difference:"Reported difference",notReported:"Not comparable: missing in one snapshot",notTransactions:"Reported differences do not establish trades, deposits, returns or dividends"},
+ fr:{title:"Importer un portefeuille déclaré",lead:"Import manuel de liquidités et instruments ISIN/MIC. Déclarations non vérifiées, sans solde confirmé, valorisation ou transactions.",label:"Mon portefeuille",name:"Nom déclaré",currency:"Devise de base",cash:"Liquidités déclarées (unités mineures, centimes en EUR)",assets:"Positions déclarées (ISIN/MIC)",cashCoverage:"Couverture liquidités",assetCoverage:"Couverture positions",addCash:"Ajouter devise",addAsset:"Ajouter position",remove:"Supprimer",submit:"Enregistrer sans mouvement financier",saved:"Snapshot non vérifié enregistré",recent:"Historique (20 derniers au maximum)",open:"Voir snapshot",notReady:"Compte absent, comptes multiples ou service indisponible. Import bloqué.",error:"Erreur de données, d'autorisation ou de connexion. Vérifier l'historique avant de réessayer.",none:"Aucun import observé pour ce portefeuille.",unknown:"SANS VALORISATION · LIQUIDITÉS NON VÉRIFIÉES · SANS PERFORMANCE",back:"Retour à Investing",source:"Référence d'origine",asOf:"Date déclarée",quantity:"Quantité (décimal exact)",cost:"Coût d'acquisition : inconnu",historyMore:"D'autres imports existent; cette liste est incomplète.",unreported:"Non déclaré",partial:"Partiel",complete:"Complet, déclaré par l'utilisateur",legacy:"Couverture historique INCONNUE : ni solde nul ni positions complètes présumés",compare:"Comparer les deux dernières déclarations",comparison:"Écarts entre déclarations non vérifiées",difference:"Écart déclaré",notReported:"Non comparable : absent de l’un des snapshots",notTransactions:"Les écarts déclarés ne prouvent pas d’ordres, dépôts, rendements ou dividendes"},
 } satisfies Record<SiteLang,Record<string,string>>;
 const inp="mt-1 w-full rounded border border-slate-600 bg-slate-950 p-2 text-slate-100";
 function readOnlyJson(r:unknown):r is {state:"UNVERIFIED_IMPORT_HISTORY";history:{
@@ -58,6 +75,7 @@ export default function PortfolioImportClient({lang}:{lang:SiteLang}){
  const [history,setHistory]=useState<HistoryRecord[]>([]);
  const [hasMore,setHasMore]=useState(false);
  const [detail,setDetail]=useState<ImportRead["snapshot"]|null>(null);
+ const [comparison,setComparison]=useState<DeclarationComparison|null>(null);
  const [error,setError]=useState(false);
  const [saving,setSaving]=useState(false);
  const [done,setDone]=useState(false);
@@ -97,7 +115,7 @@ export default function PortfolioImportClient({lang}:{lang:SiteLang}){
      }).catch(()=>{if(active){setHistory([]);setError(true);}});
    return()=>{active=false;controller.abort();};
  },[user,allowed,selected,done]);
- function changed(){attempt.current=null;setDone(false);setDetail(null);setError(false);}
+ function changed(){attempt.current=null;setDone(false);setDetail(null);setComparison(null);setError(false);}
  const updateCash=(i:number,key:keyof Cash,value:string)=>{
    changed();setCash(rows=>rows.map((r,j)=>i===j?{...r,[key]:value}:r));
  };
@@ -119,6 +137,46 @@ export default function PortfolioImportClient({lang}:{lang:SiteLang}){
         d.snapshot?.evidenceStatus!=="UNVERIFIED"||
         d.snapshot?.valuation!=="UNAVAILABLE")throw Error("wrong scope");
      setDetail(d.snapshot);
+   }catch{setError(true);}
+ }
+ async function compareLatest(){
+   if(!allowed)return;
+   setError(false);
+   setComparison(null);
+   // "latest" here refers to source timestamps stated by the user, not
+   // trade timestamps, not transaction ordering, not broker evidence.
+   const chronological=[...history].sort((a,b)=>b.asOf.localeCompare(a.asOf));
+   const current=chronological[0],previous=chronological[1];
+   if(!current||!previous||!(previous.asOf<current.asOf))return;
+   try{
+     const query=new URLSearchParams({
+       portfolioId:selected,snapshotId:current.snapshotId,
+       baselineSnapshotId:previous.snapshotId,
+     });
+     const response=await fetch("/api/investing/portfolio/import?"+query,{
+       credentials:"same-origin",cache:"no-store",
+     });
+     if(!response.ok)throw Error("not comparable");
+     const data:unknown=await response.json();
+     if(!data||typeof data!=="object")throw Error("invalid");
+     const wrapper=data as {
+       state?:string;comparison?:Partial<DeclarationComparison>;
+     };
+     const result=wrapper.comparison;
+     if(wrapper.state!=="UNVERIFIED_DECLARATION_COMPARISON"||
+       result?.kind!=="UNVERIFIED_DECLARATION_COMPARISON_V1"||
+       result.portfolioId!==selected||
+       result.beforeSnapshotId!==previous.snapshotId||
+       result.afterSnapshotId!==current.snapshotId||
+       result.evidence!=="USER_REPORTED_UNVERIFIED"||
+       result.ledgerMovements!=="UNAVAILABLE"||
+       result.buySellReconstruction!=="UNAVAILABLE"||
+       result.valuation!=="UNAVAILABLE"||
+       result.performance!=="UNAVAILABLE"||
+       result.financialWrites!==false||
+       !Array.isArray(result.cash)||!Array.isArray(result.positions))
+       throw Error("invalid comparison evidence");
+     setComparison(result as DeclarationComparison);
    }catch{setError(true);}
  }
  async function submit(){
@@ -157,6 +215,8 @@ export default function PortfolioImportClient({lang}:{lang:SiteLang}){
    }catch{setError(true);}
    finally{setSaving(false);}
  }
+ const dated=[...history].sort((a,b)=>b.asOf.localeCompare(a.asOf));
+ const canCompare=allowed&&dated.length>1&&dated[0].asOf>dated[1].asOf;
  const coverageOptions:[Coverage,string][]=[
   ["NOT_REPORTED",t.unreported],["PARTIAL",t.partial],["ASSERTED_COMPLETE",t.complete]];
  const cashValid=cash.every(x=>!!x.currency&&/^(0|[1-9]\d*)$/.test(x.amountMinor));
@@ -224,10 +284,28 @@ export default function PortfolioImportClient({lang}:{lang:SiteLang}){
      {history.length===0?<p className="mt-3 text-slate-400">{t.none}</p>:history.map(record=>
        <button key={record.snapshotId} className="mt-3 block break-all text-left text-sky-300 underline"
          onClick={()=>void show(record.snapshotId)}>{t.open}: {record.snapshotId} — {record.asOf}</button>)}
+     {canCompare&&<button type="button" className="mt-4 block text-emerald-300 underline"
+       onClick={()=>void compareLatest()}>{t.compare}</button>}
      {hasMore&&<p className="mt-3 text-amber-200">{t.historyMore}</p>}
      {history.some(r=>r.reportedCoverage.cash==="LEGACY_COVERAGE_UNKNOWN"||r.reportedCoverage.positions==="LEGACY_COVERAGE_UNKNOWN")&&
       <p role="status" className="mt-3 text-amber-200">{t.legacy}</p>}
     </section>
+    {comparison&&<section className="mt-7 rounded border border-amber-700 p-5">
+      <h2 className="text-xl font-semibold">{t.comparison}</h2>
+      <p className="mt-2 text-sm text-slate-400">{comparison.beforeAsOf} → {comparison.afterAsOf}</p>
+      <p role="status" className="mt-3 text-amber-200">{t.notTransactions}</p>
+      {comparison.cash.map(row=>
+        <p className="mt-3 break-all text-sm" key={row.currency}>
+          {row.currency}: {row.change.reportedDifference===null?
+            t.notReported:t.difference+" "+row.change.reportedDifference+" (minor units)"}
+        </p>)}
+      {comparison.positions.map(row=>
+        <p className="mt-3 break-all text-sm" key={[row.isin,row.mic,row.quoteCurrency].join(":")}>
+          {row.isin} / {row.mic} / {row.quoteCurrency}: {
+          row.change.reportedDifference===null?t.notReported:
+            t.difference+" "+row.change.reportedDifference+" (10^-12 units)"}
+        </p>)}
+    </section>}
     {detail&&<section className="mt-7 rounded border border-slate-700 p-5">
       <h2 className="text-lg font-semibold">{t.open}: {detail.snapshotId}</h2>
       <p className="mt-2">{t.source}: {detail.provenance.sourceReference}</p>

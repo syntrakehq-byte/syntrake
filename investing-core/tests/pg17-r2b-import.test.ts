@@ -300,7 +300,7 @@ test("R2-B1 isolated PG17: owner A/B, immutable atomic import, negative capabili
     // This is ISOLATED PG17 with synthetic actors, never remote Supabase.
     const preview={
       VERCEL_ENV:"preview",
-      VERCEL_GIT_COMMIT_REF:"candidate/investing-r2d-import-flow-20261024",
+      VERCEL_GIT_COMMIT_REF:"candidate/investing-r2e-declaration-changes-20261024",
       INVESTING_R2C_PREVIEW_MODE:"enabled",
       INVESTING_R2C_SUPABASE_PROJECT_REF:"zkqgpejlkgootkvkebhd",
       NEXT_PUBLIC_SUPABASE_URL:"https://zkqgpejlkgootkvkebhd.supabase.co",
@@ -368,6 +368,55 @@ test("R2-B1 isolated PG17: owner A/B, immutable atomic import, negative capabili
       new Request(endpoint+"?"+new URLSearchParams({portfolioId:PORT_A,snapshotId})),
       preview,async()=>actorB,factory);
     assert.equal(stolenDetail.status,404);
+    // R2-E: compare two real PG17 persisted declarations without making
+    // trades, deposits, broker positions, payouts, or P&L.
+    const secondImport=await create(actorA,{
+      portfolioId:PORT_A,idempotencyKey:"ci-r2e-http-import-0002",
+      declaration:{
+        ...draft(),sourceReference:"ci-r2e-http-source-0002",
+        asOf:"2026-10-23T18:00:00.000Z",
+        cashBalances:[],
+        positions:[{...draft().positions[0],quantity:"3.000000000000"}],
+        reportedCoverage:{cash:"NOT_REPORTED",positions:"ASSERTED_COMPLETE"},
+      },
+    });
+    assert.equal(secondImport.status,201);
+    const laterId=(await secondImport.json()).receipt.snapshotId as string;
+    const comparisonGet=(who:typeof actorA,afterId:string,beforeId:string)=>{
+      const search=new URLSearchParams({
+        portfolioId:PORT_A,snapshotId:afterId,baselineSnapshotId:beforeId,
+      });
+      return handlePortfolioImportHttp(new Request(endpoint+"?"+search),
+        preview,async()=>who,factory);
+    };
+    const comparisonResponse=await comparisonGet(actorA,laterId,snapshotId);
+    assert.equal(comparisonResponse.status,200);
+    const compared=await comparisonResponse.json();
+    assert.equal(compared.state,"UNVERIFIED_DECLARATION_COMPARISON");
+    assert.equal(compared.comparison.kind,"UNVERIFIED_DECLARATION_COMPARISON_V1");
+    assert.equal(compared.comparison.portfolioId,PORT_A);
+    assert.equal(compared.comparison.beforeSnapshotId,snapshotId);
+    assert.equal(compared.comparison.afterSnapshotId,laterId);
+    assert.equal(compared.comparison.positions.length,1);
+    assert.equal(compared.comparison.positions[0].change.reportedDifference,"1999999999999");
+    assert.equal(compared.comparison.positions[0].change.financialMovement,"UNAVAILABLE");
+    assert.equal(compared.comparison.cash.length,0,"cash omitted twice is still not EUR 0");
+    assert.equal(compared.comparison.coverage.before.cash,"NOT_REPORTED");
+    assert.equal(compared.comparison.buySellReconstruction,"UNAVAILABLE");
+    assert.equal(compared.comparison.realizedContributions,"UNAVAILABLE");
+    assert.equal(compared.comparison.income,"UNAVAILABLE");
+    assert.equal(compared.comparison.performance,"UNAVAILABLE");
+    assert.equal(compared.comparison.financialWrites,false);
+    assert.equal(compared.financialMovementsCreated,false);
+
+    const reverse=await comparisonGet(actorA,snapshotId,laterId);
+    assert.equal(reverse.status,409);
+    assert.equal((await reverse.json()).error,"COMPARISON_NOT_POSSIBLE");
+    const stolenCompare=await comparisonGet(actorB,laterId,snapshotId);
+    assert.equal(stolenCompare.status,404);
+    const same=await comparisonGet(actorA,laterId,laterId);
+    assert.equal(same.status,400);
+
     const untouched=await admin.query<{transactions:string;entries:string}>(
       "SELECT (SELECT count(*)::text FROM investing.ledger_transactions) transactions,"+
       "(SELECT count(*)::text FROM investing.ledger_entries) entries");
