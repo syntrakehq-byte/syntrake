@@ -162,7 +162,7 @@ test("R2-C2 real PG17: atomic, owner-scoped initial portfolio under dedicated NO
   await t.test("R2-C4 private HTTP→Clerk actor→PG17 replay preserves account IDs, no ledger writes",async()=>{
     const environment={
       VERCEL_ENV:"preview",
-      VERCEL_GIT_COMMIT_REF:"candidate/investing-r2c4-private-preview-initialization-20261024",
+      VERCEL_GIT_COMMIT_REF:"candidate/investing-r2d-import-flow-20261024",
       INVESTING_R2C_PREVIEW_MODE:"enabled",
       INVESTING_R2C_SUPABASE_PROJECT_REF:"zkqgpejlkgootkvkebhd",
       NEXT_PUBLIC_SUPABASE_URL:"https://zkqgpejlkgootkvkebhd.supabase.co",

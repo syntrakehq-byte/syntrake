@@ -5,6 +5,7 @@ import Link from "next/link";
 import { resolveRequestSiteLang } from "@/lib/i18n/requestSiteLang";
 import { isR2CPreviewEnabled } from "@/investing-core/server/onboardingTransport";
 import { inspectOwnExistingInvestingAccounts } from "@/investing-core/server/existingAccountReview";
+import { isR2DImportReady } from "@/investing-core/server/importPreviewRuntime";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,6 +27,7 @@ const copy = {
     unavailable: "Não foi possível confirmar o estado das contas. Não foi assumida qualquer situação financeira.",
     return: "Voltar ao Investing",
     account: "Conta",
+    import: "Importar posições/cash declarados (não verificados)",
   },
   en: {
     title: "Existing Investing accounts",
@@ -39,6 +41,7 @@ const copy = {
     unavailable: "Account status could not be confirmed. No financial state was assumed.",
     return: "Back to Investing",
     account: "Account",
+    import: "Import declared positions/cash (unverified)",
   },
   fr: {
     title: "Comptes Investing existants",
@@ -52,6 +55,7 @@ const copy = {
     unavailable: "Impossible de confirmer l'état des comptes. Aucun état financier n'a été supposé.",
     return: "Retour à Investing",
     account: "Compte",
+    import: "Importer positions/liquidités déclarées (non vérifiées)",
   },
 } as const;
 
@@ -97,6 +101,8 @@ export default async function ExistingInvestingAccountsPage({
         )}
         {existing && <p className="mt-5 text-sm text-amber-200">{t.uncertain}</p>}
       </section>
+      {!failed && existing?.accountMultiplicity === "ONE" && existing.portfolioIds.length>0 && isR2DImportReady(process.env) &&
+       <Link className="mt-7 mr-7 inline-block text-emerald-300 underline" href="/investing/import">{t.import}</Link>}
       <Link className="mt-7 inline-block text-sky-300 underline" href="/investing/start">
         {t.return}
       </Link>
