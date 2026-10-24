@@ -2,7 +2,7 @@ import { onboardingCommandSchema, onboardingFingerprint, parseStoredOnboardingRo
   type OnboardingEvent, type OnboardingCommand } from "../onboarding/onboardingIntent";
 
 export const R2C_PREVIEW_PROJECT = "zkqgpejlkgootkvkebhd";
-export const R2C_PREVIEW_BRANCH = "candidate/investing-r2c-onboarding-on-r2b-20261024";
+export const R2C_PREVIEW_BRANCH = "candidate/investing-r2c2-private-first-portfolio-20261024";
 type Config = Readonly<Record<string,string | undefined>>;
 type ClerkActor = Readonly<{
   userId: string | null;
