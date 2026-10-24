@@ -30,7 +30,8 @@ test("R2 Preview catalog guard is read only and releases DB session",async()=>{
  const f=mockCatalog();
  await assert.doesNotReject(assertPreviewImportCatalogReady(f.pool));
  assert.equal(f.sql[0],"BEGIN READ ONLY");
- assert.ok(f.sql[1].startsWith("SELECT "));
+ assert.equal(f.sql[1],"SET LOCAL ROLE investing_import_writer");
+ assert.ok(f.sql[2].startsWith("SELECT "));
  assert.equal(f.sql.at(-1),"ROLLBACK");
  assert.equal(f.releases(),1);
  assert.equal(f.sql.some(q=>/^\s*(INSERT|UPDATE|DELETE|ALTER|DROP|GRANT|REVOKE)\b/i.test(q)),
