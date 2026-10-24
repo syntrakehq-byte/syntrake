@@ -20,7 +20,7 @@ export async function handleExistingAccountReviewGet(
   // No write, no account creation and no financial valuation endpoints.
   if (env.VERCEL_ENV !== "preview" ||
       env.VERCEL_GIT_COMMIT_REF !==
-        "candidate/investing-r2c3-existing-account-read-20261024") {
+        "candidate/investing-r2c4-private-preview-initialization-20261024") {
     return json(404, { error: "NOT_FOUND" });
   }
   let path: URL;

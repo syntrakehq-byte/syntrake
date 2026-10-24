@@ -9,7 +9,7 @@ import {handleInvestingOnboardingHttp} from "../server/onboardingHttp";
 
 const preview={
  VERCEL_ENV:"preview",
- VERCEL_GIT_COMMIT_REF:"candidate/investing-r2c3-existing-account-read-20261024",
+ VERCEL_GIT_COMMIT_REF:"candidate/investing-r2c4-private-preview-initialization-20261024",
  INVESTING_R2C_PREVIEW_MODE:"enabled",
  INVESTING_R2C_SUPABASE_PROJECT_REF:"zkqgpejlkgootkvkebhd",
  NEXT_PUBLIC_SUPABASE_URL:"https://zkqgpejlkgootkvkebhd.supabase.co",

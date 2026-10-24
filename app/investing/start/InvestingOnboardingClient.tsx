@@ -71,7 +71,7 @@ function isState(v:unknown):v is ResponseState{
    &&typeof o.executionAuthority==="string"&&("latest" in o);
 }
 const inputClass="mt-2 w-full rounded-xl border border-slate-600 bg-slate-900/90 px-4 py-3 text-sm text-white focus:border-sky-400 focus:outline-none";
-export default function InvestingOnboardingClient({lang}:{lang:SiteLang}){
+export default function InvestingOnboardingClient({lang,canCreateFirstPortfolio=false}:{lang:SiteLang;canCreateFirstPortfolio?:boolean}){
  const copy=tr[lang];
  const {isLoaded,userId}=useAuth();
  const actor=isLoaded?userId:null;
@@ -220,6 +220,7 @@ export default function InvestingOnboardingClient({lang}:{lang:SiteLang}){
   <p className="flex items-center gap-2 font-semibold text-sky-200"><ShieldCheck size={18}/>{copy.disclaimer}</p>
   <p className="mt-4">{copy.next}</p>
   <Link href="/investing/existing" className="mt-4 inline-block text-sky-300 underline">{copy.reviewExisting}</Link>
+  {canCreateFirstPortfolio&&current?.latest&&<Link href="/investing/portfolio/initialize" className="ml-6 mt-4 inline-block text-emerald-300 underline">{copy.next}</Link>}
  </aside>
  </div>
  </main>
