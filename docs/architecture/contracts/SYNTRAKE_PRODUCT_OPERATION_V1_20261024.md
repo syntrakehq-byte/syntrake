@@ -155,7 +155,11 @@ Mesmo sem utilizador ligado: schedule/event → job durável com ator/autoridade
 - Falhas de deploy e migration drift, backup restore, secrets; nenhum Production SQL sem autorização e SHA gate.
 - Utilizadores A/B não conseguem ver subscrição, dados, broker keys, trade reports ou alertas do outro.
 
-## 7. Sequência concreta após aceite do contrato
+## 7. Rehearsal obrigatório no fecho de cada fase
+
+Cada Rn **só é aceite** após **dois** relatórios de rehearsal Supabase, além da auditoria independente: (1) `R<n>_PHASE`, específico da capacidade Rn, e (2) `R0_TO_R<n>_CUMULATIVE`, reexecutando regressões de todas as fases aceites até Rn e os fluxos integrados. Em especial **R2 requer `R2_PHASE` seguido de `R0_TO_R2_CUMULATIVE`**. A ordem entre R3-A e R3-B é independente; registar a cobertura efetivamente aceite. Rehearsals necessitam branch Supabase isolada e **autorização explícita do custo antes da criação**; limpeza da branch com readback depois do ensaio e condições de segurança verificadas. Nunca declarar rehearsal realizado por ter CI verde ou aplicar SQL à Production. Consultar [Contrato de rehearsal R0–R7](./REHEARSAL_GATES_R0_R7_20261024.md), candidato até aprovação.
+
+## 8. Sequência concreta após aceite do contrato
 
 1. **Reconciliar documentação PR #24** com este contrato/índice e com a `main` aceite, sem o promover automaticamente. Clarificar qual é a referência canónica antes de merges.
 2. **Auditar PR #28 R2-A** contra o âmbito do parser: deterministic e sem persistência; declarar limites (ISIN-only, no active reconciliation), testes negativos e compatibilidade futura com Instrument Master. Só aceitar o SHA exato após evidence gate.
