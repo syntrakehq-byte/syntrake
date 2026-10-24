@@ -1,0 +1,41 @@
+name: investing-r2-preview-security-pg17
+
+on:
+  pull_request:
+    paths:
+      - "investing-core/**"
+      - "supabase/release-candidates/20261024194500_r2_preview_revoke_legacy_provision_rpc.sql"
+      - ".github/workflows/investing-r2-preview-security-pg17.yml"
+      - "package.json"
+permissions:
+  contents: read
+jobs:
+  candidate-security-pg17:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: syntrake_preview_security_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd="pg_isready -U postgres -d syntrake_preview_security_ci"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with: {persist-credentials: false}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Exact-R2 candidate TS and negative security tests
+        run: |
+          npm run test:investing
+          npx tsc -p tsconfig.investing.json --noEmit
+      - name: Isolated PG17 authentic legacy-definition gate and privilege-revocation tests
+        run: npx tsx --test investing-core/tests/pg17-r2-preview-security-compat.test.ts
+        env:
+          INVESTING_PG17_R2_SECURITY_URL: postgresql://postgres:postgres@127.0.0.1:5432/syntrake_preview_security_ci
