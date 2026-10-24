@@ -187,7 +187,7 @@ test("R2-C2 real PG17: atomic, owner-scoped initial portfolio under dedicated NO
     const payload=await replay.json();
     assert.deepEqual(payload,{
       state:"STRUCTURE_CREATED_UNFUNDED",
-      receipt:savedA,financialWrites:false,
+      receipt:savedA,financialMovementsCreated:false,
     });
     const conflict=await send(B,command(key));
     assert.equal(conflict.status,409);
