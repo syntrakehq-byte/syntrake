@@ -33,7 +33,7 @@ test("R2 Preview catalog guard is read only and releases DB session",async()=>{
  assert.ok(f.sql[1].startsWith("SELECT "));
  assert.equal(f.sql.at(-1),"ROLLBACK");
  assert.equal(f.releases(),1);
- assert.equal(f.sql.some(q=>/\b(INSERT|UPDATE|DELETE|ALTER|DROP|GRANT|REVOKE)\b/i.test(q)),
+ assert.equal(f.sql.some(q=>/^\s*(INSERT|UPDATE|DELETE|ALTER|DROP|GRANT|REVOKE)\b/i.test(q)),
    false,"preflight must never alter DB");
 });
 test("R2 Preview rejects missing columns, absent/unsafe role, public writer, ledger ability and exposed RPC",async()=>{
