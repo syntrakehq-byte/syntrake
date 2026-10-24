@@ -54,6 +54,7 @@ export default function FirstPortfolioInitClient({lang}:{lang:SiteLang}){
  const t=tr[lang],{userId,isLoaded}=useAuth();
  const user=isLoaded?userId:null;
  const [status,setStatus]=useState<"CHECKING"|"NO_ACCOUNT"|"EXISTING"|"BLOCKED"|"CREATED">("CHECKING");
+ const [checkedUser,setCheckedUser]=useState<string|null>(null);
  const [name,setName]=useState("Investing Principal"),[portfolio,setPortfolio]=useState("Long Term");
  const [currency,setCurrency]=useState<"EUR"|"USD"|"GBP"|"CHF"|"JPY"|"KWD">("EUR");
  const [receipt,setReceipt]=useState<{owner:string;value:FirstReceipt}|null>(null);
@@ -61,9 +62,8 @@ export default function FirstPortfolioInitClient({lang}:{lang:SiteLang}){
  const [busy,setBusy]=useState(false);
  const attempt=useRef<string|null>(null);
  useEffect(()=>{
-  if(!user){setStatus("CHECKING");return;}
+  if(!user)return;
   let mounted=true;const controller=new AbortController();
-  setStatus("CHECKING");
   void fetch("/api/investing/existing-account",{credentials:"same-origin",
     cache:"no-store",signal:controller.signal}).then(async r=>{
     if(!r.ok)throw Error("unavailable");
@@ -72,14 +72,16 @@ export default function FirstPortfolioInitClient({lang}:{lang:SiteLang}){
     const d=x as Partial<ExistingRead>;
     if(d.financialTruth!=="UNAVAILABLE"||d.financialWrites!==false)throw Error("invalid");
     if(!mounted)return;
+    setCheckedUser(user);
     if(d.state==="NO_OWN_ACCOUNT_OBSERVED"&&d.existing===null)setStatus("NO_ACCOUNT");
     else if(d.state==="EXISTING_ACCOUNT_REVIEW_REQUIRED")setStatus("EXISTING");
     else setStatus("BLOCKED");
-  }).catch(()=>{if(mounted)setStatus("BLOCKED");});
+  }).catch(()=>{if(mounted){setCheckedUser(user);setStatus("BLOCKED");}});
   return()=>{mounted=false;controller.abort();};
  },[user]);
  const own=user&&receipt?.owner===user?receipt.value:null;
- const canSubmit=!!user&&status==="NO_ACCOUNT"&&!busy&&!error;
+ const effectiveStatus=user&&checkedUser===user?status:"CHECKING";
+ const canSubmit=!!user&&effectiveStatus==="NO_ACCOUNT"&&!busy&&!error;
  function reset(){attempt.current=null;setError(null);}
  async function submit(){
   if(!canSubmit||!user)return;
@@ -119,9 +121,9 @@ export default function FirstPortfolioInitClient({lang}:{lang:SiteLang}){
       <p className="mt-3 break-all text-sm">Account: {own.accountId}</p>
       <p className="mt-2 break-all text-sm">Portfolio: {own.portfolioId}</p>
       <p className="mt-3 text-amber-200">{t.unverified}</p>
-    </div>:status==="CHECKING"?<p>{t.busy}</p>:
-    status==="EXISTING"?<p className="text-amber-200">{t.existing}</p>:
-    status==="BLOCKED"?<p role="alert" className="text-amber-200">
+    </div>:effectiveStatus==="CHECKING"?<p>{t.busy}</p>:
+    effectiveStatus==="EXISTING"?<p className="text-amber-200">{t.existing}</p>:
+    effectiveStatus==="BLOCKED"?<p role="alert" className="text-amber-200">
       {error==="NO_INTENT"?t.noIntent:error==="ALREADY"?t.already:
        error==="BLOCKED"?t.blocked:error==="UNKNOWN"?t.retry:t.missing}
     </p>:<div className="space-y-4">
