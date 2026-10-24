@@ -135,7 +135,7 @@ export async function handlePrivateFirstPortfolioPost(
     const receipt:InitialPortfolioReceipt = await initializeFirstInvestingPortfolio(
       pool, actor, normalized.data,
     );
-    return json(201,{state:"STRUCTURE_CREATED_UNFUNDED",receipt,financialWrites:false});
+    return json(201,{state:"STRUCTURE_CREATED_UNFUNDED",receipt,financialMovementsCreated:false});
   }catch(error){
     if(error instanceof InitialPortfolioBlocked){
       if(error.code==="UNAUTHENTICATED")return json(401,{error:"UNAUTHENTICATED"});
