@@ -19,6 +19,7 @@ function sample(): Record<string, unknown> {
     asOf: "2026-10-22T10:00:00.000Z",
     portfolioName: " Long term investments ",
     baseCurrency: "EUR",
+    reportedCoverage: { cash: "PARTIAL", positions: "PARTIAL" },
     cashBalances: [
       { currency: "USD", amountMinor: "9007199254740993" },
       { currency: "EUR", amountMinor: "12550" },
@@ -190,4 +191,59 @@ test("explicit zero reported cost remains different from missing cost", () => {
   });
   assert.equal(draft.positions.find((p) => p.isin === apple.isin)?.reportedCostBasis?.minor, 0n);
   assert.equal(draft.positions.find((p) => p.isin === microsoft.isin)?.reportedCostBasis, null);
+});
+
+test("coverage is mandatory, user-declared, and never broker verification", () => {
+  const withoutCoverage = sample();
+  delete withoutCoverage.reportedCoverage;
+  assert.throws(() => parsePortfolioImportDraft(withoutCoverage));
+  const parsed = parsePortfolioImportDraft(sample());
+  assert.deepEqual(parsed.reportedCoverage, { cash: "PARTIAL", positions: "PARTIAL" });
+  assert.equal(Object.isFrozen(parsed.reportedCoverage), true);
+  assert.equal(parsed.verifiedCash, "UNAVAILABLE");
+  assert.equal(parsed.valuation, "UNAVAILABLE");
+  assert.throws(() => parsePortfolioImportDraft({
+    ...sample(),
+    reportedCoverage: { cash: "BROKER_CONFIRMED", positions: "ASSERTED_COMPLETE" },
+  }));
+});
+
+test("no cash reported is unknown rather than a fictitious EUR 0", () => {
+  const parsed = parsePortfolioImportDraft({
+    ...sample(),
+    reportedCoverage: { cash: "NOT_REPORTED", positions: "ASSERTED_COMPLETE" },
+    cashBalances: [],
+  });
+  assert.deepEqual(parsed.cashBalances, []);
+  assert.equal(parsed.reportedCoverage.cash, "NOT_REPORTED");
+  assert.equal(parsed.verifiedCash, "UNAVAILABLE");
+  assert.equal(parsed.performance, "UNAVAILABLE");
+});
+
+test("user can assert empty positions without inventing broker liquidation", () => {
+  const parsed = parsePortfolioImportDraft({
+    ...sample(),
+    reportedCoverage: { cash: "ASSERTED_COMPLETE", positions: "ASSERTED_COMPLETE" },
+    cashBalances: [{ currency: "EUR", amountMinor: "0" }],
+    positions: [],
+  });
+  assert.equal(parsed.cashBalances[0]?.minor, 0n);
+  assert.equal(parsed.positions.length, 0);
+  assert.equal(parsed.provenance.kind, "USER_REPORTED");
+  assert.equal(parsed.valuation, "UNAVAILABLE");
+  assert.equal(parsed.persistence, "NOT_PERFORMED");
+});
+
+test("coverage contradictions and forged scopes fail closed", () => {
+  const cases = [
+    { reportedCoverage: { cash: "NOT_REPORTED", positions: "PARTIAL" } },
+    { reportedCoverage: { cash: "PARTIAL", positions: "NOT_REPORTED" } },
+    { reportedCoverage: { cash: "ASSERTED_COMPLETE", positions: "UNKNOWN" } },
+    { reportedCoverage: { cash: "ASSERTED_COMPLETE", positions: "ASSERTED_COMPLETE", brokerVerified: true } },
+    { reportedCoverage: { cash: "PARTIAL", positions: "PARTIAL" }, cashBalances: [] },
+    { reportedCoverage: { cash: "PARTIAL", positions: "PARTIAL" }, positions: [] },
+  ];
+  for (const fields of cases) {
+    assert.throws(() => parsePortfolioImportDraft({ ...sample(), ...fields }));
+  }
 });
