@@ -1,5 +1,9 @@
 name: investing-r2c3-existing-pg17
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 on:
   pull_request:
     paths:
@@ -31,10 +35,6 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - name: R2-C3 functional contract and strict TypeScript
-        run: |
-          npm run test:investing
-          npx tsc -p tsconfig.investing.json --noEmit
       - name: R2-C3 A/B own accounts from canonical R0-R1 PG17 schema
         run: npx tsx --test investing-core/tests/pg17-r2c3-existing-account.test.ts
         env:

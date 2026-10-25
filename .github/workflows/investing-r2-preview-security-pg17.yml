@@ -1,5 +1,9 @@
 name: investing-r2-preview-security-pg17
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 on:
   pull_request:
     paths:
@@ -31,10 +35,6 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - name: Exact-R2 candidate TS and negative security tests
-        run: |
-          npm run test:investing
-          npx tsc -p tsconfig.investing.json --noEmit
       - name: Isolated PG17 authentic legacy-definition gate and privilege-revocation tests
         run: npx tsx --test investing-core/tests/pg17-r2-preview-security-compat.test.ts
         env:

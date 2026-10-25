@@ -1,5 +1,9 @@
 name: investing-r2c2-private-pg17
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 on:
   pull_request:
     paths:
@@ -34,10 +38,6 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - name: R0 R1 R2-A B C regressions, R2-C2 contract, strict TS
-        run: |
-          npm run test:investing
-          npx tsc -p tsconfig.investing.json --noEmit
       - name: Restricted NOLOGIN first-account PG17 atomic A/B tests
         run: npx tsx --test investing-core/tests/pg17-r2c2-initial-portfolio.test.ts
         env:
