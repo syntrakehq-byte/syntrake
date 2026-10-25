@@ -36,6 +36,7 @@ export type OnboardingInput = z.infer<typeof onboardingInputSchema>;
 export type AuthenticatedActor = Readonly<{ userId: string; sessionId: string }>;
 export type OwnedAccount = Readonly<{ id: string; ownerUserId: string }>;
 export type VerifiedCapital = z.infer<typeof verifiedCapitalSchema>;
+export type RevisionLifecycle = "PENDING" | "APPLIED" | "SUPERSEDED" | "ABANDONED";
 export type CapitalState = Readonly<{
   declaredCapital: OnboardingInput["declaredCapital"];
   verifiedCapital: VerifiedCapital | null;
@@ -45,6 +46,7 @@ export type OnboardingRevision = Readonly<{
   revisionId: string; idempotencyKey: string; actorUserId: string; accountId: string;
   input: OnboardingInput; capital: CapitalState; provenance: "USER_DECLARED";
   createdAt: string; supersedes: string | null;
+  lifecycle: Readonly<{ status: RevisionLifecycle; changedAt: string; changedBy: string }>;
 }>;
 export type PortfolioRecord = Readonly<{
   portfolioId: string; accountId: string; ownerUserId: string; name: string;
@@ -58,6 +60,7 @@ export type Transaction = Readonly<{
   getPortfolio(accountId: string, actorUserId: string): Promise<PortfolioRecord | null>;
   getVerifiedCapital(accountId: string, actorUserId: string): Promise<unknown>;
   appendRevision(revision: OnboardingRevision): Promise<void>;
+  transitionRevision(revisionId: string, actorUserId: string, expected: RevisionLifecycle, next: RevisionLifecycle): Promise<OnboardingRevision>;
   insertPortfolio(portfolio: PortfolioRecord): Promise<void>;
   updatePortfolio(expectedVersion: number, expectedRevisionId: string | null, portfolio: PortfolioRecord): Promise<boolean>;
 }>;
@@ -65,6 +68,17 @@ export type Transaction = Readonly<{
 export type PortfolioRepository = Readonly<{ transaction<T>(work: (tx: Transaction) => Promise<T>): Promise<T> }>;
 export type ActorResolver = () => Promise<AuthenticatedActor>;
 type Request = Readonly<{ revisionId: string; idempotencyKey: string }>;
+
+const allowedTransitions: Readonly<Record<RevisionLifecycle, readonly RevisionLifecycle[]>> = {
+  PENDING: ["APPLIED", "ABANDONED"],
+  APPLIED: ["SUPERSEDED"],
+  SUPERSEDED: [],
+  ABANDONED: [],
+};
+
+export function assertRevisionTransition(from: RevisionLifecycle, to: RevisionLifecycle): void {
+  if (!allowedTransitions[from].includes(to)) throw new Error("INVALID_REVISION_TRANSITION");
+}
 
 function validActor(actor: AuthenticatedActor): AuthenticatedActor {
   if (!actor.userId.trim() || !actor.sessionId.trim()) throw new Error("UNAUTHENTICATED");
@@ -90,21 +104,25 @@ export function createOnboardingService(repo: PortfolioRepository, resolveActor:
       return existing;
     }
     const source = verifiedCapital(await tx.getVerifiedCapital(accountId, actor.userId));
-    const capital: CapitalState = source
-      ? { declaredCapital: parsed.declaredCapital, verifiedCapital: source, verification: "VERIFIED_AUTHORIZED_SOURCE" }
-      : { declaredCapital: parsed.declaredCapital, verifiedCapital: null, verification: "UNVERIFIED" };
+    const now = new Date().toISOString();
     const revision: OnboardingRevision = {
       revisionId: revisionId.parse(request.revisionId), idempotencyKey: key,
-      actorUserId: actor.userId, accountId, input: parsed, capital,
-      provenance: "USER_DECLARED", createdAt: new Date().toISOString(),
-      supersedes: current?.currentRevisionId ?? null,
+      actorUserId: actor.userId, accountId, input: parsed,
+      capital: source
+        ? { declaredCapital: parsed.declaredCapital, verifiedCapital: source, verification: "VERIFIED_AUTHORIZED_SOURCE" }
+        : { declaredCapital: parsed.declaredCapital, verifiedCapital: null, verification: "UNVERIFIED" },
+      provenance: "USER_DECLARED", createdAt: now, supersedes: current?.currentRevisionId ?? null,
+      lifecycle: { status: "PENDING", changedAt: now, changedBy: actor.userId },
     };
     await tx.appendRevision(revision);
     return revision;
   }
   async function upsertRevision(accountId: string, input: unknown, request: Request): Promise<OnboardingRevision> {
     const actor = validActor(await resolveActor()); const parsed = onboardingInputSchema.parse(input);
-    return repo.transaction(async (tx) => createRevision(tx, accountId, actor, parsed, request, await (async () => { await owned(tx, accountId, actor); return tx.getPortfolio(accountId, actor.userId); })()));
+    return repo.transaction(async (tx) => {
+      await owned(tx, accountId, actor);
+      return createRevision(tx, accountId, actor, parsed, request, await tx.getPortfolio(accountId, actor.userId));
+    });
   }
   return {
     upsertRevision,
@@ -114,16 +132,21 @@ export function createOnboardingService(repo: PortfolioRepository, resolveActor:
         await owned(tx, accountId, actor);
         const canonical = await tx.getRevision(accountId, actor.userId, revisionId.parse(revisionIdToUse));
         if (!canonical) throw new Error("REVISION_NOT_FOUND");
-        if (canonical.accountId !== accountId || canonical.actorUserId !== actor.userId) throw new Error("REVISION_OWNERSHIP_MISMATCH");
         const existing = await tx.getPortfolio(accountId, actor.userId);
-        if (existing) return existing;
-        if (canonical.supersedes !== null) throw new Error("INVALID_REVISION_CHAIN");
+        if (existing) {
+          if (existing.currentRevisionId !== canonical.revisionId) throw new Error("PORTFOLIO_ALREADY_EXISTS");
+          if (canonical.lifecycle.status !== "APPLIED") throw new Error("INVALID_REVISION_STATE");
+          return existing;
+        }
+        if (canonical.lifecycle.status !== "PENDING" || canonical.supersedes !== null) throw new Error("INVALID_REVISION_STATE");
+        const applied = await tx.transitionRevision(canonical.revisionId, actor.userId, "PENDING", "APPLIED");
         const result: PortfolioRecord = {
           portfolioId: uuid.parse(portfolio.portfolioId), accountId, ownerUserId: actor.userId,
           name: portfolio.name.trim() || "Investing portfolio",
-          currentRevisionId: canonical.revisionId, revisionIds: [canonical.revisionId], version: 1,
+          currentRevisionId: applied.revisionId, revisionIds: [applied.revisionId], version: 1,
         };
-        await tx.insertPortfolio(result); return result;
+        await tx.insertPortfolio(result);
+        return result;
       });
     },
     async applyCorrection(accountId: string, input: unknown, request: Request) {
@@ -133,14 +156,26 @@ export function createOnboardingService(repo: PortfolioRepository, resolveActor:
         const current = await tx.getPortfolio(accountId, actor.userId);
         if (!current) throw new Error("PORTFOLIO_NOT_FOUND");
         const revision = await createRevision(tx, accountId, actor, parsed, request, current);
-        if (current.revisionIds.includes(revision.revisionId)) return current;
-        if (revision.supersedes !== current.currentRevisionId) throw new Error("STALE_REVISION");
+        if (revision.lifecycle.status === "APPLIED" && current.currentRevisionId === revision.revisionId) return current;
+        if (revision.lifecycle.status !== "PENDING" || revision.supersedes !== current.currentRevisionId) throw new Error("STALE_REVISION");
+        const applied = await tx.transitionRevision(revision.revisionId, actor.userId, "PENDING", "APPLIED");
+        const previous = await tx.transitionRevision(current.currentRevisionId, actor.userId, "APPLIED", "SUPERSEDED");
+        if (previous.revisionId !== current.currentRevisionId) throw new Error("STALE_REVISION");
         const next: PortfolioRecord = {
-          ...current, currentRevisionId: revision.revisionId,
-          revisionIds: [...current.revisionIds, revision.revisionId], version: current.version + 1,
+          ...current, currentRevisionId: applied.revisionId,
+          revisionIds: [...current.revisionIds, applied.revisionId], version: current.version + 1,
         };
         if (!await tx.updatePortfolio(current.version, current.currentRevisionId, next)) throw new Error("STALE_REVISION");
         return next;
+      });
+    },
+    async abandonRevision(accountId: string, revisionIdToAbandon: string): Promise<OnboardingRevision> {
+      const actor = validActor(await resolveActor());
+      return repo.transaction(async (tx) => {
+        await owned(tx, accountId, actor);
+        const revision = await tx.getRevision(accountId, actor.userId, revisionId.parse(revisionIdToAbandon));
+        if (!revision) throw new Error("REVISION_NOT_FOUND");
+        return tx.transitionRevision(revision.revisionId, actor.userId, "PENDING", "ABANDONED");
       });
     },
   };
