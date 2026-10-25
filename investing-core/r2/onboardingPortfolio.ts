@@ -37,6 +37,10 @@ export type AuthenticatedActor = Readonly<{ userId: string; sessionId: string }>
 export type OwnedAccount = Readonly<{ id: string; ownerUserId: string }>;
 export type VerifiedCapital = z.infer<typeof verifiedCapitalSchema>;
 export type RevisionLifecycle = "PENDING" | "APPLIED" | "SUPERSEDED" | "ABANDONED";
+export type LifecycleTransition = Readonly<{
+  accountId: string; revisionId: string; actorUserId: string;
+  from: RevisionLifecycle; to: RevisionLifecycle; occurredAt: string;
+}>;
 export type CapitalState = Readonly<{
   declaredCapital: OnboardingInput["declaredCapital"];
   verifiedCapital: VerifiedCapital | null;
@@ -60,7 +64,8 @@ export type Transaction = Readonly<{
   getPortfolio(accountId: string, actorUserId: string): Promise<PortfolioRecord | null>;
   getVerifiedCapital(accountId: string, actorUserId: string): Promise<unknown>;
   appendRevision(revision: OnboardingRevision): Promise<void>;
-  transitionRevision(revisionId: string, actorUserId: string, expected: RevisionLifecycle, next: RevisionLifecycle): Promise<OnboardingRevision>;
+  /** Atomically updates the current projection and appends one immutable transition event. */
+  transitionRevision(accountId: string, revisionId: string, actorUserId: string, expected: RevisionLifecycle, next: RevisionLifecycle): Promise<{ revision: OnboardingRevision; transition: LifecycleTransition }>;
   insertPortfolio(portfolio: PortfolioRecord): Promise<void>;
   updatePortfolio(expectedVersion: number, expectedRevisionId: string | null, portfolio: PortfolioRecord): Promise<boolean>;
 }>;
@@ -139,11 +144,11 @@ export function createOnboardingService(repo: PortfolioRepository, resolveActor:
           return existing;
         }
         if (canonical.lifecycle.status !== "PENDING" || canonical.supersedes !== null) throw new Error("INVALID_REVISION_STATE");
-        const applied = await tx.transitionRevision(canonical.revisionId, actor.userId, "PENDING", "APPLIED");
+        const applied = await tx.transitionRevision(accountId, canonical.revisionId, actor.userId, "PENDING", "APPLIED");
         const result: PortfolioRecord = {
           portfolioId: uuid.parse(portfolio.portfolioId), accountId, ownerUserId: actor.userId,
           name: portfolio.name.trim() || "Investing portfolio",
-          currentRevisionId: applied.revisionId, revisionIds: [applied.revisionId], version: 1,
+          currentRevisionId: applied.revision.revisionId, revisionIds: [applied.revision.revisionId], version: 1,
         };
         await tx.insertPortfolio(result);
         return result;
@@ -158,12 +163,12 @@ export function createOnboardingService(repo: PortfolioRepository, resolveActor:
         const revision = await createRevision(tx, accountId, actor, parsed, request, current);
         if (revision.lifecycle.status === "APPLIED" && current.currentRevisionId === revision.revisionId) return current;
         if (revision.lifecycle.status !== "PENDING" || revision.supersedes !== current.currentRevisionId) throw new Error("STALE_REVISION");
-        const applied = await tx.transitionRevision(revision.revisionId, actor.userId, "PENDING", "APPLIED");
-        const previous = await tx.transitionRevision(current.currentRevisionId, actor.userId, "APPLIED", "SUPERSEDED");
-        if (previous.revisionId !== current.currentRevisionId) throw new Error("STALE_REVISION");
+        const applied = await tx.transitionRevision(accountId, revision.revisionId, actor.userId, "PENDING", "APPLIED");
+        const previous = await tx.transitionRevision(accountId, current.currentRevisionId, actor.userId, "APPLIED", "SUPERSEDED");
+        if (previous.revision.revisionId !== current.currentRevisionId) throw new Error("STALE_REVISION");
         const next: PortfolioRecord = {
-          ...current, currentRevisionId: applied.revisionId,
-          revisionIds: [...current.revisionIds, applied.revisionId], version: current.version + 1,
+          ...current, currentRevisionId: applied.revision.revisionId,
+          revisionIds: [...current.revisionIds, applied.revision.revisionId], version: current.version + 1,
         };
         if (!await tx.updatePortfolio(current.version, current.currentRevisionId, next)) throw new Error("STALE_REVISION");
         return next;
@@ -175,7 +180,8 @@ export function createOnboardingService(repo: PortfolioRepository, resolveActor:
         await owned(tx, accountId, actor);
         const revision = await tx.getRevision(accountId, actor.userId, revisionId.parse(revisionIdToAbandon));
         if (!revision) throw new Error("REVISION_NOT_FOUND");
-        return tx.transitionRevision(revision.revisionId, actor.userId, "PENDING", "ABANDONED");
+        const result = await tx.transitionRevision(accountId, revision.revisionId, actor.userId, "PENDING", "ABANDONED");
+        return result.revision;
       });
     },
   };
