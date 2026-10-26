@@ -15,6 +15,8 @@ DO $$ BEGIN
     CREATE ROLE bl2proof_runtime NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
   END IF;
 END $$;
+ALTER ROLE bl2proof_owner NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+ALTER ROLE bl2proof_runtime NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
 
 CREATE TABLE bl2proof.revisions (
   account_id uuid NOT NULL REFERENCES investing.investment_accounts(id),
@@ -91,6 +93,7 @@ RETURNS text LANGUAGE sql IMMUTABLE STRICT
 SET search_path = pg_catalog, pg_temp AS $$
   SELECT encode(public.digest(convert_to(p_payload::text, 'UTF8'), 'sha256'::text), 'hex')
 $$;
+ALTER FUNCTION bl2proof.canonical_sha256(jsonb) OWNER TO bl2proof_owner;
 
 CREATE OR REPLACE FUNCTION bl2proof.event_on_transition()
 RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER
@@ -102,6 +105,7 @@ BEGIN
   END IF;
   RETURN NEW;
 END $$;
+ALTER FUNCTION bl2proof.create_draft(uuid,text,text,text,jsonb,text) OWNER TO bl2proof_owner;
 
 CREATE TRIGGER revisions_transition_event
 AFTER UPDATE OF status ON bl2proof.revisions
@@ -133,6 +137,7 @@ BEGIN
   VALUES(p_account,p_revision,p_actor,p_key,p_payload,computed,current_revision,'PENDING');
   RETURN p_revision;
 END $$;
+ALTER FUNCTION bl2proof.apply_revision(uuid,uuid,text,text,bigint,boolean) OWNER TO bl2proof_owner;
 
 CREATE OR REPLACE FUNCTION bl2proof.apply_revision(
   p_account uuid,p_portfolio uuid,p_revision text,p_actor text,p_expected_version bigint,p_fail boolean DEFAULT false
@@ -166,6 +171,7 @@ BEGIN
   END IF;
   IF p_fail THEN RAISE EXCEPTION 'INJECTED_FAILURE'; END IF;
 END $$;
+ALTER FUNCTION bl2proof.abandon_revision(uuid,text,text) OWNER TO bl2proof_owner;
 
 CREATE OR REPLACE FUNCTION bl2proof.abandon_revision(p_account uuid,p_revision text,p_actor text)
 RETURNS text LANGUAGE plpgsql SECURITY DEFINER
@@ -182,6 +188,7 @@ BEGIN
     WHERE account_id=p_account AND revision_id=p_revision AND status='PENDING';
   RETURN 'ABANDONED';
 END $$;
+ALTER FUNCTION bl2proof.assert_current_revision_applied() OWNER TO bl2proof_owner;
 
 CREATE OR REPLACE FUNCTION bl2proof.assert_current_revision_applied()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
@@ -201,6 +208,7 @@ REVOKE ALL ON SCHEMA bl2proof FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON ALL TABLES IN SCHEMA bl2proof FROM PUBLIC, anon, authenticated, bl2proof_runtime;
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA bl2proof FROM PUBLIC, anon, authenticated;
 GRANT USAGE ON SCHEMA bl2proof TO bl2proof_runtime;
+GRANT EXECUTE ON FUNCTION bl2proof.canonical_sha256(jsonb) TO bl2proof_runtime;
 GRANT EXECUTE ON FUNCTION bl2proof.create_draft(uuid,text,text,text,jsonb,text), bl2proof.apply_revision(uuid,uuid,text,text,bigint,boolean), bl2proof.abandon_revision(uuid,text,text) TO bl2proof_runtime;
 
 COMMIT;

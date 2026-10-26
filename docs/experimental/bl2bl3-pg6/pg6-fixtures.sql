@@ -11,6 +11,12 @@ VALUES
  ('00000000-0000-4000-8000-0000000000b1','pg6_actor_b','PG6 B','EUR')
 ON CONFLICT (id) DO NOTHING;
 
+INSERT INTO investing.account_memberships(investment_account_id, user_id, role)
+VALUES
+ ('00000000-0000-4000-8000-0000000000a1','pg6_actor_a','owner'),
+ ('00000000-0000-4000-8000-0000000000b1','pg6_actor_b','owner')
+ON CONFLICT (investment_account_id, user_id) DO NOTHING;
+
 INSERT INTO investing.portfolios(id, investment_account_id, name)
 VALUES
  ('00000000-0000-4000-8000-0000000000a2','00000000-0000-4000-8000-0000000000a1','PG6 Portfolio A'),

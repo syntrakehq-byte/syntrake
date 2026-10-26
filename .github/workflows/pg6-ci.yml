@@ -49,3 +49,7 @@ jobs:
         run: psql -X -v ON_ERROR_STOP=1 -1 -f docs/experimental/bl2bl3-pg6/pg6-fixtures.sql
       - name: Run PG6 assertions
         run: psql -X -v ON_ERROR_STOP=1 -f docs/experimental/bl2bl3-pg6/pg6.test.sql
+      - name: Typecheck server adapter
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npx tsc --noEmit --pretty false --project tsconfig.json
