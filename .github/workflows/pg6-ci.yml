@@ -1,0 +1,49 @@
+name: PG6 canonical audit
+
+on:
+  push:
+    branches: [audit/pg6-ci-20261026]
+
+permissions:
+  contents: read
+
+jobs:
+  pg6:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: pg6_ci_only
+          POSTGRES_DB: syntrake_pg6
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d syntrake_pg6"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: pg6_ci_only
+      PGDATABASE: syntrake_pg6
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify PostgreSQL 17
+        run: psql -X -v ON_ERROR_STOP=1 -c "select version(), current_database(), inet_server_port()"
+      - name: Prepare auth harness
+        run: psql -X -v ON_ERROR_STOP=1 -1 -f docs/experimental/bl2bl3-pg6/pg6-baseline-setup.sql
+      - name: Apply canonical baseline
+        run: |
+          set -euo pipefail
+          psql -X -v ON_ERROR_STOP=1 -1 -f supabase/release-candidates/20261020180000_investing_first_readonly_release.sql
+          psql -X -v ON_ERROR_STOP=1 -1 -f supabase/release-candidates/20261022200000_r2b_unverified_portfolio_imports.sql
+          psql -X -v ON_ERROR_STOP=1 -1 -f supabase/release-candidates/20261022210000_r2c_onboarding_intents.sql
+          psql -X -v ON_ERROR_STOP=1 -1 -f supabase/release-candidates/20261023063000_r2c2_first_portfolio.sql
+      - name: Apply PG6 candidate
+        run: psql -X -v ON_ERROR_STOP=1 -1 -f docs/experimental/bl2bl3-pg6/candidate.sql
+      - name: Run PG6 assertions
+        run: psql -X -v ON_ERROR_STOP=1 -v actor=pg6_actor -v account=00000000-0000-0000-0000-000000000000 -v portfolio=00000000-0000-0000-0000-000000000000 -v revision1=rev-pg6-1 -v revision2=rev-pg6-2 -v key1=pg6-key-1 -v key2=pg6-key-2 -v payload='{"capitalDeclared":"0.00","currency":"EUR"}' -v payload2='{"capitalDeclared":"0.00","currency":"EUR","correction":true}' -f docs/experimental/bl2bl3-pg6/pg6.test.sql
