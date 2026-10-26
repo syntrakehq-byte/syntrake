@@ -45,5 +45,7 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -1 -f supabase/release-candidates/20261023063000_r2c2_first_portfolio.sql
       - name: Apply PG6 candidate
         run: psql -X -v ON_ERROR_STOP=1 -1 -f docs/experimental/bl2bl3-pg6/candidate.sql
+      - name: Create deterministic A/B fixtures
+        run: psql -X -v ON_ERROR_STOP=1 -1 -f docs/experimental/bl2bl3-pg6/pg6-fixtures.sql
       - name: Run PG6 assertions
-        run: psql -X -v ON_ERROR_STOP=1 -v actor=pg6_actor -v account=00000000-0000-0000-0000-000000000000 -v portfolio=00000000-0000-0000-0000-000000000000 -v revision1=rev-pg6-1 -v revision2=rev-pg6-2 -v key1=pg6-key-1 -v key2=pg6-key-2 -v payload='{"capitalDeclared":"0.00","currency":"EUR"}' -v payload2='{"capitalDeclared":"0.00","currency":"EUR","correction":true}' -f docs/experimental/bl2bl3-pg6/pg6.test.sql
+        run: psql -X -v ON_ERROR_STOP=1 -f docs/experimental/bl2bl3-pg6/pg6.test.sql

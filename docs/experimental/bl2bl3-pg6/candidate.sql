@@ -1,6 +1,10 @@
 -- BL2/BL3 PG6 experimental candidate. Local-only; not a migration.
 BEGIN;
 
+-- PostgreSQL core has no SHA-256 SQL function; pgcrypto is the minimal
+-- extension required to preserve the existing SHA-256 contract.
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 CREATE SCHEMA IF NOT EXISTS bl2proof;
 
 DO $$ BEGIN
@@ -84,7 +88,9 @@ CREATE POLICY events_owner ON bl2proof.events TO bl2proof_owner, bl2proof_runtim
 
 CREATE OR REPLACE FUNCTION bl2proof.canonical_sha256(p_payload jsonb)
 RETURNS text LANGUAGE sql IMMUTABLE STRICT
-SET search_path = pg_catalog, pg_temp AS $$ SELECT encode(public.digest(p_payload::text, 'sha256'), 'hex') $$;
+SET search_path = pg_catalog, pg_temp AS $$
+  SELECT encode(public.digest(convert_to(p_payload::text, 'UTF8'), 'sha256'::text), 'hex')
+$$;
 
 CREATE OR REPLACE FUNCTION bl2proof.event_on_transition()
 RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER
