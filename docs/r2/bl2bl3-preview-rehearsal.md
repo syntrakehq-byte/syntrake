@@ -64,3 +64,26 @@ Disable the branch-scoped write flag and remove ephemeral credentials,
 then delete the Supabase test branch. Verify the branch list contains
 only `main`. Keep GitHub PR #43 Draft until end-to-end verification and
 independent review; do not touch Production.
+
+## IPv4-only Vercel connector preflight
+
+Vercel functions do not support the Supabase default IPv6 direct endpoint.
+The Preview boundary requires the **Supavisor Session pooler** on port 5432,
+not the transaction pooler on 6543, to preserve PostgreSQL transactions,
+`SET LOCAL ROLE` and advisory locks.
+
+The operator copies the actual pooler hostname from **Supabase → Connect →
+Session pooler** into the branch-scoped
+`SYNTRAKE_ONBOARDING_POOLER_HOST`. No index is inferred. The DSN must
+use username `investing_bl2bl3_preview_login.<branch-project-ref>`, the
+exact supplied hostname, port 5432 and database `postgres`. This gate
+does not allow `db.<ref>.supabase.co` or any primary-project reference.
+
+For verify-full TLS, obtain the branch's server/root CA from **Supabase →
+Database Settings → SSL Configuration** and configure the branch-scoped
+`SYNTRAKE_ONBOARDING_PG_CA_PEM`; the Vercel Preview connection keeps
+`rejectUnauthorized=true`. Never substitute `sslmode=require` without
+certificate verification for the tested financial workflow.
+
+The app must report `NOT_FOUND` (HTTP 404) when the branch write flag is
+disabled. A successful static Preview build is **not** a Clerk A/B rehearsal.

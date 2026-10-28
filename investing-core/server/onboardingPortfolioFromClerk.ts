@@ -28,10 +28,16 @@ export function isOnboardingPortfolioPreviewReady(env: ServerEnv): boolean {
   if (!url || url.length > 2048) return false;
   try {
     const db = new URL(url);
+    // Vercel functions use IPv4. Supabase direct db.<ref> is IPv6 by
+    // default; require the actual Session-pooler host configured by operator.
+    // No transaction pooler: this Repository relies on SET LOCAL ROLE,
+    // transaction-scoped advisory locks, and COMMIT-time constraint triggers.
+    const poolerHost = env.SYNTRAKE_ONBOARDING_POOLER_HOST;
     return db.protocol === "postgresql:" &&
-      db.hostname === "db." + ref + ".supabase.co" &&
+      !!poolerHost && /^aws-[0-9]+-eu-west-3\\.pooler\\.supabase\\.com$/.test(poolerHost) &&
+      db.hostname === poolerHost &&
       db.port === "5432" && db.pathname === "/postgres" &&
-      decodeURIComponent(db.username) === PRIVATE_LOGIN &&
+      decodeURIComponent(db.username) === PRIVATE_LOGIN + "." + ref &&
       Boolean(db.password) && db.search === "" && db.hash === "";
   } catch {
     return false;

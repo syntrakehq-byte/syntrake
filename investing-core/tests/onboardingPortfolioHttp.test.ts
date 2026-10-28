@@ -13,7 +13,8 @@ const env = {
   SYNTRAKE_ONBOARDING_PG_ENABLED: "enabled",
   SYNTRAKE_ONBOARDING_PREVIEW_PROJECT_REF: branchRef,
   NEXT_PUBLIC_SUPABASE_URL: "https://" + branchRef + ".supabase.co",
-  SYNTRAKE_ONBOARDING_DATABASE_URL: "postgresql://investing_bl2bl3_preview_login:dummy@db." + branchRef + ".supabase.co:5432/postgres",
+  SYNTRAKE_ONBOARDING_POOLER_HOST: "aws-0-eu-west-3.pooler.supabase.com",
+  SYNTRAKE_ONBOARDING_DATABASE_URL: "postgresql://investing_bl2bl3_preview_login." + branchRef + ":dummy@aws-0-eu-west-3.pooler.supabase.com:5432/postgres",
   SYNTRAKE_ONBOARDING_PG_CA_PEM: "-----BEGIN CERTIFICATE-----\\nCI_DUMMY\\n-----END CERTIFICATE-----",
 };
 const url = "https://candidate.example/api/investing/portfolio/onboarding";
@@ -36,6 +37,10 @@ test("BL2/BL3 HTTP: preview requires exact SHA, branch, dedicated login, TLS and
     { ...env, SYNTRAKE_ONBOARDING_DATABASE_URL: env.SYNTRAKE_ONBOARDING_DATABASE_URL.replace(branchRef, "vbazzxqyuqcrmjytaboc") },
     { ...env, SYNTRAKE_ONBOARDING_DATABASE_URL: env.SYNTRAKE_ONBOARDING_DATABASE_URL.replace("investing_bl2bl3_preview_login", "postgres") },
     { ...env, SYNTRAKE_ONBOARDING_DATABASE_URL: env.SYNTRAKE_ONBOARDING_DATABASE_URL + "?sslmode=disable" },
+    { ...env, SYNTRAKE_ONBOARDING_POOLER_HOST: "attacker.example" },
+    { ...env, SYNTRAKE_ONBOARDING_DATABASE_URL: env.SYNTRAKE_ONBOARDING_DATABASE_URL.replace("pooler.supabase.com", "pooler.example.com") },
+    { ...env, SYNTRAKE_ONBOARDING_DATABASE_URL: env.SYNTRAKE_ONBOARDING_DATABASE_URL.replace(":5432/postgres", ":6543/postgres") },
+    { ...env, SYNTRAKE_ONBOARDING_DATABASE_URL: env.SYNTRAKE_ONBOARDING_DATABASE_URL.replace("aws-0-eu-west-3.pooler.supabase.com", "db." + branchRef + ".supabase.co") },
     { ...env, SYNTRAKE_ONBOARDING_PG_CA_PEM: "" },
   ]) assert.equal(isOnboardingPortfolioPreviewReady(bad), false);
 });
