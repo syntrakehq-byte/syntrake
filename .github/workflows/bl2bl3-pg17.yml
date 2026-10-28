@@ -47,7 +47,7 @@ jobs:
       - run: npm ci
       - name: Prepare local auth harness
         run: |
-          psql -v ON_ERROR_STOP=1 -1 -c "CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN; CREATE SCHEMA auth; CREATE FUNCTION auth.jwt() RETURNS jsonb LANGUAGE sql STABLE AS $$ SELECT '{}'::jsonb $$;"
+          psql -v ON_ERROR_STOP=1 -1 -c "CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN; CREATE SCHEMA auth; CREATE FUNCTION auth.jwt() RETURNS jsonb LANGUAGE sql STABLE AS \$\$ SELECT '{}'::jsonb \$\$;"
       - name: Apply canonical baseline and candidate
         run: |
           psql -v ON_ERROR_STOP=1 -1 -f supabase/release-candidates/20261020180000_investing_first_readonly_release.sql
