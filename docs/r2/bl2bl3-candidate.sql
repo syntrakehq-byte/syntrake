@@ -196,6 +196,14 @@ CREATE POLICY bl2bl3_owner_event_access ON investing.onboarding_events
   USING (actor_user_id = nullif(current_setting('syntrake.actor_user_id', true),''))
   WITH CHECK (actor_user_id = nullif(current_setting('syntrake.actor_user_id', true),''));
 
+-- PostgreSQL 17 / Supabase-managed portability:
+-- A non-superuser migration actor may create NOLOGIN roles with SET FALSE.
+-- ALTER FUNCTION OWNER requires temporary SET-role membership and CREATE
+-- on the schema. Revoke both before committing this transaction.
+-- The canonical review runner uses the same migration actor (postgres).
+GRANT investing_bl2bl3_owner TO postgres WITH SET TRUE, INHERIT FALSE;
+GRANT CREATE ON SCHEMA investing TO investing_bl2bl3_owner;
+
 CREATE OR REPLACE FUNCTION investing.transition_onboarding_revision(
   p_account_id uuid, p_revision_id text, p_actor_user_id text,
   p_expected_status text, p_next_status text
@@ -349,6 +357,10 @@ CREATE CONSTRAINT TRIGGER onboarding_revision_commit_guard
 AFTER INSERT OR UPDATE OR DELETE ON investing.onboarding_revisions
 DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW EXECUTE FUNCTION investing.validate_onboarding_revision_commit();
+
+-- No transient ownership-transfer capabilities remain after installation.
+REVOKE CREATE ON SCHEMA investing FROM investing_bl2bl3_owner;
+REVOKE investing_bl2bl3_owner FROM postgres;
 
 -- The private server role is provisioned separately and receives no ledger grants.
 -- Clerk identity is established by the server connection, not by the browser.

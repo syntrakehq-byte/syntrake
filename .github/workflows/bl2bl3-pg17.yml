@@ -55,6 +55,43 @@ jobs:
           psql -v ON_ERROR_STOP=1 -1 -f supabase/release-candidates/20261022210000_r2c_onboarding_intents.sql
           psql -v ON_ERROR_STOP=1 -1 -f supabase/release-candidates/20261023063000_r2c2_first_portfolio.sql
           psql -v ON_ERROR_STOP=1 -1 -f docs/r2/bl2bl3-candidate.sql
+      - name: Verify private function ownership and revoked bootstrap grants
+        run: |
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          DO $audit$
+          DECLARE
+            owner_role oid := 'investing_bl2bl3_owner'::regrole;
+            expected_functions integer;
+          BEGIN
+            IF EXISTS (
+              SELECT 1 FROM pg_auth_members
+              WHERE member='postgres'::regrole AND roleid=owner_role AND set_option
+            ) THEN RAISE EXCEPTION 'TEMPORARY_OWNER_SET_ROLE_LEAK'; END IF;
+            IF has_schema_privilege('investing_bl2bl3_owner','investing','CREATE')
+            THEN RAISE EXCEPTION 'TEMPORARY_SCHEMA_CREATE_LEAK'; END IF;
+            IF EXISTS (
+              SELECT 1 FROM pg_roles
+              WHERE rolname IN ('investing_bl2bl3_owner','investing_bl2bl3_runtime')
+                AND (rolsuper OR rolbypassrls OR rolcanlogin)
+            ) THEN RAISE EXCEPTION 'PRIVILEGED_BL2BL3_ROLE'; END IF;
+            SELECT count(*) INTO expected_functions
+            FROM pg_proc
+            WHERE pronamespace='investing'::regnamespace
+              AND proname IN (
+                'transition_onboarding_revision',
+                'update_onboarding_projection',
+                'guard_onboarding_revision_insert',
+                'reject_onboarding_event_mutation',
+                'validate_onboarding_projection_commit',
+                'validate_onboarding_revision_commit'
+              ) AND proowner=owner_role;
+            IF expected_functions <> 6 THEN
+              RAISE EXCEPTION 'PRIVATE_FUNCTION_OWNER_MISMATCH: %', expected_functions;
+            END IF;
+            RAISE NOTICE 'BL2BL3_OWNER_POSTCONDITIONS_PASS';
+          END
+          $audit$;
+          SQL
       - run: npm run test:investing
       - run: npx tsc --noEmit -p tsconfig.investing.json
       - name: Run PostgreSQL lifecycle, RLS and ownership concurrency tests
