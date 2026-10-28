@@ -358,6 +358,21 @@ AFTER INSERT OR UPDATE OR DELETE ON investing.onboarding_revisions
 DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW EXECUTE FUNCTION investing.validate_onboarding_revision_commit();
 
+-- Supabase managed-postgres migration role is NOT a superuser. After
+-- ALTER FUNCTION OWNER, running REVOKE/GRANT as postgres may not alter
+-- function ACLs despite no SQL error. Run final ACL setup AS THE OWNER.
+-- This also removes the default PUBLIC EXECUTE on new functions.
+SET LOCAL ROLE investing_bl2bl3_owner;
+REVOKE ALL ON FUNCTION investing.transition_onboarding_revision(uuid,text,text,text,text) FROM PUBLIC, anon, authenticated, investing_bl2bl3_runtime;
+REVOKE ALL ON FUNCTION investing.update_onboarding_projection(uuid,uuid,text,bigint,text,bigint) FROM PUBLIC, anon, authenticated, investing_bl2bl3_runtime;
+REVOKE ALL ON FUNCTION investing.guard_onboarding_revision_insert() FROM PUBLIC, anon, authenticated, investing_bl2bl3_runtime;
+REVOKE ALL ON FUNCTION investing.reject_onboarding_event_mutation() FROM PUBLIC, anon, authenticated, investing_bl2bl3_runtime;
+REVOKE ALL ON FUNCTION investing.validate_onboarding_projection_commit() FROM PUBLIC, anon, authenticated, investing_bl2bl3_runtime;
+REVOKE ALL ON FUNCTION investing.validate_onboarding_revision_commit() FROM PUBLIC, anon, authenticated, investing_bl2bl3_runtime;
+GRANT EXECUTE ON FUNCTION investing.transition_onboarding_revision(uuid,text,text,text,text), investing.update_onboarding_projection(uuid,uuid,text,bigint,text,bigint)
+  TO investing_bl2bl3_runtime;
+RESET ROLE;
+
 -- No transient ownership-transfer capabilities remain after installation.
 REVOKE CREATE ON SCHEMA investing FROM investing_bl2bl3_owner;
 REVOKE investing_bl2bl3_owner FROM postgres;

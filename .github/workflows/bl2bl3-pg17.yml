@@ -74,6 +74,26 @@ jobs:
               WHERE rolname IN ('investing_bl2bl3_owner','investing_bl2bl3_runtime')
                 AND (rolsuper OR rolbypassrls OR rolcanlogin)
             ) THEN RAISE EXCEPTION 'PRIVILEGED_BL2BL3_ROLE'; END IF;
+            IF EXISTS (
+              SELECT 1 FROM pg_proc p
+              WHERE p.pronamespace='investing'::regnamespace
+                AND p.proname IN (
+                  'transition_onboarding_revision',
+                  'update_onboarding_projection',
+                  'guard_onboarding_revision_insert',
+                  'reject_onboarding_event_mutation',
+                  'validate_onboarding_projection_commit',
+                  'validate_onboarding_revision_commit'
+                )
+                AND (
+                  has_function_privilege('anon',p.oid,'EXECUTE')
+                  OR has_function_privilege('authenticated',p.oid,'EXECUTE')
+                  OR (
+                    p.proname IN ('transition_onboarding_revision','update_onboarding_projection')
+                    AND NOT has_function_privilege('investing_bl2bl3_runtime',p.oid,'EXECUTE')
+                  )
+                )
+            ) THEN RAISE EXCEPTION 'UNSAFE_PRIVATE_FUNCTION_EXECUTE_GRANTS'; END IF;
             SELECT count(*) INTO expected_functions
             FROM pg_proc
             WHERE pronamespace='investing'::regnamespace
