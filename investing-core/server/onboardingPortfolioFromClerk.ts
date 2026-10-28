@@ -34,7 +34,7 @@ export function isOnboardingPortfolioPreviewReady(env: ServerEnv): boolean {
     // transaction-scoped advisory locks, and COMMIT-time constraint triggers.
     const poolerHost = env.SYNTRAKE_ONBOARDING_POOLER_HOST;
     return db.protocol === "postgresql:" &&
-      !!poolerHost && /^aws-[0-9]+-eu-west-3\\.pooler\\.supabase\\.com$/.test(poolerHost) &&
+      !!poolerHost && /^aws-[0-9]+-eu-west-3\.pooler\.supabase\.com$/.test(poolerHost) &&
       db.hostname === poolerHost &&
       db.port === "5432" && db.pathname === "/postgres" &&
       decodeURIComponent(db.username) === PRIVATE_LOGIN + "." + ref &&
