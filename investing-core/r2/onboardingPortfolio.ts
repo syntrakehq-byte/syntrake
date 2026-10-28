@@ -54,7 +54,7 @@ export type OnboardingRevision = Readonly<{
 }>;
 export type PortfolioRecord = Readonly<{
   portfolioId: string; accountId: string; ownerUserId: string; name: string;
-  currentRevisionId: string; revisionIds: readonly string[]; version: number;
+  currentRevisionId: string | null; revisionIds: readonly string[]; version: number;
 }>;
 
 export type Transaction = Readonly<{
@@ -66,7 +66,6 @@ export type Transaction = Readonly<{
   appendRevision(revision: OnboardingRevision): Promise<void>;
   /** Atomically updates the current projection and appends one immutable transition event. */
   transitionRevision(accountId: string, revisionId: string, actorUserId: string, expected: RevisionLifecycle, next: RevisionLifecycle): Promise<{ revision: OnboardingRevision; transition: LifecycleTransition }>;
-  insertPortfolio(portfolio: PortfolioRecord): Promise<void>;
   updatePortfolio(expectedVersion: number, expectedRevisionId: string | null, portfolio: PortfolioRecord): Promise<boolean>;
 }>;
 /** Must map to PostgreSQL BEGIN/COMMIT/ROLLBACK plus account-row locking. */
@@ -93,10 +92,20 @@ function verifiedCapital(raw: unknown): VerifiedCapital | null {
   if (raw === null) return null;
   return verifiedCapitalSchema.parse(raw);
 }
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    return `{${Object.keys(value as Record<string, unknown>).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson((value as Record<string, unknown>)[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
 
 export function createOnboardingService(repo: PortfolioRepository, resolveActor: ActorResolver) {
   async function owned(tx: Transaction, accountId: string, actor: AuthenticatedActor): Promise<OwnedAccount> {
-    const account = await tx.resolveOwnedAccount(uuid.parse(accountId));
+    // Keep the validated UUID in its canonical string form for the PostgreSQL
+    // adapter; uuid.parse() returns a byte array, which the pg driver binds as
+    // text and makes PostgreSQL resolve uuid = text.
+    const account = await tx.resolveOwnedAccount(accountId);
     if (!account || account.ownerUserId !== actor.userId) throw new Error("ACCOUNT_NOT_OWNED");
     return account;
   }
@@ -104,7 +113,7 @@ export function createOnboardingService(repo: PortfolioRepository, resolveActor:
     const key = idempotencyKey.parse(request.idempotencyKey);
     const existing = await tx.getRevisionByIdempotency(accountId, actor.userId, key);
     if (existing) {
-      if (JSON.stringify(existing.input) !== JSON.stringify(parsed)) throw new Error("IDEMPOTENCY_CONFLICT");
+      if (canonicalJson(existing.input) !== canonicalJson(parsed)) throw new Error("IDEMPOTENCY_CONFLICT");
       if (existing.accountId !== accountId || existing.actorUserId !== actor.userId) throw new Error("REVISION_OWNERSHIP_MISMATCH");
       return existing;
     }
@@ -131,26 +140,25 @@ export function createOnboardingService(repo: PortfolioRepository, resolveActor:
   }
   return {
     upsertRevision,
-    async createOrRecoverPortfolio(accountId: string, revisionIdToUse: string, portfolio: Readonly<{ portfolioId: string; name: string }>) {
+    /**
+     * R2-C2 owns structural portfolio creation. This operation only attaches
+     * and applies the first revision to the already-existing canonical
+     * portfolio; it never inserts a portfolio.
+     */
+    async createOrRecoverPortfolio(accountId: string, revisionIdToUse: string) {
       const actor = validActor(await resolveActor());
       return repo.transaction(async (tx) => {
         await owned(tx, accountId, actor);
         const canonical = await tx.getRevision(accountId, actor.userId, revisionId.parse(revisionIdToUse));
         if (!canonical) throw new Error("REVISION_NOT_FOUND");
         const existing = await tx.getPortfolio(accountId, actor.userId);
-        if (existing) {
-          if (existing.currentRevisionId !== canonical.revisionId) throw new Error("PORTFOLIO_ALREADY_EXISTS");
-          if (canonical.lifecycle.status !== "APPLIED") throw new Error("INVALID_REVISION_STATE");
-          return existing;
-        }
+        if (!existing) throw new Error("PORTFOLIO_NOT_FOUND");
+        if (existing.currentRevisionId === canonical.revisionId && canonical.lifecycle.status === "APPLIED") return existing;
+        if (existing.currentRevisionId !== null) throw new Error("PORTFOLIO_ALREADY_EXISTS");
         if (canonical.lifecycle.status !== "PENDING" || canonical.supersedes !== null) throw new Error("INVALID_REVISION_STATE");
         const applied = await tx.transitionRevision(accountId, canonical.revisionId, actor.userId, "PENDING", "APPLIED");
-        const result: PortfolioRecord = {
-          portfolioId: uuid.parse(portfolio.portfolioId), accountId, ownerUserId: actor.userId,
-          name: portfolio.name.trim() || "Investing portfolio",
-          currentRevisionId: applied.revision.revisionId, revisionIds: [applied.revision.revisionId], version: 1,
-        };
-        await tx.insertPortfolio(result);
+        const result: PortfolioRecord = { ...existing, currentRevisionId: applied.revision.revisionId, revisionIds: [applied.revision.revisionId], version: 1 };
+        if (!await tx.updatePortfolio(existing.version, null, result)) throw new Error("STALE_REVISION");
         return result;
       });
     },
@@ -160,17 +168,19 @@ export function createOnboardingService(repo: PortfolioRepository, resolveActor:
         await owned(tx, accountId, actor);
         const current = await tx.getPortfolio(accountId, actor.userId);
         if (!current) throw new Error("PORTFOLIO_NOT_FOUND");
+        const currentRevisionId = current.currentRevisionId;
+        if (!currentRevisionId) throw new Error("NO_APPLIED_REVISION");
         const revision = await createRevision(tx, accountId, actor, parsed, request, current);
-        if (revision.lifecycle.status === "APPLIED" && current.currentRevisionId === revision.revisionId) return current;
-        if (revision.lifecycle.status !== "PENDING" || revision.supersedes !== current.currentRevisionId) throw new Error("STALE_REVISION");
+        if (revision.lifecycle.status === "APPLIED" && currentRevisionId === revision.revisionId) return current;
+        if (revision.lifecycle.status !== "PENDING" || revision.supersedes !== currentRevisionId) throw new Error("STALE_REVISION");
         const applied = await tx.transitionRevision(accountId, revision.revisionId, actor.userId, "PENDING", "APPLIED");
-        const previous = await tx.transitionRevision(accountId, current.currentRevisionId, actor.userId, "APPLIED", "SUPERSEDED");
-        if (previous.revision.revisionId !== current.currentRevisionId) throw new Error("STALE_REVISION");
+        const previous = await tx.transitionRevision(accountId, currentRevisionId, actor.userId, "APPLIED", "SUPERSEDED");
+        if (previous.revision.revisionId !== currentRevisionId) throw new Error("STALE_REVISION");
         const next: PortfolioRecord = {
           ...current, currentRevisionId: applied.revision.revisionId,
           revisionIds: [...current.revisionIds, applied.revision.revisionId], version: current.version + 1,
         };
-        if (!await tx.updatePortfolio(current.version, current.currentRevisionId, next)) throw new Error("STALE_REVISION");
+        if (!await tx.updatePortfolio(current.version, currentRevisionId, next)) throw new Error("STALE_REVISION");
         return next;
       });
     },

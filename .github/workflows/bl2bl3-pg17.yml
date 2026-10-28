@@ -1,0 +1,61 @@
+name: BL2/BL3 PostgreSQL 17
+
+on:
+  push:
+    branches: [feat/bl2bl3-canonical-draft]
+  pull_request:
+    branches: [candidate/investing-r2-bl2-bl3-domain-20261025]
+    paths:
+      - investing-core/**
+      - docs/r2/**
+      - supabase/release-candidates/20261020180000_investing_first_readonly_release.sql
+      - supabase/release-candidates/20261022200000_r2b_unverified_portfolio_imports.sql
+      - supabase/release-candidates/20261022210000_r2c_onboarding_intents.sql
+      - supabase/release-candidates/20261023063000_r2c2_first_portfolio.sql
+      - .github/workflows/bl2bl3-pg17.yml
+      - package.json
+      - package-lock.json
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: syntrake_bl2bl3_ci
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d syntrake_bl2bl3_ci"
+          --health-interval 10s --health-timeout 5s --health-retries 10
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: syntrake_bl2bl3_ci
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Prepare local auth harness
+        run: |
+          psql -v ON_ERROR_STOP=1 -1 -c "CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN; CREATE SCHEMA auth; CREATE FUNCTION auth.jwt() RETURNS jsonb LANGUAGE sql STABLE AS $$ SELECT '{}'::jsonb $$;"
+      - name: Apply canonical baseline and candidate
+        run: |
+          psql -v ON_ERROR_STOP=1 -1 -f supabase/release-candidates/20261020180000_investing_first_readonly_release.sql
+          psql -v ON_ERROR_STOP=1 -1 -f supabase/release-candidates/20261022200000_r2b_unverified_portfolio_imports.sql
+          psql -v ON_ERROR_STOP=1 -1 -f supabase/release-candidates/20261022210000_r2c_onboarding_intents.sql
+          psql -v ON_ERROR_STOP=1 -1 -f supabase/release-candidates/20261023063000_r2c2_first_portfolio.sql
+          psql -v ON_ERROR_STOP=1 -1 -f docs/r2/bl2bl3-candidate.sql
+      - run: npm run test:investing
+      - run: npx tsc --noEmit -p tsconfig.investing.json
+      - name: Run PostgreSQL lifecycle, RLS and ownership concurrency tests
+        run: npx tsx docs/r2/bl2bl3-pg-runner.ts

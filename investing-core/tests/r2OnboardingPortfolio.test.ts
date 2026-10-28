@@ -10,10 +10,10 @@ const actor = { userId: "user-a", sessionId: "session-a" };
 const request = (n: string) => ({ revisionId: "revision-" + n.padStart(8, "0"), idempotencyKey: "onboarding-" + n.padStart(8, "0") });
 const input = { declaredCapital: { currency: "EUR", amountMinor: "100000" }, objectives: [{ id: "objective-00000001", name: "Retirement", targetMinor: null, currency: "EUR", targetDate: null }], horizon: "LONG", riskTolerance: "MEDIUM", riskCapacity: "LOW", liquidity: { currency: "EUR", minimumMinor: null, needsWithinDays: null }, restrictions: ["No leveraged products"], plannedContributions: [{ id: "contribution-000001", currency: "EUR", amountMinor: "50000", dueDate: "2027-01-01" }] };
 
-type TestRepo = PortfolioRepository & { readonly revisions: readonly OnboardingRevision[]; readonly portfolios: readonly PortfolioRecord[]; readonly transitions: readonly LifecycleTransition[]; failNextInsert(): void; failNextUpdate(): void; enableOverlap(): void; };
+type TestRepo = PortfolioRepository & { readonly revisions: readonly OnboardingRevision[]; readonly portfolios: readonly PortfolioRecord[]; readonly transitions: readonly LifecycleTransition[]; seedStructural(accountId?: string, portfolioId?: string, ownerUserId?: string): void; failNextUpdate(): void; enableOverlap(): void; };
 function repo(options: { verified?: boolean; malformed?: boolean } = {}): TestRepo {
   const state = { revisions: [] as OnboardingRevision[], portfolios: [] as PortfolioRecord[], transitions: [] as LifecycleTransition[] };
-  let epoch = 0; let failInsert = false; let failUpdate = false; let arrivals = 0; let release!: () => void; let overlapEnabled = false; let gate: Promise<void> | null = null;
+  let epoch = 0; let failUpdate = false; let arrivals = 0; let release!: () => void; let overlapEnabled = false; let gate: Promise<void> | null = null;
   const accounts = [{ id: A, ownerUserId: actor.userId }, { id: B, ownerUserId: "user-b" }, { id: C, ownerUserId: actor.userId }];
   const base = (snap: { revisions: OnboardingRevision[]; portfolios: PortfolioRecord[]; transitions: LifecycleTransition[] }): Transaction => ({
     async resolveOwnedAccount(id) { return accounts.find((x) => x.id === id) ?? null; },
@@ -32,14 +32,13 @@ function repo(options: { verified?: boolean; malformed?: boolean } = {}): TestRe
       const transition = { accountId, revisionId: revision, actorUserId: userId, from: expected, to: next, occurredAt };
       snap.revisions[index] = updated; snap.transitions.push(transition); return { revision: updated, transition };
     },
-    async insertPortfolio(value) { if (failInsert) { failInsert = false; throw new Error("WRITE_FAILED"); } snap.portfolios.push(value); },
     async updatePortfolio(version, expectedRevisionId, value) {
       if (failUpdate) { failUpdate = false; return false; }
       const index = snap.portfolios.findIndex((x) => x.portfolioId === value.portfolioId && x.version === version && x.currentRevisionId === expectedRevisionId);
       if (index < 0) return false; snap.portfolios[index] = value; return true;
     },
   });
-  const result = { failNextInsert() { failInsert = true; }, failNextUpdate() { failUpdate = true; }, enableOverlap() { overlapEnabled = true; gate = new Promise<void>((resolve) => { release = resolve; }); }, async transaction<T>(work: (tx: Transaction) => Promise<T>) {
+  const result = { seedStructural(accountId = A, portfolioId = P, ownerUserId = actor.userId) { state.portfolios.push({ portfolioId, accountId, ownerUserId, name: "R2-C2 portfolio", currentRevisionId: null, revisionIds: [], version: 0 }); }, failNextUpdate() { failUpdate = true; }, enableOverlap() { overlapEnabled = true; gate = new Promise<void>((resolve) => { release = resolve; }); }, async transaction<T>(work: (tx: Transaction) => Promise<T>) {
     const baseEpoch = epoch; const snapshot = structuredClone(state); const value = await work(base(snapshot));
     if (overlapEnabled && gate) { arrivals += 1; if (arrivals === 2) release(); await gate; }
     if (baseEpoch !== epoch) throw new Error("SERIALIZATION_CONFLICT");
@@ -54,7 +53,7 @@ async function draft(service: ReturnType<typeof createOnboardingService>, n: str
 }
 async function seeded(service: ReturnType<typeof createOnboardingService>, r: TestRepo) {
   const first = await draft(service, "1");
-  await service.createOrRecoverPortfolio(A, first.revisionId, { portfolioId: P, name: "Long-term" });
+  r.seedStructural(); await service.createOrRecoverPortfolio(A, first.revisionId);
   assert.equal(r.revisions[0].lifecycle.status, "APPLIED");
   return first;
 }
@@ -68,25 +67,25 @@ test("F41-09: onboarding creates a recoverable PENDING draft without active fina
 
 test("F41-09: interrupted draft recovers and promotes atomically", async () => {
   const r = repo(); const service = createOnboardingService(r, async () => actor); const revision = await draft(service, "3");
-  const portfolio = await service.createOrRecoverPortfolio(A, revision.revisionId, { portfolioId: P, name: "Recovered" });
+  r.seedStructural(); const portfolio = await service.createOrRecoverPortfolio(A, revision.revisionId);
   assert.equal(portfolio.currentRevisionId, revision.revisionId); assert.equal(r.revisions[0].lifecycle.status, "APPLIED");
   assert.deepEqual(portfolio.revisionIds, [revision.revisionId]);
 });
 
-test("F41-09: portfolio creation failure rolls back promotion and remains recoverable", async () => {
+test("F41-09: existing R2-C2 portfolio recovers and promotes atomically", async () => {
   const r = repo(); const service = createOnboardingService(r, async () => actor); const revision = await draft(service, "4");
-  r.failNextInsert();
-  await assert.rejects(service.createOrRecoverPortfolio(A, revision.revisionId, { portfolioId: P, name: "Retry" }), /WRITE_FAILED/);
-  assert.equal(r.portfolios.length, 0); assert.equal(r.revisions[0].lifecycle.status, "PENDING");
-  const recovered = await service.createOrRecoverPortfolio(A, revision.revisionId, { portfolioId: P, name: "Retry" });
+  r.seedStructural(); r.failNextUpdate();
+  await assert.rejects(service.createOrRecoverPortfolio(A, revision.revisionId), /STALE_REVISION/);
+  assert.equal(r.portfolios[0].currentRevisionId, null); assert.equal(r.revisions[0].lifecycle.status, "PENDING");
+  const recovered = await service.createOrRecoverPortfolio(A, revision.revisionId);
   assert.equal(recovered.currentRevisionId, revision.revisionId); assert.equal(r.revisions[0].lifecycle.status, "APPLIED");
 });
 
 test("F41-09: two drafts require explicit selection and never imply a portfolio", async () => {
   const r = repo(); const service = createOnboardingService(r, async () => actor); const left = await draft(service, "5"); const right = await draft(service, "6");
   assert.equal(r.portfolios.length, 0);
-  await service.createOrRecoverPortfolio(A, left.revisionId, { portfolioId: P, name: "Selected" });
-  await assert.rejects(service.createOrRecoverPortfolio(A, right.revisionId, { portfolioId: "44444444-4444-4444-8444-444444444444", name: "Implicit" }), /PORTFOLIO_ALREADY_EXISTS/);
+  r.seedStructural(); await service.createOrRecoverPortfolio(A, left.revisionId);
+  await assert.rejects(service.createOrRecoverPortfolio(A, right.revisionId), /PORTFOLIO_ALREADY_EXISTS/);
   assert.equal(r.portfolios[0].currentRevisionId, left.revisionId); assert.equal(r.revisions.find((x) => x.revisionId === right.revisionId)?.lifecycle.status, "PENDING");
 });
 
@@ -96,7 +95,7 @@ test("F41-10: transitions are account-scoped even when revision IDs collide", as
   const sharedC = await service.upsertRevision(C, input, { revisionId: "revision-shared-0001", idempotencyKey: "onboarding-shared-c1" });
   const onlyC = await service.upsertRevision(C, input, { revisionId: "revision-only-c0001", idempotencyKey: "onboarding-only-c1" });
   await assert.rejects(service.abandonRevision(A, onlyC.revisionId), /REVISION_NOT_FOUND/);
-  await service.createOrRecoverPortfolio(C, sharedC.revisionId, { portfolioId: P, name: "C portfolio" });
+  r.seedStructural(C, P, actor.userId); await service.createOrRecoverPortfolio(C, sharedC.revisionId);
   await service.abandonRevision(A, sharedA.revisionId);
   assert.equal(r.revisions.find((x) => x.accountId === A && x.revisionId === sharedA.revisionId)?.lifecycle.status, "ABANDONED");
   assert.equal(r.revisions.find((x) => x.accountId === C && x.revisionId === sharedC.revisionId)?.lifecycle.status, "APPLIED");
@@ -151,13 +150,22 @@ test("F41-09: only explicit authorized PENDING abandonment is allowed", async ()
   const r = repo(); const service = createOnboardingService(r, async () => actor); const pending = await draft(service, "12");
   const abandoned = await service.abandonRevision(A, pending.revisionId);
   assert.equal(abandoned.lifecycle.status, "ABANDONED");
-  await assert.rejects(service.createOrRecoverPortfolio(A, pending.revisionId, { portfolioId: P, name: "No" }), /INVALID_REVISION_STATE/);
+  r.seedStructural(); await assert.rejects(service.createOrRecoverPortfolio(A, pending.revisionId), /INVALID_REVISION_STATE/);
   await assert.rejects(service.abandonRevision(A, pending.revisionId), /INVALID_REVISION_TRANSITION/);
-  await assert.rejects(service.applyCorrection(A, input, request("12")), /PORTFOLIO_NOT_FOUND/);
+  const revisionCount = r.revisions.length;
+  await assert.rejects(service.applyCorrection(A, input, request("12")), /NO_APPLIED_REVISION/);
+  assert.equal(r.revisions.length, revisionCount);
   assertRevisionTransition("PENDING", "APPLIED");
   assertRevisionTransition("APPLIED", "SUPERSEDED");
   assertRevisionTransition("PENDING", "ABANDONED");
   for (const [from, to] of [["ABANDONED", "APPLIED"], ["SUPERSEDED", "APPLIED"], ["APPLIED", "ABANDONED"]] as const) assert.throws(() => assertRevisionTransition(from, to), /INVALID_REVISION_TRANSITION/);
+});
+
+test("F41-09: correction requires the structural R2-C2 portfolio", async () => {
+  const r = repo(); const service = createOnboardingService(r, async () => actor);
+  await draft(service, "12-no-portfolio");
+  await assert.rejects(service.applyCorrection(A, input, request("13-no-portfolio")), /PORTFOLIO_NOT_FOUND/);
+  assert.equal(r.revisions.length, 1);
 });
 
 test("F41-01/F41-02/F41-04/F41-05: source, authorization and strict input remain fail-closed", async () => {
