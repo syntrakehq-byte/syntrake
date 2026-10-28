@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 const projectRequire = createRequire(new URL("../../package.json", import.meta.url));
 const { Pool } = projectRequire("pg") as typeof import("pg");
-import { initializeFirstInvestingPortfolio } from "../../investing-core/server/initializeFirstPortfolio.ts";
-import { createOnboardingService } from "../../investing-core/r2/onboardingPortfolio.ts";
-import { createPostgresPortfolioRepository } from "../../investing-core/server/postgresPortfolioRepository.ts";
+import { initializeFirstInvestingPortfolio } from "../../investing-core/server/initializeFirstPortfolio";
+import { createOnboardingService } from "../../investing-core/r2/onboardingPortfolio";
+import { createPostgresPortfolioRepository } from "../../investing-core/server/postgresPortfolioRepository";
 
 const pool = new Pool({ max: 6 });
 const A = { userId: "user_pg6_a", sessionId: "session-a" };
