@@ -3,7 +3,7 @@ import { auth } from "@clerk/nextjs/server";
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import { resolveRequestSiteLang } from "@/lib/i18n/requestSiteLang";
-import { isR2CPreviewEnabled } from "@/investing-core/server/onboardingTransport";
+import { isR2COperationalReady } from "@/investing-core/server/onboardingTransport";
 import { inspectOwnExistingInvestingAccounts } from "@/investing-core/server/existingAccountReview";
 import { isR2DImportReady } from "@/investing-core/server/importPreviewRuntime";
 
@@ -62,7 +62,7 @@ const copy = {
 export default async function ExistingInvestingAccountsPage({
   searchParams,
 }: { searchParams?: Promise<{ lang?: string }> | { lang?: string } }) {
-  if (!isR2CPreviewEnabled(process.env)) notFound();
+  if (!isR2COperationalReady(process.env)) notFound();
   const session = await auth();
   if (!session.userId || !session.sessionId) {
     redirect("/sign-in?redirect_url=%2Finvesting%2Fexisting");
