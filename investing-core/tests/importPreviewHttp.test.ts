@@ -8,12 +8,12 @@ const env={
   INVESTING_R2_APPROVED_PREVIEW_SHA:"1111111111111111111111111111111111111111",
   INVESTING_R2C_PREVIEW_MODE:"enabled",
   SYNTRAKE_ONBOARDING_PREVIEW_PROJECT_REF:"aaaaaaaaaaaaaaaaaaaa",
-  INVESTING_R2C_SUPABASE_PROJECT_REF:"zkqgpejlkgootkvkebhd",
   NEXT_PUBLIC_SUPABASE_URL:"https://aaaaaaaaaaaaaaaaaaaa.supabase.co",
   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:"sb_publishable_ci_key_1234567890",
   INVESTING_R2D_IMPORT_ENABLED:"enabled",
-  INVESTING_R2D_PROJECT_REF:"zkqgpejlkgootkvkebhd",
-  INVESTING_R2D_PG_DSN:"postgresql://investing_import_preview_runtime:ci_dummy@db.zkqgpejlkgootkvkebhd.supabase.co:5432/postgres",
+  INVESTING_R2D_PROJECT_REF:"aaaaaaaaaaaaaaaaaaaa",
+  INVESTING_R2D_POOLER_HOST:"aws-1-eu-west-3.pooler.supabase.com",
+  INVESTING_R2D_PG_DSN:"postgresql://investing_import_preview_login.aaaaaaaaaaaaaaaaaaaa:ci_dummy@aws-1-eu-west-3.pooler.supabase.com:5432/postgres",
   INVESTING_R2D_PG_CA_PEM:"-----BEGIN CERTIFICATE-----\\nCI_NOT_REAL\\n-----END CERTIFICATE-----",
 };
 const url="https://preview.example/api/investing/portfolio/import";
@@ -33,17 +33,25 @@ function post(payload:unknown,origin="https://preview.example"):Request{
     body:JSON.stringify(payload)});
 }
 const noDb=()=>{throw new Error("PRIVATE_PG_CREDENTIAL_MUST_NOT_BE_READ")};
-test("R2-D gated by exact Preview branch/ref, dedicated NOLOGIN runtime and trusted TLS",()=>{
+test("R2-D: exact SHA, isolated project, distinct NOINHERIT login, Session Pooler, TLS",()=>{
   assert.equal(isR2DImportReady(env),true);
   for(const x of [
     {...env,VERCEL_ENV:"production"},{...env,VERCEL_GIT_COMMIT_REF:"main"},
     {...env,INVESTING_R2D_IMPORT_ENABLED:"disabled"},
     {...env,INVESTING_R2D_PROJECT_REF:"vbazzxqyuqcrmjytaboc"},
+    {...env,SYNTRAKE_ONBOARDING_PREVIEW_PROJECT_REF:"vbazzxqyuqcrmjytaboc"},
+    {...env,INVESTING_R2D_PROJECT_REF:"bbbbbbbbbbbbbbbbbbbb"},
+    {...env,INVESTING_R2D_POOLER_HOST:""},
+    {...env,INVESTING_R2D_POOLER_HOST:"db.aaaaaaaaaaaaaaaaaaaa.supabase.co"},
+    {...env,VERCEL_GIT_COMMIT_SHA:"2222222222222222222222222222222222222222"},
     {...env,NEXT_PUBLIC_SUPABASE_URL:"https://vbazzxqyuqcrmjytaboc.supabase.co"},
     {...env,INVESTING_R2D_PG_CA_PEM:""},
-    {...env,INVESTING_R2D_PG_DSN:"postgresql://postgres:root@db.zkqgpejlkgootkvkebhd.supabase.co:5432/postgres"},
-    {...env,INVESTING_R2D_PG_DSN:"postgresql://investing_import_preview_runtime:pw@db.vbazzxqyuqcrmjytaboc.supabase.co:5432/postgres"},
-    {...env,INVESTING_R2D_PG_DSN:"postgresql://investing_import_preview_runtime:pw@db.zkqgpejlkgootkvkebhd.supabase.co:5432/postgres?sslmode=disable"},
+    {...env,INVESTING_R2D_PG_DSN:"postgresql://postgres:root@aws-1-eu-west-3.pooler.supabase.com:5432/postgres"},
+    {...env,INVESTING_R2D_PG_DSN:"postgresql://investing_import_preview_login.vbazzxqyuqcrmjytaboc:pw@aws-1-eu-west-3.pooler.supabase.com:5432/postgres"},
+    {...env,INVESTING_R2D_PG_DSN:"postgresql://investing_import_preview_login.aaaaaaaaaaaaaaaaaaaa:pw@aws-1-eu-west-3.pooler.supabase.com:5432/postgres?sslmode=disable"},
+    {...env,INVESTING_R2D_PG_DSN:"postgresql://investing_import_preview_login.aaaaaaaaaaaaaaaaaaaa:pw@aws-1-eu-west-3.pooler.supabase.com:6543/postgres"},
+    {...env,INVESTING_R2D_PG_DSN:"postgresql://investing_import_preview_runtime:pw@aws-1-eu-west-3.pooler.supabase.com:5432/postgres"},
+    {...env,INVESTING_R2D_PG_DSN:"postgresql://investing_import_preview_login.aaaaaaaaaaaaaaaaaaaa:pw@db.aaaaaaaaaaaaaaaaaaaa.supabase.co:5432/postgres"},
   ])assert.equal(isR2DImportReady(x),false);
 });
 test("R2-D Production/cross-origin/forged body never reaches database",async()=>{
