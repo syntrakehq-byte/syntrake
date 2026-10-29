@@ -162,17 +162,15 @@ test("R2-C2 real PG17: atomic, owner-scoped initial portfolio under dedicated NO
   await t.test("R2-C4 private HTTP→Clerk actor→PG17 replay preserves account IDs, no ledger writes",async()=>{
     const environment={
       VERCEL_ENV:"preview",
-      VERCEL_GIT_COMMIT_REF:"candidate/investing-r2-preview-security-compat-20261024",
+      VERCEL_GIT_COMMIT_REF:"feat/bl2bl3-canonical-draft",
       VERCEL_GIT_COMMIT_SHA:"1111111111111111111111111111111111111111",
-      INVESTING_R2_APPROVED_PREVIEW_SHA:"1111111111111111111111111111111111111111",
-      INVESTING_R2C_PREVIEW_MODE:"enabled",
-      INVESTING_R2C_SUPABASE_PROJECT_REF:"zkqgpejlkgootkvkebhd",
-      NEXT_PUBLIC_SUPABASE_URL:"https://zkqgpejlkgootkvkebhd.supabase.co",
-      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:"sb_publishable_ci_key_1234567890",
-      INVESTING_R2C4_PRIVATE_WRITE:"enabled",
-      INVESTING_R2C4_PROJECT_REF:"zkqgpejlkgootkvkebhd",
-      INVESTING_R2C4_PG_DSN:"postgresql://investing_initial_preview_runtime:ci@db.zkqgpejlkgootkvkebhd.supabase.co:5432/postgres",
-      INVESTING_R2C4_PG_CA_PEM:"-----BEGIN CERTIFICATE-----\\nCI_DUMMY\\n-----END CERTIFICATE-----",
+      SYNTRAKE_ONBOARDING_APPROVED_PREVIEW_SHA:"1111111111111111111111111111111111111111",
+      SYNTRAKE_R2C2_PG_ENABLED:"enabled",
+      SYNTRAKE_ONBOARDING_PREVIEW_PROJECT_REF:"aaaaaaaaaaaaaaaaaaaa",
+      NEXT_PUBLIC_SUPABASE_URL:"https://aaaaaaaaaaaaaaaaaaaa.supabase.co",
+      SYNTRAKE_R2C2_POOLER_HOST:"aws-0-eu-west-3.pooler.supabase.com",
+      SYNTRAKE_R2C2_DATABASE_URL:"postgresql://investing_initial_provisioner_preview_login.aaaaaaaaaaaaaaaaaaaa:ci@aws-0-eu-west-3.pooler.supabase.com:5432/postgres",
+      SYNTRAKE_R2C2_PG_CA_PEM:"-----BEGIN CERTIFICATE-----\\nCI_DUMMY\\n-----END CERTIFICATE-----",
     };
     const endpoint="https://preview.example/api/investing/portfolio/initialize";
     const send=async(actor:{userId:string|null;sessionId:string|null},

@@ -10,10 +10,11 @@ const env={
   VERCEL_ENV:"preview",
   VERCEL_GIT_COMMIT_REF:"candidate/investing-r2f-clerk-rls-ab-gate-20261024",
   VERCEL_GIT_COMMIT_SHA:SHA,
+  SYNTRAKE_ONBOARDING_APPROVED_PREVIEW_SHA:SHA,
   INVESTING_R2_APPROVED_PREVIEW_SHA:SHA,
   INVESTING_R2C_PREVIEW_MODE:"enabled",
-  INVESTING_R2C_SUPABASE_PROJECT_REF:"zkqgpejlkgootkvkebhd",
-  NEXT_PUBLIC_SUPABASE_URL:"https://zkqgpejlkgootkvkebhd.supabase.co",
+  SYNTRAKE_ONBOARDING_PREVIEW_PROJECT_REF:"aaaaaaaaaaaaaaaaaaaa",
+  NEXT_PUBLIC_SUPABASE_URL:"https://aaaaaaaaaaaaaaaaaaaa.supabase.co",
   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:"sb_publishable_test_1234567890",
   INVESTING_R2C4_PRIVATE_WRITE:"enabled",
   INVESTING_R2C4_PROJECT_REF:"zkqgpejlkgootkvkebhd",
@@ -24,6 +25,20 @@ const env={
   INVESTING_R2D_PG_DSN:"postgresql://investing_import_preview_runtime:ci_placeholder@db.zkqgpejlkgootkvkebhd.supabase.co:5432/postgres",
   INVESTING_R2D_PG_CA_PEM:"-----BEGIN CERTIFICATE-----\\nCI_DUMMY\\n-----END CERTIFICATE-----",
 };
+const canonicalEnv={
+  ...env,
+  VERCEL_GIT_COMMIT_REF:"feat/bl2bl3-canonical-draft",
+  SYNTRAKE_ONBOARDING_PG_ENABLED:"enabled",
+  SYNTRAKE_ONBOARDING_PREVIEW_PROJECT_REF:"aaaaaaaaaaaaaaaaaaaa",
+  NEXT_PUBLIC_SUPABASE_URL:"https://aaaaaaaaaaaaaaaaaaaa.supabase.co",
+  SYNTRAKE_ONBOARDING_POOLER_HOST:"aws-0-eu-west-3.pooler.supabase.com",
+  SYNTRAKE_ONBOARDING_DATABASE_URL:"postgresql://investing_bl2bl3_preview_login.aaaaaaaaaaaaaaaaaaaa:dummy@aws-0-eu-west-3.pooler.supabase.com:5432/postgres",
+  SYNTRAKE_ONBOARDING_PG_CA_PEM:"-----BEGIN CERTIFICATE-----\\nCI_DUMMY\\n-----END CERTIFICATE-----",
+  SYNTRAKE_R2C2_PG_ENABLED:"enabled",
+  SYNTRAKE_R2C2_POOLER_HOST:"aws-0-eu-west-3.pooler.supabase.com",
+  SYNTRAKE_R2C2_DATABASE_URL:"postgresql://investing_initial_provisioner_preview_login.aaaaaaaaaaaaaaaaaaaa:dummy@aws-0-eu-west-3.pooler.supabase.com:5432/postgres",
+  SYNTRAKE_R2C2_PG_CA_PEM:"-----BEGIN CERTIFICATE-----\\nCI_DUMMY\\n-----END CERTIFICATE-----",
+};
 test("R2 exact-SHA gate: distinct candidate branch names are not hardcoded, only reviewed commit is authorized",()=>{
  for(const branch of [
   "candidate/investing-r2f-clerk-rls-ab-gate-20261024",
@@ -33,7 +48,7 @@ test("R2 exact-SHA gate: distinct candidate branch names are not hardcoded, only
    ...env,VERCEL_GIT_COMMIT_REF:branch,
  }),true);
  assert.equal(isR2CPreviewEnabled(env),true);
- assert.equal(isR2C4PrivateWriteReady(env),true);
+ assert.equal(isR2C4PrivateWriteReady(canonicalEnv),true);
  assert.equal(isR2DImportReady(env),true);
 });
 test("R2 fail closed on unapproved SHA, malformed/old git metadata, Production and absent token",()=>{

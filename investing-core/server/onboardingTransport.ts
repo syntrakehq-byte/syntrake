@@ -1,7 +1,6 @@
 import { onboardingCommandSchema, onboardingFingerprint, parseStoredOnboardingRow,
   type OnboardingEvent, type OnboardingCommand } from "../onboarding/onboardingIntent";
 
-export const R2C_PREVIEW_PROJECT = "zkqgpejlkgootkvkebhd";
 import {isApprovedR2PreviewDeployment} from "./previewDeploymentGate";
 type Config = Readonly<Record<string,string | undefined>>;
 type ClerkActor = Readonly<{
@@ -18,10 +17,13 @@ export class OnboardingBlocked extends Error {
   }
 }
 export function isR2CPreviewEnabled(env:Config): boolean {
+  const projectRef=env.SYNTRAKE_ONBOARDING_PREVIEW_PROJECT_REF;
+  const projectUrl=projectRef?"https://"+projectRef+".supabase.co":"";
   return isApprovedR2PreviewDeployment(env)
     && env.INVESTING_R2C_PREVIEW_MODE==="enabled"
-    && env.INVESTING_R2C_SUPABASE_PROJECT_REF===R2C_PREVIEW_PROJECT
-    && env.NEXT_PUBLIC_SUPABASE_URL==="https://"+R2C_PREVIEW_PROJECT+".supabase.co"
+    && !!projectRef
+    && /^[a-z0-9]{20}$/.test(projectRef)
+    && env.NEXT_PUBLIC_SUPABASE_URL===projectUrl
     && /^sb_publishable_[A-Za-z0-9_-]{10,}$/.test(env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY||"");
 }
 export const onboardingHeaders=Object.freeze({
