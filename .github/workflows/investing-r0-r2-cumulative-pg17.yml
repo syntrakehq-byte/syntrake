@@ -1,0 +1,45 @@
+name: investing-r0-r2-cumulative-pg17
+
+on:
+  pull_request:
+    paths:
+      - "investing-core/**"
+      - "supabase/release-candidates/**"
+      - "docs/r2/bl2bl3-candidate.sql"
+      - ".github/workflows/investing-r0-r2-cumulative-pg17.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cumulative-disposable-pg17:
+    name: R0 to R2 full SQL stack, isolated real PG17, NO Production or external secrets
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: syntrake_r0_r2_cumulative_ci
+        ports:
+          - "5432:5432"
+        options: >-
+          --health-cmd="pg_isready -U postgres -d syntrake_r0_r2_cumulative_ci"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    env:
+      CI: "true"
+      INVESTING_PG17_R0_R2_CUMULATIVE_URL: "postgresql://postgres:postgres@127.0.0.1:5432/syntrake_r0_r2_cumulative_ci"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci
+      - name: R0–R2 all four SQL candidates together, three private logins, A/B, import, revisions and immutable ledger
+        run: npx tsx --test investing-core/tests/pg17-r0-r2-cumulative.test.ts
