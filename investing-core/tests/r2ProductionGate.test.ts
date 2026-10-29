@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import test from "node:test";
 import {
   isR2ProductionBaseReady, isR2ProductionIntentReady,
@@ -124,4 +126,13 @@ test("R2 Production onboarding and existing account HTTP read gates are enabled 
     {...env,SYNTRAKE_R2C_PRODUCTION_ENABLED:"disabled"},actor,
     async()=>{throw new Error("must not fetch");});
   assert.equal(blocked.status,404);
+});
+
+// Regression: HTTP gates may pass in Production while their SSR pages still 404.
+test("Production SSR pages must not be Preview-only", () => {
+  for (const route of ["start", "existing"]) {
+    const source = readFileSync(join(process.cwd(), "app", "investing", route, "page.tsx"), "utf8");
+    assert.match(source, /isR2COperationalReady\(process\.env\)/);
+    assert.doesNotMatch(source, /isR2CPreviewEnabled/);
+  }
 });
