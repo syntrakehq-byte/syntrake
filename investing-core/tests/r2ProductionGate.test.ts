@@ -86,7 +86,7 @@ test("All three private Production login pools are independent and TLS-strict",(
     {...env,SYNTRAKE_R2_PRODUCTION_POOLER_HOST:"db."+ref+".supabase.co"},
     {...env,SYNTRAKE_R2_PRODUCTION_POOLER_HOST:host+".attacker.example"},
     {...env,SYNTRAKE_R2_PRODUCTION_POOLER_HOST:""},
-  ])assert.equal(["r2c2","bl2bl3","import"].every(c=>isR2ProductionDbReady(x,c)),false);
+  ])assert.equal((["r2c2","bl2bl3","import"] as const).every(c=>isR2ProductionDbReady(x,c)),false);
   for(const wrong of [
     "postgresql://postgres:secret@"+host+":5432/postgres",
     "postgresql://investing_initial_provisioner_prod_login."+ref+":pw@"+host+":6543/postgres",
