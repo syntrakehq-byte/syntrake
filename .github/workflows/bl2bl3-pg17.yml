@@ -1,0 +1,118 @@
+name: BL2/BL3 PostgreSQL 17
+
+on:
+  push:
+    branches: [feat/bl2bl3-canonical-draft]
+  pull_request:
+    branches: [candidate/investing-r2-bl2-bl3-domain-20261025]
+    paths:
+      - investing-core/**
+      - docs/r2/**
+      - supabase/release-candidates/20261020180000_investing_first_readonly_release.sql
+      - supabase/release-candidates/20261022200000_r2b_unverified_portfolio_imports.sql
+      - supabase/release-candidates/20261022210000_r2c_onboarding_intents.sql
+      - supabase/release-candidates/20261023063000_r2c2_first_portfolio.sql
+      - .github/workflows/bl2bl3-pg17.yml
+      - package.json
+      - package-lock.json
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: syntrake_bl2bl3_ci
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d syntrake_bl2bl3_ci"
+          --health-interval 10s --health-timeout 5s --health-retries 10
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: syntrake_bl2bl3_ci
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Prepare local auth harness
+        run: |
+          psql -v ON_ERROR_STOP=1 -1 -c "CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN; CREATE SCHEMA auth; CREATE FUNCTION auth.jwt() RETURNS jsonb LANGUAGE sql STABLE AS \$\$ SELECT '{}'::jsonb \$\$;"
+      - name: Apply canonical baseline and candidate
+        run: |
+          psql -v ON_ERROR_STOP=1 -1 -f supabase/release-candidates/20261020180000_investing_first_readonly_release.sql
+          psql -v ON_ERROR_STOP=1 -1 -f supabase/release-candidates/20261022200000_r2b_unverified_portfolio_imports.sql
+          psql -v ON_ERROR_STOP=1 -1 -f supabase/release-candidates/20261022210000_r2c_onboarding_intents.sql
+          psql -v ON_ERROR_STOP=1 -1 -f supabase/release-candidates/20261023063000_r2c2_first_portfolio.sql
+          psql -v ON_ERROR_STOP=1 -1 -f docs/r2/bl2bl3-candidate.sql
+      - name: Verify private function ownership and revoked bootstrap grants
+        run: |
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          DO $audit$
+          DECLARE
+            owner_role oid := 'investing_bl2bl3_owner'::regrole;
+            expected_functions integer;
+          BEGIN
+            IF EXISTS (
+              SELECT 1 FROM pg_auth_members
+              WHERE member='postgres'::regrole AND roleid=owner_role AND set_option
+            ) THEN RAISE EXCEPTION 'TEMPORARY_OWNER_SET_ROLE_LEAK'; END IF;
+            IF has_schema_privilege('investing_bl2bl3_owner','investing','CREATE')
+            THEN RAISE EXCEPTION 'TEMPORARY_SCHEMA_CREATE_LEAK'; END IF;
+            IF EXISTS (
+              SELECT 1 FROM pg_roles
+              WHERE rolname IN ('investing_bl2bl3_owner','investing_bl2bl3_runtime')
+                AND (rolsuper OR rolbypassrls OR rolcanlogin)
+            ) THEN RAISE EXCEPTION 'PRIVILEGED_BL2BL3_ROLE'; END IF;
+            IF EXISTS (
+              SELECT 1 FROM pg_proc p
+              WHERE p.pronamespace='investing'::regnamespace
+                AND p.proname IN (
+                  'transition_onboarding_revision',
+                  'update_onboarding_projection',
+                  'guard_onboarding_revision_insert',
+                  'reject_onboarding_event_mutation',
+                  'validate_onboarding_projection_commit',
+                  'validate_onboarding_revision_commit'
+                )
+                AND (
+                  has_function_privilege('anon',p.oid,'EXECUTE')
+                  OR has_function_privilege('authenticated',p.oid,'EXECUTE')
+                  OR (
+                    p.proname IN ('transition_onboarding_revision','update_onboarding_projection')
+                    AND NOT has_function_privilege('investing_bl2bl3_runtime',p.oid,'EXECUTE')
+                  )
+                )
+            ) THEN RAISE EXCEPTION 'UNSAFE_PRIVATE_FUNCTION_EXECUTE_GRANTS'; END IF;
+            SELECT count(*) INTO expected_functions
+            FROM pg_proc
+            WHERE pronamespace='investing'::regnamespace
+              AND proname IN (
+                'transition_onboarding_revision',
+                'update_onboarding_projection',
+                'guard_onboarding_revision_insert',
+                'reject_onboarding_event_mutation',
+                'validate_onboarding_projection_commit',
+                'validate_onboarding_revision_commit'
+              ) AND proowner=owner_role;
+            IF expected_functions <> 6 THEN
+              RAISE EXCEPTION 'PRIVATE_FUNCTION_OWNER_MISMATCH: %', expected_functions;
+            END IF;
+            RAISE NOTICE 'BL2BL3_OWNER_POSTCONDITIONS_PASS';
+          END
+          $audit$;
+          SQL
+      - run: npm run test:investing
+      - run: npx tsc --noEmit -p tsconfig.investing.json
+      - name: Run PostgreSQL lifecycle, RLS and ownership concurrency tests
+        run: npx tsx docs/r2/bl2bl3-pg-runner.ts
