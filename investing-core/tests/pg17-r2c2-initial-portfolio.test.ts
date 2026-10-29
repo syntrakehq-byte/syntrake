@@ -162,7 +162,7 @@ test("R2-C2 real PG17: atomic, owner-scoped initial portfolio under dedicated NO
   await t.test("R2-C4 private HTTP→Clerk actor→PG17 replay preserves account IDs, no ledger writes",async()=>{
     const environment={
       VERCEL_ENV:"preview",
-      VERCEL_GIT_COMMIT_REF:"candidate/investing-r2-preview-security-compat-20261024",
+      VERCEL_GIT_COMMIT_REF:"feat/bl2bl3-canonical-draft",
       VERCEL_GIT_COMMIT_SHA:"1111111111111111111111111111111111111111",
       SYNTRAKE_ONBOARDING_APPROVED_PREVIEW_SHA:"1111111111111111111111111111111111111111",
       SYNTRAKE_R2C2_PG_ENABLED:"enabled",
