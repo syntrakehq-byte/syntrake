@@ -27,7 +27,7 @@ export function isR2CPreviewEnabled(env:Config): boolean {
     && env.NEXT_PUBLIC_SUPABASE_URL===projectUrl
     && /^sb_publishable_[A-Za-z0-9_-]{10,}$/.test(env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY||"");
 }
-function isR2COperationalReady(env:Config):boolean {
+export function isR2COperationalReady(env:Config):boolean {
   return isR2CPreviewEnabled(env) || isR2ProductionIntentReady(env);
 }
 export const onboardingHeaders=Object.freeze({

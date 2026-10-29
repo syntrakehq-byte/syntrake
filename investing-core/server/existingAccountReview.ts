@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { isR2CPreviewEnabled } from "./onboardingTransport";
+import { isR2COperationalReady } from "./onboardingTransport";
 
 /**
  * R2-C3 READ ONLY: preserves existing R0/R1 account identities.
@@ -89,7 +89,7 @@ async function fetchRows(env: Env, token: string,
 export async function inspectOwnExistingInvestingAccounts(
   env: Env, actor: VerifiedClerkSession, transport: Transport = fetch,
 ): Promise<ExistingAccountReview | null> {
-  if (!isR2CPreviewEnabled(env)) throw new ExistingAccountReadBlocked("DISABLED");
+  if (!isR2COperationalReady(env)) throw new ExistingAccountReadBlocked("DISABLED");
   if (!actor.userId || !clerkUser.test(actor.userId) || !actor.sessionId) {
     throw new ExistingAccountReadBlocked("UNAUTHENTICATED");
   }

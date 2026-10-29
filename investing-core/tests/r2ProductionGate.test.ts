@@ -4,7 +4,9 @@ import {
   isR2ProductionBaseReady, isR2ProductionIntentReady,
   isR2ProductionDbReady, makeR2ProductionPool,
 } from "../server/r2ProductionGate";
-import { isR2CPreviewEnabled } from "../server/onboardingTransport";
+import { isR2CPreviewEnabled, isR2COperationalReady } from "../server/onboardingTransport";
+import { handleInvestingOnboardingHttp } from "../server/onboardingHttp";
+import { handleExistingAccountReviewGet } from "../server/existingAccountReviewHttp";
 import { isR2C2PortfolioReady, isOnboardingPortfolioReady } from "../server/onboardingPortfolioFromClerk";
 import { isR2DImportReady } from "../server/importPreviewRuntime";
 import { isR2C4PrivateWriteReady } from "../server/firstPortfolioPreviewHttp";
@@ -43,6 +45,7 @@ const env = {
 test("R2 Production remains off with missing release authorization; Preview gate never accepts Production",()=>{
   assert.equal(isR2ProductionBaseReady({...env,SYNTRAKE_R2_PRODUCTION_ENABLED:"disabled"}),false);
   assert.equal(isR2CPreviewEnabled(env),false);
+  assert.equal(isR2COperationalReady(env),true);
   for(const cap of ["r2c2","bl2bl3","import"] as const)
     assert.equal(isR2ProductionDbReady({...env,SYNTRAKE_R2_PRODUCTION_ENABLED:"disabled"},cap),false);
 });
@@ -96,4 +99,29 @@ test("All three private Production login pools are independent and TLS-strict",(
   ]) assert.equal(isR2ProductionDbReady({...env,SYNTRAKE_R2C2_PRODUCTION_DATABASE_URL:wrong},"r2c2"),false);
   assert.equal(isR2ProductionDbReady({...env,SYNTRAKE_R2C2_PRODUCTION_PG_CA_PEM:""},"r2c2"),false);
   assert.throws(()=>makeR2ProductionPool({...env,SYNTRAKE_R2_PRODUCTION_ENABLED:"disabled"},"r2c2"),/R2_PRODUCTION_NOT_AUTHORIZED/);
+});
+
+test("R2 Production onboarding and existing account HTTP read gates are enabled only with exact approval",async()=>{
+  const user = "user_ci_release_actor";
+  const actor = async()=>({
+    userId:user, sessionId:"sess_ci_release", getToken:async()=>"header.payload.signature",
+  });
+  const onboarding = new Request("https://prod.example/api/investing/onboarding");
+  const ok = await handleInvestingOnboardingHttp(onboarding,env,actor,
+    async()=>Response.json([]));
+  assert.equal(ok.status,200);
+  assert.equal((await ok.json()).state,"NO_DECLARED_INTENT");
+  const before = await handleInvestingOnboardingHttp(onboarding,
+    {...env,SYNTRAKE_R2_PRODUCTION_ENABLED:"disabled"},actor,
+    async()=>{throw new Error("must not fetch");});
+  assert.equal(before.status,404);
+  const review = new Request("https://prod.example/api/investing/existing-account");
+  const existing = await handleExistingAccountReviewGet(review,env,actor,
+    async()=>Response.json([]));
+  assert.equal(existing.status,200);
+  assert.equal((await existing.json()).state,"NO_OWN_ACCOUNT_OBSERVED");
+  const blocked = await handleExistingAccountReviewGet(review,
+    {...env,SYNTRAKE_R2C_PRODUCTION_ENABLED:"disabled"},actor,
+    async()=>{throw new Error("must not fetch");});
+  assert.equal(blocked.status,404);
 });

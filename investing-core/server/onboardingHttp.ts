@@ -1,5 +1,5 @@
 import {
-  declareOnboarding, isR2CPreviewEnabled, latestOnboarding,
+  declareOnboarding, isR2COperationalReady, latestOnboarding,
   OnboardingBlocked, onboardingHeaders, type Transport,
 } from "./onboardingTransport";
 import type { onboardingCommandSchema } from "../onboarding/onboardingIntent";
@@ -14,7 +14,7 @@ function json(status:number,body:unknown):Response{
 export async function handleInvestingOnboardingHttp(
   request:Request,env:Env,verifiedSession:Load,transport:Transport=fetch,
 ):Promise<Response>{
-  if(!isR2CPreviewEnabled(env))return json(404,{error:"NOT_FOUND"});
+  if(!isR2COperationalReady(env))return json(404,{error:"NOT_FOUND"});
   let url:URL;
   try{url=new URL(request.url);}catch{return json(400,{error:"INVALID_REQUEST"});}
   if(url.pathname!=="/api/investing/onboarding"||url.search!==""||url.hash!==""||request.url.endsWith("?"))
