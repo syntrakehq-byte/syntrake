@@ -33,10 +33,11 @@
       "blob": "df0de0926df2b77142937caa2d18aa7fe4bf50b4"
     },
     {
-      "path": "docs/r2/bl2bl3-candidate.sql",
+      "path": "supabase/release-candidates/20261029201005_r2_bl2bl3_canonical.sql",
       "name": "r2_bl2bl3_canonical",
       "blob": "514aa572ce158bf443555b716f395b8b3f96542e",
-      "needsVersionedMigration": true
+      "needsVersionedMigration": false,
+      "version": "20261029201005"
     }
   ],
   "excludedHistoricalPreviewOnly": [

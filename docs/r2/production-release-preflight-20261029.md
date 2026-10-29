@@ -19,7 +19,7 @@ Candidate SQL from the verified source lineage, **in dependency order**:
 1. `supabase/release-candidates/20261022200000_r2b_unverified_portfolio_imports.sql`: 4 immutable import tables, NOLOGIN `investing_import_writer` and owner-scoped RLS.
 2. `supabase/release-candidates/20261022210000_r2c_onboarding_intents.sql`: append-only self-owned Clerk JWT declarations.
 3. `supabase/release-candidates/20261023063000_r2c2_first_portfolio.sql`: canonical empty account/portfolio receipt and NOLOGIN `investing_initial_provisioner`.
-4. `docs/r2/bl2bl3-candidate.sql`: private revision/projection/event tables, constrained `investing_bl2bl3_runtime` and `investing_bl2bl3_owner`, immutable lifecycle. This is currently **review SQL**, not a versioned migration. Make it a separately versioned reviewed migration before any Production DDL.
+4. `docs/r2/bl2bl3-candidate.sql`: private revision/projection/event tables, constrained `investing_bl2bl3_runtime` and `investing_bl2bl3_owner`, immutable lifecycle. This is currently **review SQL**, not a versioned migration. CLI version generated at 20261029201005, now pinned at `supabase/release-candidates/20261029201005_r2_bl2bl3_canonical.sql` with exact matching Git blob. It is STILL candidate-only and must be formally reviewed before any Production DDL.
 
 The first three and BL2/BL3 candidate **did apply to a disposable branch cloned from Production** during the real A/B test. Do **not** treat that as proof of production deployment, data-preserving upgrades or full R2. Validate exact SQL hashes / role ownership / grants / migration naming again against the Production baseline.
 
@@ -57,3 +57,9 @@ The PR #44 release branch introduces an isolated **candidate fix** to use the sa
 - Deploying or merging on the assumption that Production has the R2 database schema.
 
 **This document authorizes no Production write, merge or new paid resource.**
+
+## 2026-10-29 CLI cumulative PG17 release rehearsal
+
+Supabase CLI v2.84.2 generated the fourth candidate version `20261029201005_r2_bl2bl3_canonical.sql` in disposable GitHub Action run `40946314406`; the exact SQL is now frozen under `supabase/release-candidates/` (NOT `supabase/migrations/`). This is the same SQL as `docs/r2/bl2bl3-candidate.sql`, pinned by source Git blob.
+
+The dry-run planned precisely four R2 migrations after the two accepted Production-history versions. The CLI applied them to **loopback-only PG17** and confirmed database registry order, 19 RLS-enabled tables, 18 FORCE RLS, four NOLOGIN capabilities, no user-callable privileged SECURITY DEFINER function, and zero financial journals. A second dry-run did not propose migration replay. This is not a Production deploy nor a signed Clerk full import A/B.

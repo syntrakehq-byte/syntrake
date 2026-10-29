@@ -60,7 +60,7 @@ test("R0→R2 cumulative PG17: exact candidate SQL, role isolation, owner A/B, i
       "../../supabase/release-candidates/20261022200000_r2b_unverified_portfolio_imports.sql",
       "../../supabase/release-candidates/20261022210000_r2c_onboarding_intents.sql",
       "../../supabase/release-candidates/20261023063000_r2c2_first_portfolio.sql",
-      "../../docs/r2/bl2bl3-candidate.sql",
+      "../../supabase/release-candidates/20261029201005_r2_bl2bl3_canonical.sql",
     ];
     for (const path of sqlFiles) {
       const sql = await readFile(new URL(path, import.meta.url), "utf8");

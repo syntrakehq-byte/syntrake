@@ -43,7 +43,8 @@ export async function verifyR2ProductionBundle() {
   assert.deepEqual(m.candidateMigrations.slice(0, 3).map(c=>c.version), [
     "20261022200000", "20261022210000", "20261023063000",
   ]);
-  assert.equal(m.candidateMigrations[3]?.needsVersionedMigration, true);
+  assert.equal(m.candidateMigrations[3]?.needsVersionedMigration, false);
+  assert.equal(m.candidateMigrations[3]?.version, "20261029201005");
   const paths = m.candidateMigrations.map(c=>c.path);
   assert.equal(m.excludedHistoricalPreviewOnly.length, 3);
   assert.ok(m.excludedHistoricalPreviewOnly.every(p => !paths.includes(p) && /_preview_/.test(p)));
