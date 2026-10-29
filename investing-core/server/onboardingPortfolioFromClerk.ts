@@ -10,13 +10,13 @@ type PoolConnection = Pick<Pool, "connect">;
 
 // This is a safety fence, not a source of user/financial data.
 const PRODUCTION_PROJECT_REF = "vbazzxqyuqcrmjytaboc";
-const PREVIEW_BRANCH = "feat/bl2bl3-canonical-draft";
+const PREVIEW_BRANCHES = new Set(["feat/bl2bl3-canonical-draft", "release/r2-main-candidate-20261029"]);
 const PRIVATE_LOGIN = "investing_bl2bl3_preview_login";
 const R2C2_PRIVATE_LOGIN = "investing_initial_provisioner_preview_login";
 
 export function isOnboardingPortfolioPreviewReady(env: ServerEnv): boolean {
   if (env.VERCEL_ENV !== "preview" ||
-      env.VERCEL_GIT_COMMIT_REF !== PREVIEW_BRANCH ||
+      !PREVIEW_BRANCHES.has(env.VERCEL_GIT_COMMIT_REF || "") ||
       env.SYNTRAKE_ONBOARDING_PG_ENABLED !== "enabled") return false;
   const approved = env.SYNTRAKE_ONBOARDING_APPROVED_PREVIEW_SHA;
   if (!approved || !/^[a-f0-9]{40}$/.test(approved) ||
@@ -67,7 +67,7 @@ export function makeOnboardingPortfolioPool(env: ServerEnv): Pool {
 /** R2-C2 has a separate capability gate and LOGIN; it never reuses BL2/BL3 credentials. */
 export function isR2C2PortfolioPreviewReady(env: ServerEnv): boolean {
   if (env.VERCEL_ENV !== "preview" ||
-      env.VERCEL_GIT_COMMIT_REF !== PREVIEW_BRANCH ||
+      !PREVIEW_BRANCHES.has(env.VERCEL_GIT_COMMIT_REF || "") ||
       env.SYNTRAKE_R2C2_PG_ENABLED !== "enabled") return false;
   const approved = env.SYNTRAKE_ONBOARDING_APPROVED_PREVIEW_SHA;
   const ref = env.SYNTRAKE_ONBOARDING_PREVIEW_PROJECT_REF;

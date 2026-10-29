@@ -50,6 +50,11 @@ test("R2 exact-SHA gate: distinct candidate branch names are not hardcoded, only
  }),true);
  assert.equal(isR2CPreviewEnabled(env),true);
  assert.equal(isR2C4PrivateWriteReady(canonicalEnv),true);
+ const releaseEnv = {...canonicalEnv, VERCEL_GIT_COMMIT_REF:"release/r2-main-candidate-20261029"};
+ assert.equal(isApprovedR2PreviewDeployment(releaseEnv),true);
+ assert.equal(isR2C4PrivateWriteReady(releaseEnv),true);
+ assert.equal(isR2DImportReady(releaseEnv),true);
+ assert.equal(isR2C4PrivateWriteReady({...releaseEnv,VERCEL_GIT_COMMIT_SHA:"2".repeat(40)}),false);
  assert.equal(isR2DImportReady(env),true);
 });
 test("R2 fail closed on unapproved SHA, malformed/old git metadata, Production and absent token",()=>{

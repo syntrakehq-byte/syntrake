@@ -4,7 +4,7 @@
  */
 type Env=Readonly<Record<string,string|undefined>>;
 const sha=/^[0-9a-f]{40}$/;
-const branch=/^(?:candidate\/investing-r2[a-z0-9\/_-]*|feat\/bl2bl3-canonical-draft)$/;
+const branch=/^(?:candidate\/investing-r2[a-z0-9\/_-]*|feat\/bl2bl3-canonical-draft|release\/r2-main-candidate-20261029)$/;
 
 export function isApprovedR2PreviewDeployment(env:Env):boolean{
   const actual=env.VERCEL_GIT_COMMIT_SHA;
