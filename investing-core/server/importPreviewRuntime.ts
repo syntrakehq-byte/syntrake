@@ -1,5 +1,6 @@
 import { Pool } from "pg";
 import { isR2CPreviewEnabled } from "./onboardingTransport";
+import {isR2ProductionDbReady,makeR2ProductionPool} from "./r2ProductionGate";
 
 /** Isolated, SHA-locked Preview-only import capability. Never Production. */
 type Env = Readonly<Record<string, string | undefined>>;
@@ -12,6 +13,7 @@ const PRIVATE_LOGIN = "investing_import_preview_login";
  * Supabase project as R2-C2 / BL2/BL3, but completely separate credentials.
  */
 export function isR2DImportReady(env: Env): boolean {
+  if (isR2ProductionDbReady(env,"import")) return true;
   if (!isR2CPreviewEnabled(env) ||
       env.VERCEL_ENV !== "preview" ||
       env.INVESTING_R2D_IMPORT_ENABLED !== "enabled") return false;
@@ -42,6 +44,7 @@ export function isR2DImportReady(env: Env): boolean {
   }
 }
 export function makeImportPool(env: Env): Pool {
+  if (isR2ProductionDbReady(env,"import")) return makeR2ProductionPool(env,"import");
   if (!isR2DImportReady(env)) throw new Error("IMPORT_PREVIEW_NOT_AUTHORIZED");
   return new Pool({
     connectionString: env.INVESTING_R2D_PG_DSN!,

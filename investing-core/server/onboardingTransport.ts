@@ -2,6 +2,7 @@ import { onboardingCommandSchema, onboardingFingerprint, parseStoredOnboardingRo
   type OnboardingEvent, type OnboardingCommand } from "../onboarding/onboardingIntent";
 
 import {isApprovedR2PreviewDeployment} from "./previewDeploymentGate";
+import {isR2ProductionIntentReady} from "./r2ProductionGate";
 type Config = Readonly<Record<string,string | undefined>>;
 type ClerkActor = Readonly<{
   userId: string | null;
@@ -25,6 +26,9 @@ export function isR2CPreviewEnabled(env:Config): boolean {
     && /^[a-z0-9]{20}$/.test(projectRef)
     && env.NEXT_PUBLIC_SUPABASE_URL===projectUrl
     && /^sb_publishable_[A-Za-z0-9_-]{10,}$/.test(env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY||"");
+}
+function isR2COperationalReady(env:Config):boolean {
+  return isR2CPreviewEnabled(env) || isR2ProductionIntentReady(env);
 }
 export const onboardingHeaders=Object.freeze({
   "Cache-Control":"private, no-store, max-age=0",
@@ -88,7 +92,7 @@ async function selectEvents(
 export async function latestOnboarding(
   env:Config,actor:ClerkActor,transport:Transport=fetch,
 ):Promise<OnboardingEvent|null> {
-  if(!isR2CPreviewEnabled(env))throw new OnboardingBlocked("DISABLED");
+  if(!isR2COperationalReady(env))throw new OnboardingBlocked("DISABLED");
   const token=await bearer(actor);
   return (await selectEvents(env,token,transport))[0]??null;
 }
@@ -99,7 +103,7 @@ export async function latestOnboarding(
 export async function declareOnboarding(
   env:Config,actor:ClerkActor,untrusted:unknown,transport:Transport=fetch,
 ):Promise<OnboardingEvent> {
-  if(!isR2CPreviewEnabled(env))throw new OnboardingBlocked("DISABLED");
+  if(!isR2COperationalReady(env))throw new OnboardingBlocked("DISABLED");
   let input:OnboardingCommand;
   try{input=onboardingCommandSchema.parse(untrusted);}
   catch{throw new OnboardingBlocked("INVALID_INPUT");}

@@ -1,4 +1,5 @@
 import { Pool } from "pg";
+import {isR2ProductionDbReady,makeR2ProductionPool} from "./r2ProductionGate";
 import type { Actor } from "../contracts";
 import { requireVerifiedClerkActor } from "./requireVerifiedClerkActor";
 import { createOnboardingService } from "../r2/onboardingPortfolio";
@@ -45,8 +46,13 @@ export function isOnboardingPortfolioPreviewReady(env: ServerEnv): boolean {
   }
 }
 
-/** Server-only, preview-only and TLS-verified database connection. */
+export function isOnboardingPortfolioReady(env:ServerEnv): boolean {
+  return isOnboardingPortfolioPreviewReady(env) || isR2ProductionDbReady(env,"bl2bl3");
+}
+
+/** Server-only, TLS-verified database connection. */
 export function makeOnboardingPortfolioPool(env: ServerEnv): Pool {
+  if (isR2ProductionDbReady(env,"bl2bl3")) return makeR2ProductionPool(env,"bl2bl3");
   if (!isOnboardingPortfolioPreviewReady(env)) throw new Error("ONBOARDING_PG_NOT_AUTHORIZED");
   return new Pool({
     connectionString: env.SYNTRAKE_ONBOARDING_DATABASE_URL!,
@@ -81,7 +87,11 @@ export function isR2C2PortfolioPreviewReady(env: ServerEnv): boolean {
   } catch { return false; }
 }
 
+export function isR2C2PortfolioReady(env:ServerEnv): boolean {
+  return isR2C2PortfolioPreviewReady(env) || isR2ProductionDbReady(env,"r2c2");
+}
 export function makeR2C2PortfolioPool(env: ServerEnv): Pool {
+  if (isR2ProductionDbReady(env,"r2c2")) return makeR2ProductionPool(env,"r2c2");
   if (!isR2C2PortfolioPreviewReady(env)) throw new Error("R2C2_PG_NOT_AUTHORIZED");
   return new Pool({
     connectionString: env.SYNTRAKE_R2C2_DATABASE_URL!,

@@ -3,7 +3,7 @@ import type { Pool } from "pg";
 import { actorSchema } from "../contracts";
 import { onboardingInputSchema } from "../r2/onboardingPortfolio";
 import {
-  isOnboardingPortfolioPreviewReady,
+  isOnboardingPortfolioReady,
   makeOnboardingPortfolioPool,
   withOnboardingPortfolioFromClerk,
 } from "./onboardingPortfolioFromClerk";
@@ -66,7 +66,7 @@ export async function handleOnboardingPortfolioPreviewPost(
   actorProvider: ActorProvider = requireVerifiedClerkActor,
   poolFactory: PoolFactory = makeOnboardingPortfolioPool,
 ): Promise<Response> {
-  if (!isOnboardingPortfolioPreviewReady(env)) return json(404, { error: "NOT_FOUND" });
+  if (!isOnboardingPortfolioReady(env)) return json(404, { error: "NOT_FOUND" });
   let url: URL;
   try { url = new URL(request.url); } catch { return json(400, { error: "INVALID_REQUEST" }); }
   if (request.method !== "POST") return json(405, { error: "METHOD_NOT_ALLOWED" });
