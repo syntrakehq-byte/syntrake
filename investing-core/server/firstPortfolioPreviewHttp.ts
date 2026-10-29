@@ -4,8 +4,8 @@ import {
   type InitialPortfolioReceipt,
 } from "./initializeFirstPortfolio";
 import {
-  isOnboardingPortfolioPreviewReady,
-  makeOnboardingPortfolioPool,
+  isR2C2PortfolioPreviewReady,
+  makeR2C2PortfolioPool,
 } from "./onboardingPortfolioFromClerk";
 
 /**
@@ -24,11 +24,11 @@ export type PgFactory = (environment: Env) => FirstPortfolioPool & {end?:()=>Pro
 const MAX_BODY_BYTES = 1024;
 
 export function isR2C4PrivateWriteReady(env: Env): boolean {
-  return isOnboardingPortfolioPreviewReady(env);
+  return isR2C2PortfolioPreviewReady(env);
 }
 export function makePrivateProvisioningPool(env: Env): FirstPortfolioPool & {end:()=>Promise<void>} {
   if (!isR2C4PrivateWriteReady(env)) throw new Error("PRIVATE_PREVIEW_NOT_CONFIGURED");
-  return makeOnboardingPortfolioPool(env);
+  return makeR2C2PortfolioPool(env);
 }
 const headers = Object.freeze({
   "Cache-Control":"private,no-store,max-age=0",

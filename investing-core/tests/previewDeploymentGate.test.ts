@@ -34,6 +34,10 @@ const canonicalEnv={
   SYNTRAKE_ONBOARDING_POOLER_HOST:"aws-0-eu-west-3.pooler.supabase.com",
   SYNTRAKE_ONBOARDING_DATABASE_URL:"postgresql://investing_bl2bl3_preview_login.aaaaaaaaaaaaaaaaaaaa:dummy@aws-0-eu-west-3.pooler.supabase.com:5432/postgres",
   SYNTRAKE_ONBOARDING_PG_CA_PEM:"-----BEGIN CERTIFICATE-----\\nCI_DUMMY\\n-----END CERTIFICATE-----",
+  SYNTRAKE_R2C2_PG_ENABLED:"enabled",
+  SYNTRAKE_R2C2_POOLER_HOST:"aws-0-eu-west-3.pooler.supabase.com",
+  SYNTRAKE_R2C2_DATABASE_URL:"postgresql://investing_initial_provisioner_preview_login.aaaaaaaaaaaaaaaaaaaa:dummy@aws-0-eu-west-3.pooler.supabase.com:5432/postgres",
+  SYNTRAKE_R2C2_PG_CA_PEM:"-----BEGIN CERTIFICATE-----\\nCI_DUMMY\\n-----END CERTIFICATE-----",
 };
 test("R2 exact-SHA gate: distinct candidate branch names are not hardcoded, only reviewed commit is authorized",()=>{
  for(const branch of [

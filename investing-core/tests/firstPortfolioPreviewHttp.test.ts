@@ -15,6 +15,10 @@ const env={
   SYNTRAKE_ONBOARDING_POOLER_HOST:"aws-0-eu-west-3.pooler.supabase.com",
   SYNTRAKE_ONBOARDING_DATABASE_URL:"postgresql://investing_bl2bl3_preview_login.aaaaaaaaaaaaaaaaaaaa:ci_placeholder@aws-0-eu-west-3.pooler.supabase.com:5432/postgres",
   SYNTRAKE_ONBOARDING_PG_CA_PEM:"-----BEGIN CERTIFICATE-----\\nCI_DUMMY_NOT_A_REAL_CERTIFICATE\\n-----END CERTIFICATE-----",
+  SYNTRAKE_R2C2_PG_ENABLED:"enabled",
+  SYNTRAKE_R2C2_POOLER_HOST:"aws-0-eu-west-3.pooler.supabase.com",
+  SYNTRAKE_R2C2_DATABASE_URL:"postgresql://investing_initial_provisioner_preview_login.aaaaaaaaaaaaaaaaaaaa:ci_placeholder@aws-0-eu-west-3.pooler.supabase.com:5432/postgres",
+  SYNTRAKE_R2C2_PG_CA_PEM:"-----BEGIN CERTIFICATE-----\\nCI_DUMMY_NOT_A_REAL_CERTIFICATE\\n-----END CERTIFICATE-----",
 };
 const url="https://preview.example/api/investing/portfolio/initialize";
 const command={
@@ -36,13 +40,13 @@ test("R2-C4: direct private login, exact preview ref, and strong TLS trust are m
     {...env,VERCEL_ENV:"production"},
     {...env,VERCEL_GIT_COMMIT_REF:"main"},
     {...env,VERCEL_GIT_COMMIT_REF:"candidate/another"},
-    {...env,SYNTRAKE_ONBOARDING_PG_ENABLED:"disabled"},
+    {...env,SYNTRAKE_R2C2_PG_ENABLED:"disabled"},
     {...env,SYNTRAKE_ONBOARDING_PREVIEW_PROJECT_REF:"vbazzxqyuqcrmjytaboc"},
-    {...env,SYNTRAKE_ONBOARDING_PG_CA_PEM:""},
-    {...env,SYNTRAKE_ONBOARDING_DATABASE_URL:"postgresql://postgres:secret@aws-0-eu-west-3.pooler.supabase.com:5432/postgres"},
-    {...env,SYNTRAKE_ONBOARDING_DATABASE_URL:"postgresql://investing_bl2bl3_preview_login.vbazzxqyuqcrmjytaboc:secret@aws-0-eu-west-3.pooler.supabase.com:5432/postgres"},
-    {...env,SYNTRAKE_ONBOARDING_DATABASE_URL:"postgresql://investing_bl2bl3_preview_login.aaaaaaaaaaaaaaaaaaaa:secret@aws-0-eu-west-3.pooler.supabase.com:5432/postgres?sslmode=disable"},
-    {...env,SYNTRAKE_ONBOARDING_DATABASE_URL:"postgresql://investing_bl2bl3_preview_login.aaaaaaaaaaaaaaaaaaaa:secret@localhost:5432/postgres"},
+    {...env,SYNTRAKE_R2C2_PG_CA_PEM:""},
+    {...env,SYNTRAKE_R2C2_DATABASE_URL:"postgresql://postgres:secret@aws-0-eu-west-3.pooler.supabase.com:5432/postgres"},
+    {...env,SYNTRAKE_R2C2_DATABASE_URL:"postgresql://investing_initial_provisioner_preview_login.vbazzxqyuqcrmjytaboc:secret@aws-0-eu-west-3.pooler.supabase.com:5432/postgres"},
+    {...env,SYNTRAKE_R2C2_DATABASE_URL:"postgresql://investing_initial_provisioner_preview_login.aaaaaaaaaaaaaaaaaaaa:secret@aws-0-eu-west-3.pooler.supabase.com:5432/postgres?sslmode=disable"},
+    {...env,SYNTRAKE_R2C2_DATABASE_URL:"postgresql://investing_initial_provisioner_preview_login.aaaaaaaaaaaaaaaaaaaa:secret@localhost:5432/postgres"},
   ])assert.equal(isR2C4PrivateWriteReady(bad),false);
 });
 test("R2-C4: disabled/no authorization never calls Clerk or touches private PG pool",async()=>{
