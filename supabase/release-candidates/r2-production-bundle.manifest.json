@@ -1,0 +1,55 @@
+{
+  "schema": "syntrake.investing.r2-production-bundle.candidate.v1",
+  "status": "NO_GO_PRODUCTION__CANDIDATE_ONLY",
+  "productionProjectRef": "vbazzxqyuqcrmjytaboc",
+  "productionBaseGitSha": "29f1c068769e34a84e87717ac8cc9286dd937938",
+  "predecessorMigrations": [
+    {
+      "version": "20261017191056",
+      "name": "remote_schema"
+    },
+    {
+      "version": "20261020180000",
+      "name": "investing_first_readonly_release"
+    }
+  ],
+  "candidateMigrations": [
+    {
+      "path": "supabase/release-candidates/20261022200000_r2b_unverified_portfolio_imports.sql",
+      "version": "20261022200000",
+      "name": "r2b_unverified_portfolio_imports",
+      "blob": "5422a96f3e7a13d7a85c1e00383324133bfc4be7"
+    },
+    {
+      "path": "supabase/release-candidates/20261022210000_r2c_onboarding_intents.sql",
+      "version": "20261022210000",
+      "name": "r2c_onboarding_intents",
+      "blob": "2e706eaff562ca097dcdc8d58caa919ae6447747"
+    },
+    {
+      "path": "supabase/release-candidates/20261023063000_r2c2_first_portfolio.sql",
+      "version": "20261023063000",
+      "name": "r2c2_first_portfolio",
+      "blob": "df0de0926df2b77142937caa2d18aa7fe4bf50b4"
+    },
+    {
+      "path": "docs/r2/bl2bl3-candidate.sql",
+      "name": "r2_bl2bl3_canonical",
+      "blob": "514aa572ce158bf443555b716f395b8b3f96542e",
+      "needsVersionedMigration": true
+    }
+  ],
+  "excludedHistoricalPreviewOnly": [
+    "supabase/release-candidates/20261024190500_r2_preview_import_coverage_forward_compat.sql",
+    "supabase/release-candidates/20261024194500_r2_preview_revoke_legacy_provision_rpc.sql",
+    "supabase/release-candidates/20261024205500_r2_preview_import_runtime_nologin.sql"
+  ],
+  "releaseRequirements": [
+    "Recheck live Production migration registry and schema on final release SHA",
+    "Freeze BL2/BL3 CLI-generated migration version and exact SQL hash",
+    "Real signed Clerk A/B import+readback denied-cross-account on new isolated branch",
+    "Independent R0-R2 rehearsal and migration/privilege compatibility evidence",
+    "Production-specific runtime authorization and least-privileged secrets, never Preview credentials",
+    "Explicit production GO/NO-GO approval, backup and controlled deployment"
+  ]
+}
