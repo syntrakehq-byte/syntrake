@@ -33,7 +33,7 @@ const env = {
   SYNTRAKE_BL2BL3_PRODUCTION_PG_CA_PEM: ca,
   SYNTRAKE_R2D_PRODUCTION_PG_CA_PEM: ca,
   SYNTRAKE_R2C2_PRODUCTION_DATABASE_URL:
-    `postgresql://investing_initial_provisioner_prod_login.${ref}:ci@ ${host}:5432/postgres`.replace("@ ","@"),
+    `postgresql://investing_initial_provisioner_prod_login.${ref}:ci@${host}:5432/postgres`,
   SYNTRAKE_BL2BL3_PRODUCTION_DATABASE_URL:
     `postgresql://investing_bl2bl3_prod_login.${ref}:ci@${host}:5432/postgres`,
   SYNTRAKE_R2D_PRODUCTION_DATABASE_URL:
@@ -76,7 +76,7 @@ test("All three private Production login pools are independent and TLS-strict",(
     assert.equal(isR2ProductionDbReady(env,cap),true);
     const pool=makeR2ProductionPool(env,cap);
     // Construct only, never connect. Fake CI credentials must never reach a DB.
-    assert.equal(pool.options.ssl?.rejectUnauthorized,true);
+    assert.equal(typeof pool.options.ssl === "object" && pool.options.ssl !== null && pool.options.ssl.rejectUnauthorized, true);
     void pool.end();
   }
   for(const x of [
