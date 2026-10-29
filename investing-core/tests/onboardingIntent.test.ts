@@ -13,8 +13,8 @@ const preview={
  VERCEL_GIT_COMMIT_SHA:"1111111111111111111111111111111111111111",
  INVESTING_R2_APPROVED_PREVIEW_SHA:"1111111111111111111111111111111111111111",
  INVESTING_R2C_PREVIEW_MODE:"enabled",
- INVESTING_R2C_SUPABASE_PROJECT_REF:"zkqgpejlkgootkvkebhd",
- NEXT_PUBLIC_SUPABASE_URL:"https://zkqgpejlkgootkvkebhd.supabase.co",
+ SYNTRAKE_ONBOARDING_PREVIEW_PROJECT_REF:"aaaaaaaaaaaaaaaaaaaa",
+ NEXT_PUBLIC_SUPABASE_URL:"https://aaaaaaaaaaaaaaaaaaaa.supabase.co",
  NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:"sb_publishable_testing_key_0123456789",
 };
 const actor={userId:"user_clerk_a_test",sessionId:"session-a",getToken:async()=> "header.payload.signature"};
@@ -68,7 +68,7 @@ test("R2-C Preview gate pins isolated branch and Supabase ref, Production always
   {...preview,VERCEL_GIT_COMMIT_REF:"main"},
   {...preview,VERCEL_GIT_COMMIT_SHA:"2222222222222222222222222222222222222222"},
   {...preview,INVESTING_R2C_PREVIEW_MODE:""},
-  {...preview,INVESTING_R2C_SUPABASE_PROJECT_REF:"vbazzxqyuqcrmjytaboc"},
+  {...preview,SYNTRAKE_ONBOARDING_PREVIEW_PROJECT_REF:"vbazzxqyuqcrmjytaboc"},
   {...preview,NEXT_PUBLIC_SUPABASE_URL:"https://vbazzxqyuqcrmjytaboc.supabase.co"},
   {...preview,NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:"service_role_secret"},
  ])assert.equal(isR2CPreviewEnabled(env),false);

@@ -5,17 +5,16 @@ import {
 } from "../server/firstPortfolioPreviewHttp";
 const env={
   VERCEL_ENV:"preview",
-  VERCEL_GIT_COMMIT_REF:"candidate/investing-r2-preview-security-compat-20261024",
+  VERCEL_GIT_COMMIT_REF:"feat/bl2bl3-canonical-draft",
   VERCEL_GIT_COMMIT_SHA:"1111111111111111111111111111111111111111",
+  SYNTRAKE_ONBOARDING_APPROVED_PREVIEW_SHA:"1111111111111111111111111111111111111111",
   INVESTING_R2_APPROVED_PREVIEW_SHA:"1111111111111111111111111111111111111111",
-  INVESTING_R2C_PREVIEW_MODE:"enabled",
-  INVESTING_R2C_SUPABASE_PROJECT_REF:"zkqgpejlkgootkvkebhd",
-  NEXT_PUBLIC_SUPABASE_URL:"https://zkqgpejlkgootkvkebhd.supabase.co",
-  NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:"sb_publishable_unit_test_1234567890",
-  INVESTING_R2C4_PRIVATE_WRITE:"enabled",
-  INVESTING_R2C4_PROJECT_REF:"zkqgpejlkgootkvkebhd",
-  INVESTING_R2C4_PG_DSN:"postgresql://investing_initial_preview_runtime:ci_placeholder@db.zkqgpejlkgootkvkebhd.supabase.co:5432/postgres",
-  INVESTING_R2C4_PG_CA_PEM:"-----BEGIN CERTIFICATE-----\\nCI_DUMMY_NOT_A_REAL_CERTIFICATE\\n-----END CERTIFICATE-----",
+  SYNTRAKE_ONBOARDING_PG_ENABLED:"enabled",
+  SYNTRAKE_ONBOARDING_PREVIEW_PROJECT_REF:"aaaaaaaaaaaaaaaaaaaa",
+  NEXT_PUBLIC_SUPABASE_URL:"https://aaaaaaaaaaaaaaaaaaaa.supabase.co",
+  SYNTRAKE_ONBOARDING_POOLER_HOST:"aws-0-eu-west-3.pooler.supabase.com",
+  SYNTRAKE_ONBOARDING_DATABASE_URL:"postgresql://investing_bl2bl3_preview_login.aaaaaaaaaaaaaaaaaaaa:ci_placeholder@aws-0-eu-west-3.pooler.supabase.com:5432/postgres",
+  SYNTRAKE_ONBOARDING_PG_CA_PEM:"-----BEGIN CERTIFICATE-----\\nCI_DUMMY_NOT_A_REAL_CERTIFICATE\\n-----END CERTIFICATE-----",
 };
 const url="https://preview.example/api/investing/portfolio/initialize";
 const command={
@@ -37,14 +36,13 @@ test("R2-C4: direct private login, exact preview ref, and strong TLS trust are m
     {...env,VERCEL_ENV:"production"},
     {...env,VERCEL_GIT_COMMIT_REF:"main"},
     {...env,VERCEL_GIT_COMMIT_REF:"candidate/another"},
-    {...env,INVESTING_R2C4_PRIVATE_WRITE:"disabled"},
-    {...env,INVESTING_R2C_PREVIEW_MODE:"disabled"},
-    {...env,INVESTING_R2C4_PROJECT_REF:"vbazzxqyuqcrmjytaboc"},
-    {...env,INVESTING_R2C4_PG_CA_PEM:""},
-    {...env,INVESTING_R2C4_PG_DSN:"postgresql://postgres:secret@db.zkqgpejlkgootkvkebhd.supabase.co:5432/postgres"},
-    {...env,INVESTING_R2C4_PG_DSN:"postgresql://investing_initial_preview_runtime:secret@db.vbazzxqyuqcrmjytaboc.supabase.co:5432/postgres"},
-    {...env,INVESTING_R2C4_PG_DSN:"postgresql://investing_initial_preview_runtime:secret@db.zkqgpejlkgootkvkebhd.supabase.co:5432/postgres?sslmode=disable"},
-    {...env,INVESTING_R2C4_PG_DSN:"postgresql://investing_initial_preview_runtime:secret@localhost:5432/postgres"},
+    {...env,SYNTRAKE_ONBOARDING_PG_ENABLED:"disabled"},
+    {...env,SYNTRAKE_ONBOARDING_PREVIEW_PROJECT_REF:"vbazzxqyuqcrmjytaboc"},
+    {...env,SYNTRAKE_ONBOARDING_PG_CA_PEM:""},
+    {...env,SYNTRAKE_ONBOARDING_DATABASE_URL:"postgresql://postgres:secret@aws-0-eu-west-3.pooler.supabase.com:5432/postgres"},
+    {...env,SYNTRAKE_ONBOARDING_DATABASE_URL:"postgresql://investing_bl2bl3_preview_login.vbazzxqyuqcrmjytaboc:secret@aws-0-eu-west-3.pooler.supabase.com:5432/postgres"},
+    {...env,SYNTRAKE_ONBOARDING_DATABASE_URL:"postgresql://investing_bl2bl3_preview_login.aaaaaaaaaaaaaaaaaaaa:secret@aws-0-eu-west-3.pooler.supabase.com:5432/postgres?sslmode=disable"},
+    {...env,SYNTRAKE_ONBOARDING_DATABASE_URL:"postgresql://investing_bl2bl3_preview_login.aaaaaaaaaaaaaaaaaaaa:secret@localhost:5432/postgres"},
   ])assert.equal(isR2C4PrivateWriteReady(bad),false);
 });
 test("R2-C4: disabled/no authorization never calls Clerk or touches private PG pool",async()=>{
@@ -106,6 +104,6 @@ test("R2-C4: unauthenticated and DB unavailable fail closed without leaking SQL 
   assert.equal(failed.status,503);
   const content=await failed.text();
   assert.ok(!content.includes("PRIVATE_POSTGRES_PASSWORD"));
-  assert.ok(!content.includes(env.INVESTING_R2C4_PG_DSN));
+  assert.ok(!content.includes(env.SYNTRAKE_ONBOARDING_DATABASE_URL));
   assert.equal(failed.headers.get("Cache-Control"),"private,no-store,max-age=0");
 });

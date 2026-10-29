@@ -1,9 +1,12 @@
-import { Pool, type PoolClient } from "pg";
+import type { PoolClient } from "pg";
 import {
   initializeCommand, initializeFirstInvestingPortfolio, InitialPortfolioBlocked,
   type InitialPortfolioReceipt,
 } from "./initializeFirstPortfolio";
-import { isR2CPreviewEnabled } from "./onboardingTransport";
+import {
+  isOnboardingPortfolioPreviewReady,
+  makeOnboardingPortfolioPool,
+} from "./onboardingPortfolioFromClerk";
 
 /**
  * R2-C4: candidate-only, private PG runtime bridge. No public SQL RPC,
@@ -18,47 +21,14 @@ export type ActorProvider = () => Promise<ClerkSession>;
 export type FirstPortfolioPool = Readonly<{connect:()=>Promise<PoolClient>}>;
 export type PgFactory = (environment: Env) => FirstPortfolioPool & {end?:()=>Promise<void>};
 
-export const R2C4_PREVIEW_REF = "zkqgpejlkgootkvkebhd";
-const USERNAME = "investing_initial_preview_runtime";
 const MAX_BODY_BYTES = 1024;
 
 export function isR2C4PrivateWriteReady(env: Env): boolean {
-  if (!isR2CPreviewEnabled(env) ||
-      env.VERCEL_ENV !== "preview" ||
-      env.INVESTING_R2C4_PRIVATE_WRITE !== "enabled" ||
-      env.INVESTING_R2C4_PROJECT_REF !== R2C4_PREVIEW_REF) return false;
-  const trust = env.INVESTING_R2C4_PG_CA_PEM?.replace(/\\n/g,"\n");
-  if (!trust || !trust.includes("-----BEGIN CERTIFICATE-----") ||
-      !trust.includes("-----END CERTIFICATE-----")) return false;
-  const raw = env.INVESTING_R2C4_PG_DSN;
-  if (!raw || raw.length > 2048) return false;
-  try {
-    const parsed = new URL(raw);
-    return parsed.protocol === "postgresql:" &&
-      parsed.hostname === "db." + R2C4_PREVIEW_REF + ".supabase.co" &&
-      parsed.port === "5432" &&
-      parsed.pathname === "/postgres" &&
-      decodeURIComponent(parsed.username) === USERNAME &&
-      Boolean(parsed.password) &&
-      parsed.search === "" &&
-      parsed.hash === "";
-  } catch {
-    return false;
-  }
+  return isOnboardingPortfolioPreviewReady(env);
 }
 export function makePrivateProvisioningPool(env: Env): FirstPortfolioPool & {end:()=>Promise<void>} {
   if (!isR2C4PrivateWriteReady(env)) throw new Error("PRIVATE_PREVIEW_NOT_CONFIGURED");
-  // Externally provisioned, narrowly privileged dedicated login only.
-  // An operator must create/authorize it separately after approved PG17/RLS
-  // evidence. No credential is embedded in code or emitted to logs.
-  return new Pool({
-    connectionString: env.INVESTING_R2C4_PG_DSN!,
-    ssl: {ca:env.INVESTING_R2C4_PG_CA_PEM!.replace(/\\n/g,"\n"),rejectUnauthorized:true},
-    max:2,
-    connectionTimeoutMillis:3000,
-    idleTimeoutMillis:2000,
-    allowExitOnIdle:true,
-  });
+  return makeOnboardingPortfolioPool(env);
 }
 const headers = Object.freeze({
   "Cache-Control":"private,no-store,max-age=0",
