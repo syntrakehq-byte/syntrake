@@ -21,8 +21,9 @@ const env={
   INVESTING_R2C4_PG_DSN:"postgresql://investing_initial_preview_runtime:ci_placeholder@db.zkqgpejlkgootkvkebhd.supabase.co:5432/postgres",
   INVESTING_R2C4_PG_CA_PEM:"-----BEGIN CERTIFICATE-----\\nCI_DUMMY\\n-----END CERTIFICATE-----",
   INVESTING_R2D_IMPORT_ENABLED:"enabled",
-  INVESTING_R2D_PROJECT_REF:"zkqgpejlkgootkvkebhd",
-  INVESTING_R2D_PG_DSN:"postgresql://investing_import_preview_runtime:ci_placeholder@db.zkqgpejlkgootkvkebhd.supabase.co:5432/postgres",
+  INVESTING_R2D_PROJECT_REF:"aaaaaaaaaaaaaaaaaaaa",
+  INVESTING_R2D_POOLER_HOST:"aws-0-eu-west-3.pooler.supabase.com",
+  INVESTING_R2D_PG_DSN:"postgresql://investing_import_preview_login.aaaaaaaaaaaaaaaaaaaa:ci_placeholder@aws-0-eu-west-3.pooler.supabase.com:5432/postgres",
   INVESTING_R2D_PG_CA_PEM:"-----BEGIN CERTIFICATE-----\\nCI_DUMMY\\n-----END CERTIFICATE-----",
 };
 const canonicalEnv={
