@@ -6,6 +6,7 @@ import { resolveRequestSiteLang } from "@/lib/i18n/requestSiteLang";
 import { isR2COperationalReady } from "@/investing-core/server/onboardingTransport";
 import { inspectOwnExistingInvestingAccounts } from "@/investing-core/server/existingAccountReview";
 import { isR2DImportReady } from "@/investing-core/server/importPreviewRuntime";
+import { isOnboardingPortfolioReady } from "@/investing-core/server/onboardingPortfolioFromClerk";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -101,6 +102,10 @@ export default async function ExistingInvestingAccountsPage({
         )}
         {existing && <p className="mt-5 text-sm text-amber-200">{t.uncertain}</p>}
       </section>
+      {!failed && existing?.accountMultiplicity === "ONE" && existing.portfolioIds.length>0 && isOnboardingPortfolioReady(process.env) &&
+       <Link className="mt-7 mr-7 inline-block text-cyan-300 underline" href="/investing/profile">
+         {lang==="fr"?"Déclarer ou corriger mon profil Investing":lang==="en"?"Declare or correct my Investing profile":"Declarar ou corrigir o meu perfil Investing"}
+       </Link>}
       {!failed && existing?.accountMultiplicity === "ONE" && existing.portfolioIds.length>0 && isR2DImportReady(process.env) &&
        <Link className="mt-7 mr-7 inline-block text-emerald-300 underline" href="/investing/import">{t.import}</Link>}
       <Link className="mt-7 inline-block text-sky-300 underline" href="/investing/start">
