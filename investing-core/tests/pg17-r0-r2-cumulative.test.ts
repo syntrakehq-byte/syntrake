@@ -5,6 +5,8 @@ import { Client, Pool } from "pg";
 import { initializeFirstInvestingPortfolio } from "../server/initializeFirstPortfolio";
 import { savePortfolioImport, PortfolioImportBlocked } from "../server/savePortfolioImport";
 import { readOwnPortfolioImport, PortfolioImportReadBlocked } from "../server/readOwnPortfolioImport";
+import { listOwnPortfolioImports } from "../server/listOwnPortfolioImports";
+import { compareImportDeclarations, ImportComparisonBlocked } from "../portfolio/compareImportDeclarations";
 import { createOnboardingService } from "../r2/onboardingPortfolio";
 import { createPostgresPortfolioRepository } from "../server/postgresPortfolioRepository";
 
@@ -68,6 +70,27 @@ test("R0→R2 cumulative PG17: exact candidate SQL, role isolation, owner A/B, i
       await db.query(sql);
       process.stdout.write("CUMULATIVE_CANDIDATE_SQL_APPLIED " + path + "\n");
     }
+
+    // The 2026-10-30 R2-C3 Production column-level read repair is part of the
+    // current deployed migration lineage and must be replayed here as well.
+    const r2c3ReadGrant = await readFile(new URL(
+      "../../supabase/migrations/20261030173329_r2c3_authenticated_portfolio_structural_read.sql",
+      import.meta.url,
+    ), "utf8");
+    await db.query(r2c3ReadGrant);
+    const r2c3Rights = await db.query<{
+      portfolioId: boolean; accountFk: boolean; mayInsert: boolean;
+      mayUpdate: boolean; mayDelete: boolean;
+    }>(`select
+      has_column_privilege('authenticated','investing.portfolios','id','SELECT') "portfolioId",
+      has_column_privilege('authenticated','investing.portfolios','investment_account_id','SELECT') "accountFk",
+      has_table_privilege('authenticated','investing.portfolios','INSERT') "mayInsert",
+      has_table_privilege('authenticated','investing.portfolios','UPDATE') "mayUpdate",
+      has_table_privilege('authenticated','investing.portfolios','DELETE') "mayDelete"`);
+    assert.deepEqual(r2c3Rights.rows, [{
+      portfolioId: true, accountFk: true, mayInsert: false,
+      mayUpdate: false, mayDelete: false,
+    }], "R2-C3 grants only the structural columns; no user writes");
 
     const counts = await db.query<{ tables: number; rls: number; forced: number }>(`
       select count(*)::int as tables,
@@ -183,6 +206,68 @@ test("R0→R2 cumulative PG17: exact candidate SQL, role isolation, owner A/B, i
       ...importCommand, idempotencyKey: "cumulative-cross-import-01",
     }), (e: unknown) => e instanceof PortfolioImportBlocked && e.code === "NOT_AUTHORIZED");
 
+    // R2-D / R2-E cumulative: two persisted user-reported snapshots, then
+    // immutable owner-only history/readbacks and BigInt comparison. Do NOT
+    // infer a real deposit, trade, verified balance, valuation or P&L.
+    await assert.rejects(savePortfolioImport(imports, A, {
+      ...importCommand,
+      declaration: { ...importDeclaration, cashBalances: [{ currency: "EUR", amountMinor: "9999" }] },
+    }), (e: unknown) => e instanceof PortfolioImportBlocked && e.code === "IDEMPOTENCY_CONFLICT");
+    const secondCommand = {
+      portfolioId: accountA.portfolioId,
+      idempotencyKey: "cumulative-import-000002",
+      declaration: {
+        ...importDeclaration,
+        sourceReference: "cumulative-declaration-20261030",
+        asOf: "2026-10-30T12:00:00.000Z",
+        cashBalances: [{ currency: "EUR", amountMinor: "5432" }],
+      },
+    };
+    const savedSecond = await savePortfolioImport(imports, A, secondCommand);
+    assert.notEqual(savedSecond.snapshotId, saved.snapshotId);
+    assert.deepEqual(await savePortfolioImport(imports, A, secondCommand), savedSecond,
+      "second snapshot replay must be idempotent");
+    const afterReadback = await readOwnPortfolioImport(imports, A, {
+      portfolioId: accountA.portfolioId, snapshotId: savedSecond.snapshotId,
+    });
+    assert.equal(afterReadback.cashBalances[0]?.minor, 5432n);
+    assert.equal(afterReadback.evidenceStatus, "UNVERIFIED");
+    assert.equal(afterReadback.valuation, "UNAVAILABLE");
+    const history = await listOwnPortfolioImports(imports, A, accountA.portfolioId);
+    assert.equal(history.records.length, 2);
+    assert.equal(history.records[0].snapshotId, savedSecond.snapshotId);
+    assert.equal(history.records[1].snapshotId, saved.snapshotId);
+    assert.equal(history.hasMore, false);
+    assert.equal(history.financialWrites, false);
+    await assert.rejects(listOwnPortfolioImports(imports, B, accountA.portfolioId),
+      (e: unknown) => e instanceof PortfolioImportReadBlocked &&
+        e.code === "NOT_AUTHORIZED");
+    await assert.rejects(readOwnPortfolioImport(imports, B, {
+      portfolioId: accountA.portfolioId, snapshotId: savedSecond.snapshotId,
+    }), (e: unknown) => e instanceof PortfolioImportReadBlocked &&
+      e.code === "NOT_AUTHORIZED");
+
+    const declaredComparison = compareImportDeclarations(readback, afterReadback);
+    assert.equal(declaredComparison.kind, "UNVERIFIED_DECLARATION_COMPARISON_V1");
+    assert.equal(declaredComparison.evidence, "USER_REPORTED_UNVERIFIED");
+    assert.deepEqual(declaredComparison.cash.map(c => ({
+      currency: c.currency, state: c.change.state, difference: c.change.reportedDifference,
+    })), [{ currency: "EUR", state: "TWO_REPORTED_VALUES", difference: "1111" }]);
+    assert.deepEqual(declaredComparison.positions, []);
+    assert.equal(declaredComparison.ledgerMovements, "UNAVAILABLE");
+    assert.equal(declaredComparison.buySellReconstruction, "UNAVAILABLE");
+    assert.equal(declaredComparison.realizedContributions, "UNAVAILABLE");
+    assert.equal(declaredComparison.fxConversion, "UNAVAILABLE");
+    assert.equal(declaredComparison.valuation, "UNAVAILABLE");
+    assert.equal(declaredComparison.performance, "UNAVAILABLE");
+    assert.equal(declaredComparison.financialWrites, false);
+    assert.throws(() => compareImportDeclarations(readback, readback),
+      (e: unknown) => e instanceof ImportComparisonBlocked &&
+        e.code === "IDENTICAL_SNAPSHOT");
+    assert.throws(() => compareImportDeclarations(afterReadback, readback),
+      (e: unknown) => e instanceof ImportComparisonBlocked &&
+        e.code === "INVALID_CHRONOLOGY");
+
     const audit = await db.query<{
       owners: string; portfolios: string; subledgers: string;
       revisions: string; imports: string; txs: string; entries: string;
@@ -196,9 +281,9 @@ test("R0→R2 cumulative PG17: exact candidate SQL, role isolation, owner A/B, i
       (select count(*)::text from investing.ledger_entries) entries`);
     assert.deepEqual(audit.rows, [{
       owners: "2", portfolios: "2", subledgers: "12", revisions: "3",
-      imports: "1", txs: "0", entries: "0",
+      imports: "2", txs: "0", entries: "0",
     }]);
-    process.stdout.write("R0_R2_CUMULATIVE_ISOLATED_PG17_PASS\n");
+    process.stdout.write("R0_R2_CUMULATIVE_ISOLATED_PG17_PASS_WITH_R2C3_IMPORT_COMPARISON\\n");
   } finally {
     await Promise.allSettled(pools.map(p => p.end()));
     await db.end();
