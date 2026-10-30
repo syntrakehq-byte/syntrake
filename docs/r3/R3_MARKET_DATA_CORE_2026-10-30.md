@@ -8,6 +8,16 @@
 
 **Hard scope boundary:** no trading strategies, signals, edge discovery, autonomous trading decisions, backtests, paper trading, execution or broker integrations. Research Lab is not part of this R3 delivery. Shared-source compatibility is a future architectural possibility, not a feature requirement or present implementation.
 
+## Binding product architecture — Research Lab is optional
+
+**The SYNTRAKE Investing engine must operate autonomously without the Research Lab.** The Research Lab is an **optional, removable product feature**, not the engine, decision orchestrator, data scheduler, mandatory dependency, or source of truth. Removing, disabling or failing the Research Lab must not interrupt SYNTRAKE's core Investing operation.
+
+- **Autonomous core (future implementation):** server-side scheduled ingestion of licensed market/news data, validation, storage, portfolio tracking and valuation, risk/goal monitoring, and evidence-backed updates/alerts when those capabilities exist. This continues with no user session, browser, or Research Lab.
+- **Research Lab (optional):** additional user-facing, on-demand exploration and experiments. It consumes validated core data through stable interfaces; the core must never import or require Lab code or services for normal operation.
+- **Graceful degradation:** if the Lab is removed or unavailable, Investing and Market Data keep running. If a market/news provider is unavailable, the core records staleness/unavailability and follows safe retry policy rather than fabricating data or depending on Lab.
+- **Acceptance requirement for a later integration:** disable/remove Lab routes and service and verify the Investing core's scheduled jobs, account reads, market updates, monitoring and recovery remain functional. Feature flags must not gate the core on Lab availability.
+- **Current R3-A limitation:** the above autonomous background system is **an architectural requirement, not an implemented feature**. The PR currently contains only isolated market-data contracts and an offline-tested provider adapter. No automatic trading decisions, execution, autonomous financial operations or Research Lab implementation are authorized.
+
 ## Roadmap and acceptance gates
 
 | Slice | Deliverable | Acceptance/evidence |
