@@ -97,7 +97,7 @@ export default async function InvestingHub({
     { title:t.existing, description:t.existingInfo, path:"/investing/existing", enabled:available.review, icon:Layers3 },
     { title:t.profile, description:t.profileInfo, path:"/investing/profile", enabled:available.profile, icon:ClipboardList },
     { title:t.importer, description:t.importerInfo, path:"/investing/import", enabled:available.importer, icon:FileText },
-    { title:t.setup, description:t.setupInfo, path:"/investing/start", enabled:available.setup && status.state === "none", icon:Plus },
+    ...(status.state === "none" ? [{ title:t.setup, description:t.setupInfo, path:"/investing/start", enabled:available.setup, icon:Plus }] : []),
   ] as const;
   return (
     <WorkspaceShell lang={lang} area="investing">
