@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { ArrowRight, CheckCircle2, Clock3, FlaskConical, Info, Layers3, ShieldCheck, TrendingUp, BarChart3 } from "lucide-react";
 import { resolveRequestSiteLang, withLangQuery } from "@/lib/i18n/requestSiteLang";
 import { readInvestingWorkspaceStatus } from "@/lib/workspace/investingOverview";
+import { isR1AccountReadEnabled } from "@/investing-core/server/accountsReadHttp";
 import { WorkspaceShell, WorkspaceSection, WorkspaceTile } from "@/components/workspace/WorkspaceShell";
 
 export const runtime = "nodejs";
@@ -83,6 +84,18 @@ export default async function StartPage({
   const lang = await resolveRequestSiteLang(await searchParams);
   const tx = copy[lang];
   const href = (path: string) => withLangQuery(path, lang);
+  // Preserve the original R1 product-entry security contract: the exact
+  // same server-side read gate controls both /investing/accounts and its API.
+  const link = (path: string) => withLangQuery(path, lang);
+  const { userId } = session;
+  const r1AccountsEnabled = isR1AccountReadEnabled(process.env);
+  const setupTarget = r1AccountsEnabled ? link("/investing/accounts") : link("/start");
+  const openSetupHref = userId ? setupTarget : link(`/sign-in?redirect_url=${encodeURIComponent(setupTarget)}`);
+  const r1Label = {
+    en: "View investing accounts",
+    pt: "Ver contas de investimento",
+    fr: "Voir les comptes d’investissement",
+  }[lang];
   const state = await readInvestingWorkspaceStatus({
     userId: session.userId, sessionId: session.sessionId,
     getToken: () => session.getToken(),
@@ -135,6 +148,13 @@ export default async function StartPage({
                 <Link href={href("/investing")} className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-[#e8c995] hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#e8c995]">
                   {tx.continue}<ArrowRight size={16} aria-hidden="true" />
                 </Link>
+                {r1AccountsEnabled ? (
+                  <div className="mt-3">
+                    <Link href={openSetupHref} className="inline-flex items-center gap-2 text-xs font-medium text-[#9ac7ed] hover:text-white">
+                      {r1Label}<ArrowRight size={14} aria-hidden="true" />
+                    </Link>
+                  </div>
+                ) : null}
               </div>
             </div>
           </div>
