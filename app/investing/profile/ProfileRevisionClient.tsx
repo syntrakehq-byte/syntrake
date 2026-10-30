@@ -83,8 +83,13 @@ function newRef(prefix: string): string {
 export default function ProfileRevisionClient({lang}:{lang:SiteLang}) {
   const t=copy[lang];
   const {userId,isLoaded}=useAuth();
-  const [accountId,setAccountId]=useState<string|null>(null);
-  const [readState,setReadState]=useState<"loading"|"ready"|"blocked">("loading");
+  const [accountCheck,setAccountCheck]=useState<
+    {userId:string;accountId:string|null;status:"ready"|"blocked"}|null
+  >(null);
+  const readState = !isLoaded ? "loading" :
+    !userId ? "blocked" : accountCheck?.userId===userId ? accountCheck.status : "loading";
+  const accountId = userId && accountCheck?.userId===userId && readState==="ready"
+    ? accountCheck.accountId : null;
   const [mode,setMode]=useState<Mode>("initial");
   const [objective,setObjective]=useState("");
   const [currency,setCurrency]=useState("");
@@ -99,9 +104,9 @@ export default function ProfileRevisionClient({lang}:{lang:SiteLang}) {
   const [pending,setPending]=useState<{accountId:string;revisionId:string}|null>(null);
 
   useEffect(()=>{
-    if(!isLoaded||!userId){if(isLoaded)setReadState("blocked");return;}
+    if(!isLoaded||!userId)return;
     let active=true;
-    setReadState("loading");setAccountId(null);
+    const checkedUserId=userId;
     void fetch("/api/investing/existing-account",{cache:"no-store",credentials:"same-origin"}).then(async response=>{
       if(!response.ok)throw Error("READ_FAILED");
       const data=await response.json() as Read;
@@ -111,8 +116,8 @@ export default function ProfileRevisionClient({lang}:{lang:SiteLang}) {
         owned?.accountMultiplicity!=="ONE"||
         !owned.accountId||!Array.isArray(owned.portfolioIds)||owned.portfolioIds.length===0)
           throw Error("NO_UNIQUE_OWNED_ACCOUNT");
-      if(active){setAccountId(owned.accountId);setReadState("ready");}
-    }).catch(()=>{if(active)setReadState("blocked");});
+      if(active)setAccountCheck({userId:checkedUserId,accountId:owned.accountId,status:"ready"});
+    }).catch(()=>{if(active)setAccountCheck({userId:checkedUserId,accountId:null,status:"blocked"});});
     return ()=>{active=false;};
   },[isLoaded,userId]);
 
