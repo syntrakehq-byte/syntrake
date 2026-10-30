@@ -4,7 +4,9 @@
 
 ## Architecture goal
 
-One canonical Market Data service shared by **Investing, Trading and Research Lab**, without treating these as the same financial account or conflating their records. Market Data has its own navigation: market preview/news **never** invade the Accueil. The UI must say unavailable until sources and licenses are verified; no simulated prices or artificial performance.
+**CURRENT PRODUCT SCOPE: INVESTING ONLY.** R3 exists to support the Investing experience: reliable instruments, historical prices, FX, source quality, and eventually context from financial news for analysis of portfolios and long-term investments. Market Data and a future News Intelligence module may later be reused by Trading, **but no Trading functionality is authorized or under development in R3**. Market Data has its own navigation: market preview/news never invade Accueil. The UI must say unavailable until sources and licenses are verified; no simulated prices or artificial performance.
+
+**Hard scope boundary:** no trading strategies, signals, edge discovery, autonomous trading decisions, backtests, paper trading, execution or broker integrations. Research Lab is not part of this R3 delivery. Shared-source compatibility is a future architectural possibility, not a feature requirement or present implementation.
 
 ## Roadmap and acceptance gates
 
@@ -13,8 +15,8 @@ One canonical Market Data service shared by **Investing, Trading and Research La
 | **R3-A — contracts / provider boundary** | Instrument identity (MIC, asset class, currency, FX direction); daily OHLC schema; Twelve Data fixed HTTPS endpoint adapter; observable provenance, exchange-local daily date, explicit non-adjustment; strict parse and fail-closed Preview-only SHA gate; pure freshness/credit policy | Deterministic, offline negative/positive tests, strict TypeScript, site/investing regressions. **Current PR.** |
 | **R3-B — durable market registry** | PG17 private market schema, instrument registry, raw ingest metadata, immutable/revisable daily candles, quality/rejection reason, dedupe by provider, instrument, interval, exchange date, adjustment and version | New versioned migration and isolated PG17 tests incl. duplicate/conflicting candles, RLS and private schema exposure; no writes to R0–R2 ledger. Do not apply migrations remotely without reviewed release authorization. |
 | **R3-C — collection / operations** | Scheduled worker with *durable* per-provider credit reservation, backoff after 429, bounded backfill, queue/idempotence and crash recovery | Tests show no fetch without reserved credit, no double-credit on concurrent workers, retry/backoff, strict host/secret handling, cost review before enabling provider calls. |
-| **R3-D — authenticated reads** | Authoritative data and quality/latency labels on Market Data page; stale/missing observations explicitly unknown | Signed Clerk authorization and isolation; no fake defaults, no leaking provider keys; commercial redistribution rights cleared before client-facing display. |
-| **R3-E — FX/corporate actions** | Explicit as-of FX direction and provenance, split/dividend adjustment policy, gap handling, historical revision tracking | Deterministic checks across currencies/timezones, stale and missing rates; never infer valuations from insufficient data. |
+| **R3-D — authenticated reads for Investing** | Authoritative instrument data and quality/latency labels on Market Data pages, available to Investing workflows; stale/missing observations explicitly unknown | Signed Clerk authorization and isolation; no fake defaults, no leaking provider keys; commercial redistribution rights cleared before client-facing display. No Trading integration. |
+| **R3-E — Investing FX/corporate actions** | Explicit as-of FX direction and provenance, split/dividend adjustment policy, gap handling, historical revision tracking for investment analysis | Deterministic checks across currencies/timezones, stale and missing rates; never infer valuations from insufficient data. No trading signals. |
 | **R3-F — release** | R0→R3 cumulative rehearsal and exact Production SHA plan | PG17 + fake provider + one separately approved capped provider integration, evidence of timestamps/quality; **no customer launch** until R2 exception #47 signed Clerk A/B is closed. |
 
 ## R3-A contract
@@ -39,4 +41,4 @@ Before storing vendor prices, the schema must define adjustment, corrected candl
 
 ## Non-goals
 
-No paid Twelve Data plan or live key. No schedule, cron, public market endpoint, Supabase schema change, portfolio valuation, market news source, broker positions, trading execution, or fictitious market data. Language/i18n cleanup deferred until after the Market Data Core, per owner decision.
+No paid Twelve Data plan or live key. No schedule, cron, public market endpoint, Supabase schema change, portfolio valuation, market news source, broker positions, trading strategies/signals, backtesting, paper/live execution, or fictitious market data. News monitoring/analysis is an **Investing-supporting future R3 component** requiring its own licensed sources and evidence policy; it is not implemented in R3-A. Language/i18n cleanup deferred until after the Market Data Core, per owner decision.
