@@ -14,7 +14,9 @@
     "test:investing": "tsx --test investing-core/tests/invariants.test.ts investing-core/tests/supabaseReadTransport.test.ts investing-core/tests/serverEntry.test.ts investing-core/tests/accountsReadHttp.test.ts investing-core/tests/accountDiscoveryViewModel.test.ts investing-core/tests/accountsReadProductionGate.test.ts investing-core/tests/firstProductionMigrationGate.test.ts investing-core/tests/portfolioImportDraft.test.ts investing-core/tests/onboardingIntent.test.ts investing-core/tests/initialPortfolio.test.ts investing-core/tests/existingAccountReview.test.ts investing-core/tests/firstPortfolioPreviewHttp.test.ts investing-core/tests/importPreviewHttp.test.ts investing-core/tests/compareImportDeclarations.test.ts investing-core/tests/verifyPreviewImportCatalog.test.ts investing-core/tests/verifySignedClerkRlsAB.test.ts investing-core/tests/previewDeploymentGate.test.ts investing-core/tests/r2OnboardingPortfolio.test.ts investing-core/tests/onboardingPortfolioHttp.test.ts investing-core/tests/r2ProductionGate.test.ts",
     "test:investing:pg17": "tsx --test investing-core/tests/pg17.test.ts",
     "test:investing:pg17:readonly": "tsx --test investing-core/tests/pg17-release-readonly.test.ts",
-    "test:investing:r2f:mock": "tsx --test investing-core/tests/verifySignedClerkRlsAB.test.ts"
+    "test:investing:r2f:mock": "tsx --test investing-core/tests/verifySignedClerkRlsAB.test.ts",
+    "test:market-data": "tsx --test market-data-core/tests/r3a.test.ts",
+    "typecheck:market-data": "tsc -p tsconfig.market-data.json --noEmit"
   },
   "overrides": {
     "@clerk/shared": "3.47.7",
