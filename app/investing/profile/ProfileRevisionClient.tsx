@@ -66,12 +66,15 @@ const copy = {
   },
 } satisfies Record<SiteLang, Record<string,string>>;
 
-function moneyToMinor(raw: string): string | null {
-  const value = raw.trim();
+function moneyToMinor(raw: string, currency: string): string | null {
+  const value = raw.trim().replace(",", ".");
   if (!value) return null;
-  if (!/^(?:0|[1-9][0-9]{0,17})(?:\.[0-9]{1,2})?$/.test(value)) throw Error("INVALID_MONEY");
+  const digits = currency === "JPY" ? 0 : currency === "KWD" ? 3 : 2;
+  const amountPattern = new RegExp("^(?:0|[1-9][0-9]{0,17})" + (digits ? "(?:\\.[0-9]{1," + digits + "})?" : "") + "$");
+  if (!amountPattern.test(value)) throw Error("INVALID_MONEY");
   const [whole, fraction = ""] = value.split(".");
-  return (BigInt(whole) * 100n + BigInt((fraction + "00").slice(0,2))).toString();
+  return (BigInt(whole) * 10n ** BigInt(digits) +
+    BigInt((fraction + "0".repeat(digits)).slice(0,digits) || "0")).toString();
 }
 function newRef(prefix: string): string {
   return prefix + crypto.randomUUID().replaceAll("-", "");
@@ -140,7 +143,7 @@ export default function ProfileRevisionClient({lang}:{lang:SiteLang}) {
     if(!accountId||readState!=="ready"||busy||pending||!objective.trim()||
        !currency||!horizon||!tolerance||!capacity)return;
     let declaredCapital:string|null;
-    try{declaredCapital=moneyToMinor(capital);}catch{setError("Invalid declared capital amount");return;}
+    try{declaredCapital=moneyToMinor(capital,currency);}catch{setError("Invalid declared capital amount");return;}
     const revisionId=newRef("revision_");
     const idempotencyKey=newRef("idem_");
     const input={
