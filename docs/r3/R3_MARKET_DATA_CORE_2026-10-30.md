@@ -18,6 +18,25 @@
 - **Acceptance requirement for a later integration:** disable/remove Lab routes and service and verify the Investing core's scheduled jobs, account reads, market updates, monitoring and recovery remain functional. Feature flags must not gate the core on Lab availability.
 - **Current R3-A limitation:** the above autonomous background system is **an architectural requirement, not an implemented feature**. The PR currently contains only isolated market-data contracts and an offline-tested provider adapter. No automatic trading decisions, execution, autonomous financial operations or Research Lab implementation are authorized.
 
+## Binding integration — Market Data + News Intelligence feed Investing Core
+
+**Market Data Core and News Intelligence are not merely UI pages. Their validated outputs MUST be understood and consumed by Investing Core as first-class inputs. Investing Core is the autonomous business engine.**
+
+Canonical directional contract:
+
+`Market providers → Market Data Core (identify / validate / normalize / date / provenance / store)`
+`Licensed news sources → News Intelligence (deduplicate / identify events / entities / publication time / provenance / uncertainty / store)`
+`Both canonical read interfaces → Investing Core (link to owned portfolios and instruments / evaluate change in exposure, risk, goals and valuation where justified / track observations / generate evidence-backed alerts and analysis)`
+`Investing Core → user Investing views and permitted notifications`.
+
+- Market Data Core and News Intelligence each **own ingestion and source truth**; no Investing financial ledger writes from provider adapters. Data consumers never need to know the raw vendor format.
+- The **Investing Core must be able to join market observations and news events** to canonical instruments and the user's real portfolios/holdings through identity-safe interfaces; news that cannot be reliably attributed must remain unlinked. `source_time`, `first_seen_at`, provider identity, rights and data quality are retained.
+- The Investing Core **interprets** the combined inputs in the context of the user's declared objectives, horizon, risk tolerance, liquidity and positions. An event can lead to analysis or a conditional alert; a headline, generic sentiment score or unverified holding **must never** be presented as a verified trade recommendation or guaranteed return.
+- The analysis/monitoring pipeline will eventually run on server-side workers **without the user online**; freshness, failed-provider retries, stale-data handling and explicit uncertainty are mandatory. External news/price fetches must honor provider licensing, credit budgets and rate limits.
+- **Research Lab is never in this dependency path**: removing Lab cannot stop ongoing Investing ingestion, interpretation, monitoring or notifications. A future Lab may consume the same facts, but cannot be a prerequisite.
+- **No Trading development** in this roadmap. The two data cores may be reusable in Trading later through read-only interfaces, subject to a separate project decision.
+- **Implementation status:** R3-A has only the provider-boundary adapter and offline tests; News Intelligence, the Investing Core ingestion contracts, actual analysis jobs, persistent market/news data, and end-to-end integration remain **NOT IMPLEMENTED**. They require their own staged tests, including a scenario where an actual linked portfolio receives a correctly time-stamped, attributed news event and Investing produces an auditable result, with the Lab removed.
+
 ## Roadmap and acceptance gates
 
 | Slice | Deliverable | Acceptance/evidence |
