@@ -1,0 +1,25 @@
+import type { Metadata } from "next";
+import { auth } from "@clerk/nextjs/server";
+import { notFound, redirect } from "next/navigation";
+import { resolveRequestSiteLang } from "@/lib/i18n/requestSiteLang";
+import { isOnboardingPortfolioReady } from "@/investing-core/server/onboardingPortfolioFromClerk";
+import ProfileRevisionClient from "./ProfileRevisionClient";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const metadata: Metadata = {
+  title: "Investing — Profile revisions | Syntrake",
+  robots: { index: false, follow: false, noarchive: true },
+};
+
+export default async function ProfileRevisionPage({
+  searchParams,
+}: { searchParams?: Promise<{lang?: string}> | {lang?: string} }) {
+  if (!isOnboardingPortfolioReady(process.env)) notFound();
+  const session = await auth();
+  if (!session.userId || !session.sessionId) {
+    redirect("/sign-in?redirect_url=%2Finvesting%2Fprofile");
+  }
+  const lang = await resolveRequestSiteLang(await searchParams);
+  return <ProfileRevisionClient lang={lang} />;
+}
