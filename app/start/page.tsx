@@ -24,7 +24,7 @@ const copy = {
     trading: "Um espaço separado para desenvolver estratégias e preparar o trading.",
     research: "Experimenta e avalia hipóteses com evidências e backtests quando estiver disponível.",
     markets: "Instrumentos, preços, históricos e notícias numa área própria, a partir do R3.",
-    open: "Abrir área", ready: "R2 disponível", future: "Em desenvolvimento", planned: "Planeado", r3: "Próxima fase: R3",
+    open: "Abrir área", ready: "R2 disponível", inactive: "Indisponível aqui", future: "Em desenvolvimento", planned: "Planeado", r3: "Próxima fase: R3",
     nextEyebrow: "Continuidade", next: "O que podes fazer agora", existing: "A tua estrutura Investing está disponível.",
     existingDetails: "Encontrámos uma conta com {n} portfólio(s). Os valores financeiros continuam por verificar.",
     noAccount: "Ainda não foi encontrada uma conta Investing.", noAccountDetails: "Quando quiseres, inicia a configuração progressiva do Investing.",
@@ -43,7 +43,7 @@ const copy = {
     trading: "An independent space for developing strategies and preparing trading.",
     research: "Investigate and evaluate ideas with evidence and backtests when available.",
     markets: "Instruments, prices, history and news in their own space, starting at R3.",
-    open: "Open area", ready: "R2 available", future: "In development", planned: "Planned", r3: "Next phase: R3",
+    open: "Open area", ready: "R2 available", inactive: "Unavailable here", future: "In development", planned: "Planned", r3: "Next phase: R3",
     nextEyebrow: "Pick up where you left off", next: "What you can do now", existing: "Your Investing structure is available.",
     existingDetails: "An account with {n} portfolio(s) was observed. Financial figures remain unverified.",
     noAccount: "No Investing account was found.", noAccountDetails: "Start the progressive Investing setup when you are ready.",
@@ -62,7 +62,7 @@ const copy = {
     trading: "Un espace indépendant pour développer des stratégies et préparer le trading.",
     research: "Étudiez et évaluez des idées avec des preuves et des backtests, lorsqu'ils seront disponibles.",
     markets: "Instruments, cours, historiques et actualités dans un espace dédié, à partir de R3.",
-    open: "Ouvrir l'espace", ready: "R2 disponible", future: "En développement", planned: "Prévu", r3: "Prochaine phase : R3",
+    open: "Ouvrir l'espace", ready: "R2 disponible", inactive: "Indisponible ici", future: "En développement", planned: "Prévu", r3: "Prochaine phase : R3",
     nextEyebrow: "Continuité", next: "Que faire maintenant", existing: "Votre structure Investing est disponible.",
     existingDetails: "Un compte avec {n} portefeuille(s) a été identifié. Les données financières restent non vérifiées.",
     noAccount: "Aucun compte Investing identifié.", noAccountDetails: "Commencez la configuration progressive d'Investing lorsque vous le souhaitez.",
@@ -116,7 +116,7 @@ export default async function StartPage({
       <div id="areas">
         <WorkspaceSection title={tx.areas} eyebrow={tx.areasIntro}>
           <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-4">
-            <WorkspaceTile href={href("/investing")} icon={Layers3} title="Investing" description={tx.investing} tag={tx.ready} cta={tx.open} accent="gold" />
+            <WorkspaceTile href={href("/investing")} icon={Layers3} title="Investing" description={tx.investing} tag={state.state === "disabled" || state.state === "unavailable" ? tx.inactive : tx.ready} cta={tx.open} accent="gold" />
             <WorkspaceTile href={href("/trading")} icon={TrendingUp} title="Trading" description={tx.trading} tag={tx.future} cta={tx.open} accent="blue" />
             <WorkspaceTile href={href("/research")} icon={FlaskConical} title="Research Lab" description={tx.research} tag={tx.planned} cta={tx.open} accent="purple" />
             <WorkspaceTile href={href("/markets")} icon={BarChart3} title="Market Data" description={tx.markets} tag={tx.r3} cta={tx.open} accent="teal" />
