@@ -388,6 +388,7 @@ test("R3-E0 PG17 LOGIN worker uses the Twelve Data adapter through R3-C", async 
 
 test("R3-E0 rejects a Registry identity from another listing before HTTP or ACK", async () => {
   const job = "80000000-0000-0000-0000-0000000000b9";
+  const revisionsBefore = (await db.query("SELECT count(*)::int AS n FROM market_core.market_observation_revisions")).rows[0].n as number;
   await db.query(`INSERT INTO market_core.ingest_jobs
     (job_id,demand_key,listing_id,provider_id,rights_policy_id,budget_period_id,estimated_credits,idempotency_key,state,attempt,max_attempts,next_run_at,last_error)
     VALUES ($1,$2,$3,$4,$5,$6,1,$7,'PENDING',0,3,clock_timestamp(),NULL)`,
@@ -410,7 +411,7 @@ test("R3-E0 rejects a Registry identity from another listing before HTTP or ACK"
   await assert.rejects(runOfflineIngestOnce({ db: worker, provider, workerId:"worker-b", leaseToken:"80000000-0000-0000-0000-0000000000ba", runId:"80000000-0000-0000-0000-0000000000bb", providerRunKey:"r3e0-mismatch", consumedCredits:"1", exchangeTimezone:"America/New_York" }), /OFFLINE_PROVIDER_IDENTITY_MISMATCH/);
   assert.equal(transportCalls, 0);
   assert.equal((await db.query("SELECT state FROM market_core.ingest_jobs WHERE job_id=$1", [job])).rows[0].state, "FETCHING");
-  assert.equal((await db.query("SELECT count(*)::int AS n FROM market_core.market_observation_revisions WHERE listing_id=$1", [ids.listing])).rows[0].n, 0);
+  assert.equal((await db.query("SELECT count(*)::int AS n FROM market_core.market_observation_revisions")).rows[0].n, revisionsBefore);
   assert.equal((await db.query("SELECT count(*)::int AS n FROM market_core.ingestion_runs WHERE job_id=$1", [job])).rows[0].n, 0);
   await worker.end();
 });
