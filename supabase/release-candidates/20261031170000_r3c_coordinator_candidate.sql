@@ -54,6 +54,31 @@ CREATE TABLE market_core.ingestion_runs (
 CREATE INDEX ingest_jobs_ready_idx ON market_core.ingest_jobs (state, next_run_at);
 CREATE INDEX leases_expiry_idx ON market_core.job_leases (lease_until);
 
+CREATE OR REPLACE FUNCTION market_core.recover_expired_ingest_leases(p_now timestamptz)
+RETURNS integer
+LANGUAGE plpgsql SECURITY INVOKER AS $$
+DECLARE recovered integer;
+BEGIN
+  WITH expired AS (
+    SELECT l.job_id, j.attempt, j.max_attempts
+    FROM market_core.job_leases l
+    JOIN market_core.ingest_jobs j USING (job_id)
+    WHERE l.lease_until <= p_now
+    FOR UPDATE OF l, j
+  )
+  UPDATE market_core.ingest_jobs j
+  SET state = CASE WHEN expired.attempt >= expired.max_attempts THEN 'DEAD_LETTER' ELSE 'RETRY_WAIT' END,
+      next_run_at = p_now,
+      last_error = 'LEASE_EXPIRED'
+  FROM expired
+  WHERE j.job_id = expired.job_id;
+  GET DIAGNOSTICS recovered = ROW_COUNT;
+  DELETE FROM market_core.job_leases l WHERE l.lease_until <= p_now;
+  RETURN recovered;
+END $$;
+REVOKE ALL ON FUNCTION market_core.recover_expired_ingest_leases(timestamptz) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION market_core.recover_expired_ingest_leases(timestamptz) TO market_core_ingest;
+
 CREATE OR REPLACE FUNCTION market_core.claim_ingest_job(p_worker_id text, p_lease_token uuid, p_now timestamptz, p_lease_for interval)
 RETURNS TABLE (job_id uuid, reservation_id uuid, demand_key text)
 LANGUAGE plpgsql SECURITY INVOKER AS $$
@@ -88,7 +113,8 @@ ALTER TABLE market_core.job_leases FORCE ROW LEVEL SECURITY;
 ALTER TABLE market_core.credit_reservations FORCE ROW LEVEL SECURITY;
 ALTER TABLE market_core.ingestion_runs FORCE ROW LEVEL SECURITY;
 GRANT SELECT, UPDATE ON market_core.provider_budget_periods, market_core.ingest_jobs TO market_core_ingest;
-GRANT INSERT ON market_core.credit_reservations, market_core.job_leases, market_core.ingestion_runs TO market_core_ingest;
+GRANT INSERT, DELETE ON market_core.job_leases TO market_core_ingest;
+GRANT INSERT ON market_core.credit_reservations, market_core.ingestion_runs TO market_core_ingest;
 CREATE POLICY coordinator_budget ON market_core.provider_budget_periods FOR SELECT TO market_core_ingest USING (current_user = 'market_core_ingest');
 CREATE POLICY coordinator_budget_update ON market_core.provider_budget_periods FOR UPDATE TO market_core_ingest USING (current_user = 'market_core_ingest') WITH CHECK (current_user = 'market_core_ingest');
 CREATE POLICY coordinator_jobs ON market_core.ingest_jobs FOR SELECT TO market_core_ingest USING (current_user = 'market_core_ingest');

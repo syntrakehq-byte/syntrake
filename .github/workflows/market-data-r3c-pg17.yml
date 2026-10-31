@@ -23,4 +23,10 @@ jobs:
       - run: npm ci
       - run: psql -h 127.0.0.1 -U postgres -d postgres -tAc "SELECT current_setting('server_version') LIKE '17.%'" | tr -d ' ' | grep -qx t
         env: { PGPASSWORD: postgres }
+      - run: npm run test:market-data
+      - run: npm run typecheck:market-data
+      - run: npm run test:market-data:r3b
       - run: npm run test:market-data:r3c
+      - run: npm run test:investing
+      - run: npx tsc --noEmit
+      - run: npx tsc -p tsconfig.investing.json --noEmit
