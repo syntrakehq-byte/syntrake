@@ -87,3 +87,24 @@ test("conflicting run cannot ACK, debit credits, or commit the job", async () =>
   assert.equal(budget.rows[0].reserved,"1.000000");
   assert.equal(budget.rows[0].consumed,"0.000000");
 });
+
+
+test("lost rights during pre-fetch retry releases reservation and forbids any refetch", async () => {
+  const job="10000000-0000-0000-0000-000000000020";
+  const token="30000000-0000-0000-0000-000000000021";
+  await c.query("INSERT INTO market_core.ingest_jobs VALUES ($1,repeat('2',64),$2,$3,$4,$5,1,'idem-revoked','PENDING',0,3,clock_timestamp(),NULL)",[job,id.li,id.p,id.r,id.bp]);
+  assert.equal((await c.query("SELECT count(*) AS n FROM market_core.claim_ingest_job_safe('rights-worker',$1)",[token])).rows[0].n,"1");
+  await c.query("UPDATE market_core.job_leases SET leased_at=clock_timestamp()-interval '10 minutes',heartbeat_at=clock_timestamp()-interval '9 minutes',lease_until=clock_timestamp()-interval '1 minute' WHERE job_id=$1",[job]);
+  assert.equal((await c.query("SELECT market_core.recover_expired_ingest_leases_safe() AS n")).rows[0].n,1);
+  await c.query("UPDATE market_core.license_policies SET cache_allowed=false WHERE rights_policy_id=$1",[id.r]);
+  try {
+    assert.equal((await c.query("SELECT count(*) AS n FROM market_core.claim_ingest_job_safe('rights-worker-2','30000000-0000-0000-0000-000000000022')")).rows[0].n,"0");
+    assert.equal((await c.query("SELECT state FROM market_core.ingest_jobs WHERE job_id=$1",[job])).rows[0].state,"DEAD_LETTER");
+    assert.equal((await c.query("SELECT state FROM market_core.credit_reservations WHERE job_id=$1",[job])).rows[0].state,"RELEASED");
+    const budget=await c.query("SELECT reserved_credits::text AS x,consumed_credits::text AS y FROM market_core.provider_budget_periods");
+    assert.equal(budget.rows[0].x,"0.000000");
+    assert.equal(budget.rows[0].y,"0.000000");
+  } finally {
+    await c.query("UPDATE market_core.license_policies SET cache_allowed=true WHERE rights_policy_id=$1",[id.r]);
+  }
+});
