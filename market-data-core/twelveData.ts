@@ -1,4 +1,5 @@
-import { instrumentIdentity, MarketDataError, record, type InstrumentIdentity } from "./identity";
+import { createHash } from "node:crypto";
+import { instrumentIdentity, MarketDataError, record, resolveProviderAlias, validMarketDate, type AliasResolution, type InstrumentIdentity } from "./identity";
 import { requireR3AProviderReady } from "./gate";
 import { validateEnvelope, type DataEnvelope } from "./contracts";
 
@@ -66,12 +67,12 @@ function candle(value: unknown): DailyCandle {
   return Object.freeze({ marketDate: x.datetime, open, high, low, close, volume });
 }
 
-function parseSeries(raw: unknown, instrument: InstrumentIdentity, observedAtUtc: string): DailySeries {
+function parseSeries(raw: unknown, instrument: InstrumentIdentity, observedAtUtc: string, providerReference: string): Omit<DailySeries, "envelope"> {
   const body = record(raw), meta = record(body?.meta), values = body?.values;
   if (!body || body.status !== "ok" || !meta || !Array.isArray(values) || values.length < 1 || values.length > 1000) {
     throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
   }
-  if (meta.symbol !== instrument.symbol || meta.interval !== "1day" ||
+  if (meta.symbol !== providerReference || meta.interval !== "1day" ||
       meta.currency !== instrument.currency || !validTimezone(meta.exchange_timezone)) {
     throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
   }
@@ -94,8 +95,7 @@ function parseSeries(raw: unknown, instrument: InstrumentIdentity, observedAtUtc
     observedAtUtc, latency: "NOT_VERIFIED" as const,
     evidence: "PROVIDER_RESPONSE" as const,
     candles: Object.freeze(candles.reverse()),
-    provenance: { provider: "TWELVE_DATA" as const, originalSourceId: "twelve-data:time_series", requestId: null, sourceDocumentUri: null },
-    envelope: undefined as never,
+    provenance: { provider: "TWELVE_DATA" as const, originalSourceId: `time_series:${instrument.kind}:${instrument.mic ?? "FX"}:${providerReference}:${instrument.currency}:1day:none`, requestId: null, sourceDocumentUri: null },
   });
 }
 
@@ -114,21 +114,55 @@ function retryAfter(response: Response): number | null {
 export async function fetchDailySeries(input: Readonly<{
   env: Env;
   instrument: InstrumentIdentity;
+  /** An exact, point-in-time resolved provider alias is REQUIRED for registry-owned IDs. */
+  sourceAlias?: AliasResolution;
+  asOf?: string;
   outputSize: number;
   transport?: Fetcher;
   clock?: Clock;
 }>): Promise<DailySeries> {
   // Fail BEFORE constructing URL or calling transport when not authorized.
   const apikey = requireR3AProviderReady(input.env);
-  const instrument = instrumentIdentity({
+  const hint = instrumentIdentity({
     kind: input.instrument?.kind, symbol: input.instrument?.symbol,
     mic: input.instrument?.mic, currency: input.instrument?.currency,
   });
-  if (instrument.key !== input.instrument.key || !Number.isSafeInteger(input.outputSize) || input.outputSize < 1 || input.outputSize > 1000) {
+  if (!Number.isSafeInteger(input.outputSize) || input.outputSize < 1 || input.outputSize > 1000) {
+    throw new MarketDataError("INVALID_REQUEST");
+  }
+
+  const instrument = input.instrument;
+  const resolved = instrument.instrumentId !== null || instrument.listingId !== null;
+  let providerReference = hint.symbol;
+  if (resolved) {
+    // The descriptive ticker key and the registry-owned key are DIFFERENT by design.
+    // Never trust a caller-supplied registry ID without an EXACT provider alias.
+    if (!instrument.instrumentId || !instrument.listingId ||
+        instrument.key !== `instrument:${instrument.instrumentId}:listing:${instrument.listingId}` ||
+        !input.sourceAlias || input.sourceAlias.status !== "EXACT" ||
+        !input.asOf || !validMarketDate(input.asOf)) {
+      throw new MarketDataError("INVALID_REQUEST");
+    }
+    const alias = input.sourceAlias.alias;
+    if (!alias || !/^[A-Z0-9][A-Z0-9.\/-]{0,31}$/.test(alias.providerReference)) {
+      throw new MarketDataError("INVALID_REQUEST");
+    }
+    const checked = resolveProviderAlias("TWELVE_DATA", alias.providerReference, input.asOf, [alias]);
+    if (checked.status !== "EXACT" ||
+        checked.instrumentId !== instrument.instrumentId ||
+        checked.listingId !== instrument.listingId ||
+        checked.instrumentId !== input.sourceAlias.instrumentId ||
+        checked.listingId !== input.sourceAlias.listingId) {
+      throw new MarketDataError("INVALID_REQUEST");
+    }
+    providerReference = alias.providerReference;
+  } else if (instrument.instrumentId !== null || instrument.listingId !== null ||
+             instrument.key !== hint.key || input.sourceAlias !== undefined || input.asOf !== undefined) {
+    // Hints are deliberately non-canonical. Only used for isolated offline adapter tests.
     throw new MarketDataError("INVALID_REQUEST");
   }
   const url = new URL("https://api.twelvedata.com/time_series");
-  url.searchParams.set("symbol", instrument.symbol);
+  url.searchParams.set("symbol", providerReference);
   url.searchParams.set("interval", "1day");
   url.searchParams.set("outputsize", String(input.outputSize));
   url.searchParams.set("adjust", "none"); // Explicit to prevent implicit corporate-action rewrites.
@@ -168,14 +202,36 @@ export async function fetchDailySeries(input: Readonly<{
   try { now = (input.clock ?? (() => new Date()))(); }
   catch { throw new MarketDataError("INVALID_REQUEST"); }
   if (!(now instanceof Date) || Number.isNaN(now.valueOf())) throw new MarketDataError("INVALID_REQUEST");
-  const series = parseSeries(body, instrument, now.toISOString());
+  const series = parseSeries(body, instrument, now.toISOString(), providerReference);
   if (series.candles.length > input.outputSize) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+  if (resolved) {
+    const alias = input.sourceAlias!.alias;
+    if (series.candles.some(c => (alias.validFrom !== null && c.marketDate < alias.validFrom) ||
+        (alias.validTo !== null && c.marketDate >= alias.validTo))) {
+      throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+    }
+  }
+  // A content-addressed observation revision changes whenever price/source/identity changes.
+  // R3-B must assign durable database revisions; this is NOT a persistence sequence number.
+  const revisionId = "sha256:" + createHash("sha256").update(JSON.stringify({
+    key: series.instrument.key, provider: series.provider,
+    source: series.provenance.originalSourceId, interval: series.interval,
+    adjustment: series.adjustment, candles: series.candles,
+  })).digest("hex");
   const envelope = validateEnvelope<readonly DailyCandle[]>({
     status: "AVAILABLE", value: series.candles, sourceRefs: [series.provenance],
     marketDate: series.candles[series.candles.length - 1]?.marketDate,
     firstSeenAt: series.observedAtUtc, ingestedAt: series.observedAtUtc, asKnownAt: series.observedAtUtc,
-    revisionId: `${series.instrument.key}:${series.candles.length}`, schemaVersion: "1.0",
+    revisionId, schemaVersion: "1.0",
     quality: { flags: ["LATENCY_NOT_VERIFIED"], coverage: "FULL" }, rights: { policyId: "provider-contract-pending", display: false, retentionUntil: null },
-  }, value => Array.isArray(value));
+  }, (value): value is readonly DailyCandle[] =>
+    Array.isArray(value) && value.length > 0 &&
+    value.every((c: unknown) => record(c) !== null &&
+      validDate((c as DailyCandle).marketDate) &&
+      typeof (c as DailyCandle).open === "string" &&
+      typeof (c as DailyCandle).high === "string" &&
+      typeof (c as DailyCandle).low === "string" &&
+      typeof (c as DailyCandle).close === "string" &&
+      ((c as DailyCandle).volume === null || typeof (c as DailyCandle).volume === "string")));
   return Object.freeze({ ...series, envelope });
 }
