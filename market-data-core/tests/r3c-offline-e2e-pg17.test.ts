@@ -82,6 +82,8 @@ before(async () => {
   await db.query(`GRANT market_core_ingest TO ${runtimeRoles.worker} WITH INHERIT TRUE, SET FALSE`);
   await db.query(`GRANT market_core_ingest TO ${runtimeRoles.workerB} WITH INHERIT TRUE, SET FALSE`);
   await db.query(`GRANT market_core_supervisor TO ${runtimeRoles.supervisor} WITH INHERIT TRUE, SET FALSE`);
+  await db.query(`GRANT SELECT ON market_core.worker_identity_bindings TO ${runtimeRoles.worker}, ${runtimeRoles.workerB}`);
+  await db.query(`GRANT SELECT (job_id, worker_id, lease_until) ON market_core.job_leases TO ${runtimeRoles.worker}, ${runtimeRoles.workerB}`);
   await db.query("INSERT INTO market_core.worker_identity_bindings VALUES ($1,$2),($3,$4)", [runtimeRoles.worker,"service-pg17",runtimeRoles.workerB,"worker-b"]);
   await db.query("INSERT INTO market_core.providers VALUES ($1,'FAKE_E2E','ACTIVE')", [ids.provider]);
   await db.query("INSERT INTO market_core.license_policies VALUES ($1,'offline-fixture',true,false,NULL)",[ids.rights]);

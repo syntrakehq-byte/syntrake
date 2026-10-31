@@ -26,10 +26,10 @@ ALTER TABLE market_core.worker_identity_bindings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE market_core.worker_identity_bindings FORCE ROW LEVEL SECURITY;
 GRANT SELECT ON market_core.worker_identity_bindings TO market_core_ingest;
 CREATE POLICY worker_identity_self_read ON market_core.worker_identity_bindings
-  FOR SELECT TO market_core_ingest USING (login_role = current_user);
+  FOR SELECT TO PUBLIC USING (login_role = current_user);
 GRANT SELECT (job_id, worker_id, lease_until) ON market_core.job_leases TO market_core_ingest;
 CREATE POLICY worker_identity_lease_read ON market_core.job_leases
-  FOR SELECT TO market_core_ingest USING (EXISTS (
+  FOR SELECT TO PUBLIC USING (EXISTS (
     SELECT 1 FROM market_core.worker_identity_bindings b
     WHERE b.login_role = current_user AND b.worker_id = job_leases.worker_id
   ));
