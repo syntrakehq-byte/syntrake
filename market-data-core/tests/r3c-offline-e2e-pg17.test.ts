@@ -248,7 +248,12 @@ test("R3-D3 service sends periodic heartbeats during a slow offline task and shu
     provider: async () => { providerStarted = true; await providerBlocked; return response(); },
   });
   const running = service.start();
-  while (!providerStarted) await new Promise(resolve => setTimeout(resolve, 5));
+  const providerDeadline = Date.now() + 3000;
+  while (!providerStarted && Date.now() < providerDeadline) await new Promise(resolve => setTimeout(resolve, 5));
+  if (!providerStarted) {
+    await assert.rejects(running, error => error instanceof Error && /WORKER_IDENTITY_REJECTED|WORKER_FAILURE/.test(error.message));
+    throw new Error(`offline worker did not reach provider; heartbeat=${service.heartbeatError ?? "none"}`);
+  }
   const initial = (await db.query("SELECT last_seen_at FROM market_core.worker_heartbeats WHERE worker_id=$1 AND instance_id=$2", [workerId, instanceId])).rows[0].last_seen_at as Date;
   let periodic: Date | undefined;
   const deadline = Date.now() + 1000;
