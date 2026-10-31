@@ -228,21 +228,42 @@ test("R3-D3 service sends periodic heartbeats during a slow offline task and shu
   const capabilityToken = (await db.query("SELECT market_core.register_worker_instance($1,$2) AS token", [workerId, instanceId])).rows[0].token as string;
   const clientFactory = async () => new Client({ host: process.env.PGHOST ?? "127.0.0.1", port: Number(process.env.PGPORT ?? 5432), user: process.env.PGUSER ?? "postgres", password: process.env.PGPASSWORD ?? "postgres", database: process.env.PGDATABASE ?? "postgres", connectionTimeoutMillis: 3000 });
   let providerStarted = false;
+  let releaseProvider!: () => void;
+  const providerBlocked = new Promise<void>(resolve => { releaseProvider = resolve; });
   const service = new ContinuousWorkerService({
     workerId, instanceId, capabilityToken, clientFactory, exchangeTimezone: "UTC", consumedCredits: "1",
     heartbeatIntervalMs: 15, maxTasks: 1, maxPolls: 1,
-    provider: async () => { providerStarted = true; await new Promise(resolve => setTimeout(resolve, 100)); return response(); },
+    provider: async () => { providerStarted = true; await providerBlocked; return response(); },
   });
   const running = service.start();
   while (!providerStarted) await new Promise(resolve => setTimeout(resolve, 5));
-  await new Promise(resolve => setTimeout(resolve, 45));
-  const heartbeatRow = await db.query("SELECT last_seen_at FROM market_core.worker_heartbeats WHERE worker_id=$1 AND instance_id=$2", [workerId, instanceId]);
-  assert.equal(heartbeatRow.rowCount, 1);
-  const before = heartbeatRow.rows[0].last_seen_at as Date;
+  const initial = (await db.query("SELECT last_seen_at FROM market_core.worker_heartbeats WHERE worker_id=$1 AND instance_id=$2", [workerId, instanceId])).rows[0].last_seen_at as Date;
+  let periodic: Date | undefined;
+  const deadline = Date.now() + 1000;
+  while (!periodic && Date.now() < deadline) {
+    const row = await db.query("SELECT last_seen_at FROM market_core.worker_heartbeats WHERE worker_id=$1 AND instance_id=$2", [workerId, instanceId]);
+    const current = row.rows[0]?.last_seen_at as Date | undefined;
+    if (current && current.valueOf() > initial.valueOf()) periodic = current;
+    else await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  assert.ok(periodic && periodic.valueOf() > initial.valueOf());
+  releaseProvider();
   await running;
   const stats = await service.shutdown().then(() => service.isRunning);
   assert.equal(stats, false);
   assert.equal((await db.query("SELECT state FROM market_core.ingest_jobs WHERE job_id=$1", [job])).rows[0].state, "COMMITTED");
   assert.equal((await db.query("SELECT count(*)::int AS n FROM market_core.credit_reservations WHERE job_id=$1", [job])).rows[0].n, 1);
-  assert.ok(before instanceof Date);
+});
+
+test("PG17 least-privilege probe identifies the missing ingest catalog read and permits supervisor inspection", async () => {
+  await db.query("SET ROLE market_core_ingest");
+  await assert.rejects(
+    db.query("SELECT provider_id, provider_key FROM market_core.providers LIMIT 1"),
+    /permission denied for table providers/,
+  );
+  await db.query("RESET ROLE");
+  await db.query("SET ROLE market_core_supervisor");
+  const snapshot = await db.query("SELECT * FROM market_core.supervisor_snapshot($1::interval)", ["1 minute"]);
+  assert.ok(Array.isArray(snapshot.rows));
+  await db.query("RESET ROLE");
 });

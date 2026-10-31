@@ -1,8 +1,7 @@
 import type { Client } from "pg";
-import { AutonomousWorker, type WorkerClientFactory, type WorkerEvent, type WorkerStats } from "./autonomousWorker";
+import { AutonomousWorker, safeError, type WorkerClientFactory, type WorkerEvent, type WorkerStats } from "./autonomousWorker";
 import type { OfflineProvider } from "./offlinePipeline";
 import { heartbeat } from "./supervisor";
-import { safeError } from "./autonomousWorker";
 
 export type WorkerServiceConfig = Readonly<{
   workerId: string;
@@ -35,7 +34,10 @@ function interval(value: number | undefined, fallback: number): number {
 export class ContinuousWorkerService {
   private stopping = false;
   private running: Promise<WorkerStats> | undefined;
+  private starting = false;
   private heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+  private heartbeatInFlight = false;
+  private heartbeatPending: Promise<void> | undefined;
   private worker: AutonomousWorker | undefined;
   private signalHandlers: Array<readonly [NodeJS.Signals, () => void]> = [];
   private heartbeatFailureCode: string | undefined;
@@ -47,7 +49,7 @@ export class ContinuousWorkerService {
     if (config.capabilityToken.length < 32 || config.capabilityToken.length > 256) throw new Error("INVALID_CAPABILITY");
   }
 
-  get isRunning(): boolean { return this.running !== undefined; }
+  get isRunning(): boolean { return this.running !== undefined || this.starting; }
   get heartbeatError(): string | undefined { return this.heartbeatFailureCode; }
 
   private async sendHeartbeat(): Promise<void> {
@@ -66,21 +68,40 @@ export class ContinuousWorkerService {
     }
   }
 
+  private heartbeatTick(): Promise<void> {
+    if (this.stopping || this.heartbeatInFlight) return Promise.resolve();
+    this.heartbeatInFlight = true;
+    const pending = this.sendHeartbeat().finally(() => {
+      this.heartbeatInFlight = false;
+      if (this.heartbeatPending === pending) this.heartbeatPending = undefined;
+    });
+    this.heartbeatPending = pending;
+    return pending;
+  }
+
   async start(): Promise<WorkerStats> {
-    if (this.running) throw new Error("WORKER_ALREADY_RUNNING");
+    if (this.running || this.starting) throw new Error("WORKER_ALREADY_RUNNING");
+    this.starting = true;
     this.stopping = false;
     this.heartbeatFailureCode = undefined;
-    this.installSignalHandlers();
-    const heartbeatMs = interval(this.config.heartbeatIntervalMs, DEFAULT_HEARTBEAT_MS);
-    this.heartbeatTimer = setInterval(() => { void this.sendHeartbeat(); }, heartbeatMs);
-    this.worker = new AutonomousWorker({ ...this.config, heartbeat: { instanceId: this.config.instanceId, capabilityToken: this.config.capabilityToken } });
-    this.running = this.worker.run();
-    try { return await this.running; }
+    const worker = new AutonomousWorker({ ...this.config });
+    this.worker = worker;
+    try {
+      this.installSignalHandlers();
+      const heartbeatMs = interval(this.config.heartbeatIntervalMs, DEFAULT_HEARTBEAT_MS);
+      this.heartbeatTimer = setInterval(() => { void this.heartbeatTick().catch(() => { /* tick is isolated */ }); }, heartbeatMs);
+      await this.heartbeatTick();
+      this.running = worker.run();
+      return await this.running;
+    }
     finally {
       if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = undefined;
+      await this.heartbeatPending;
+      if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
       this.running = undefined;
       this.worker = undefined;
+      this.starting = false;
       this.removeSignalHandlers();
     }
   }
@@ -90,7 +111,10 @@ export class ContinuousWorkerService {
   async shutdown(): Promise<void> {
     this.stopping = true;
     this.worker?.stop();
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    this.heartbeatTimer = undefined;
     this.removeSignalHandlers();
+    await this.heartbeatPending;
     // AutonomousWorker is the owner of the active run; stop is wired by the
     // run wrapper below through the service's bounded shutdown promise.
     await this.running;

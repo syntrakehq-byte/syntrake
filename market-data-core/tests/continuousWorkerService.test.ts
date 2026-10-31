@@ -69,3 +69,39 @@ test("shutdown stops a long idle poll without waiting for its configured interva
   assert.ok(Date.now() - started < 1000);
   assert.equal((await pending).stopped, true);
 });
+
+test("failed worker initialization leaves no timer or signal handlers behind", async () => {
+  const beforeInt = process.listenerCount("SIGINT");
+  const beforeTerm = process.listenerCount("SIGTERM");
+  const service = new ContinuousWorkerService({
+    workerId: "invalid worker", instanceId: "instance-init-failure", capabilityToken: "r".repeat(64),
+    clientFactory: async () => { throw new Error("must not connect"); }, provider: async () => ({}),
+    exchangeTimezone: "UTC", consumedCredits: "1", heartbeatIntervalMs: 5, maxTasks: 1, maxPolls: 1,
+  });
+  await assert.rejects(service.start(), /INVALID_WORKER_IDENTITY/);
+  await new Promise(resolve => setTimeout(resolve, 25));
+  assert.equal(process.listenerCount("SIGINT"), beforeInt);
+  assert.equal(process.listenerCount("SIGTERM"), beforeTerm);
+});
+
+test("heartbeat ticks are single-flight and drain during stop", async () => {
+  let active = 0;
+  let maximum = 0;
+  let release!: () => void;
+  const blocked = new Promise<void>(resolve => { release = resolve; });
+  const service = new ContinuousWorkerService({
+    workerId: "single-flight", instanceId: "instance-single-flight", capabilityToken: "s".repeat(64),
+    clientFactory: async () => client(async sql => {
+      if (sql.includes("record_worker_heartbeat")) { active++; maximum = Math.max(maximum, active); await blocked; active--; return { rows: [{ record_worker_heartbeat: true }] }; }
+      return { rows: [] };
+    }), provider: async () => ({}), exchangeTimezone: "UTC", consumedCredits: "1",
+    heartbeatIntervalMs: 5, pollIntervalMs: 10, maxTasks: 1, maxPolls: 20,
+  });
+  const running = service.start();
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(maximum, 1);
+  const shutdown = service.shutdown();
+  release();
+  await shutdown;
+  await running;
+});
