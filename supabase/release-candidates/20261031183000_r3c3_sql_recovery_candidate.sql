@@ -82,6 +82,71 @@ BEGIN
   RETURN recovered;
 END $$;
 
+-- Capability/rights can disappear while a PRE-FETCH job is waiting to retry.
+-- The previous candidate terminally rejected it but stranded its reservation.
+-- Release it atomically here. FETCHING is intentionally ineligible for claim.
+CREATE OR REPLACE FUNCTION market_core.claim_ingest_job(
+  p_worker_id text, p_lease_token uuid, p_now timestamptz, p_lease_for interval)
+RETURNS TABLE(job_id uuid, reservation_id uuid, demand_key text)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = market_core, pg_catalog AS $
+DECLARE
+  j market_core.ingest_jobs%ROWTYPE;
+  b market_core.provider_budget_periods%ROWTYPE;
+  released record;
+  r uuid;
+BEGIN
+  IF p_lease_for <= interval '0 seconds' OR p_lease_for > interval '5 minutes'
+     OR p_lease_token IS NULL OR p_now IS NULL THEN
+    RAISE EXCEPTION 'INVALID_LEASE_ARGUMENTS';
+  END IF;
+  SELECT * INTO j FROM market_core.ingest_jobs
+   WHERE state IN ('PENDING','RETRY_WAIT') AND next_run_at <= p_now
+   ORDER BY next_run_at, job_id FOR UPDATE SKIP LOCKED LIMIT 1;
+  IF NOT FOUND THEN RETURN; END IF;
+  IF NOT EXISTS (SELECT 1 FROM market_core.providers p
+     WHERE p.provider_id=j.provider_id AND p.status='ACTIVE')
+     OR NOT EXISTS (SELECT 1 FROM market_core.license_policies lp
+     WHERE lp.rights_policy_id=j.rights_policy_id AND lp.cache_allowed
+       AND (lp.retention_until IS NULL OR lp.retention_until > p_now))
+     OR NOT EXISTS (SELECT 1 FROM market_core.provider_budget_periods bp
+     WHERE bp.budget_period_id=j.budget_period_id AND bp.provider_id=j.provider_id
+       AND p_now >= bp.starts_at AND p_now < bp.ends_at) THEN
+    UPDATE market_core.ingest_jobs SET state='DEAD_LETTER',
+      last_error='CAPABILITY_DENIED' WHERE market_core.ingest_jobs.job_id=j.job_id;
+    UPDATE market_core.credit_reservations SET state='RELEASED'
+      WHERE market_core.credit_reservations.job_id=j.job_id AND state='RESERVED'
+      RETURNING budget_period_id, estimated_credits INTO released;
+    IF FOUND THEN
+      UPDATE market_core.provider_budget_periods
+         SET reserved_credits=reserved_credits-released.estimated_credits
+       WHERE budget_period_id=released.budget_period_id;
+    END IF;
+    RETURN;
+  END IF;
+  SELECT * INTO b FROM market_core.provider_budget_periods
+    WHERE budget_period_id=j.budget_period_id FOR UPDATE;
+  SELECT cr.reservation_id INTO r FROM market_core.credit_reservations cr
+    WHERE cr.job_id=j.job_id AND cr.state='RESERVED' FOR UPDATE;
+  IF r IS NULL THEN
+    IF b.reserved_credits+b.consumed_credits+j.estimated_credits > b.max_estimated_credits THEN
+      UPDATE market_core.ingest_jobs SET state='DEAD_LETTER',
+        last_error='BUDGET_EXHAUSTED' WHERE market_core.ingest_jobs.job_id=j.job_id;
+      RETURN;
+    END IF;
+    r:=p_lease_token;
+    INSERT INTO market_core.credit_reservations
+      VALUES(r,j.job_id,b.budget_period_id,j.estimated_credits,NULL,'RESERVED');
+    UPDATE market_core.provider_budget_periods
+      SET reserved_credits=reserved_credits+j.estimated_credits
+      WHERE budget_period_id=b.budget_period_id;
+  END IF;
+  UPDATE market_core.ingest_jobs SET state='LEASED',attempt=attempt+1
+    WHERE market_core.ingest_jobs.job_id=j.job_id;
+  INSERT INTO market_core.job_leases VALUES
+    (j.job_id,p_worker_id,p_lease_token,p_now,p_now+p_lease_for,p_now);
+  RETURN QUERY SELECT j.job_id,r,j.demand_key;
+END $;
+
 -- One-way durable transition BEFORE invoking any potentially billable provider.
 CREATE FUNCTION market_core.start_ingest_fetch(p_job_id uuid, p_lease_token uuid)
 RETURNS boolean
