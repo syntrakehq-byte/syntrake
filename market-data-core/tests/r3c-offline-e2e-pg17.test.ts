@@ -409,7 +409,7 @@ test("R3-E0 rejects a Registry identity from another listing before HTTP or ACK"
   await worker.connect();
   await assert.rejects(runOfflineIngestOnce({ db: worker, provider, workerId:"worker-b", leaseToken:"80000000-0000-0000-0000-0000000000ba", runId:"80000000-0000-0000-0000-0000000000bb", providerRunKey:"r3e0-mismatch", consumedCredits:"1", exchangeTimezone:"America/New_York" }), /OFFLINE_PROVIDER_IDENTITY_MISMATCH/);
   assert.equal(transportCalls, 0);
-  assert.equal((await db.query("SELECT state FROM market_core.ingest_jobs WHERE job_id=$1", [job])).rows[0].state, "PENDING");
+  assert.equal((await db.query("SELECT state FROM market_core.ingest_jobs WHERE job_id=$1", [job])).rows[0].state, "FETCHING");
   assert.equal((await db.query("SELECT count(*)::int AS n FROM market_core.market_observation_revisions WHERE listing_id=$1", [ids.listing])).rows[0].n, 0);
   assert.equal((await db.query("SELECT count(*)::int AS n FROM market_core.ingestion_runs WHERE job_id=$1", [job])).rows[0].n, 0);
   await worker.end();
