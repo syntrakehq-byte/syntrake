@@ -36,3 +36,54 @@ test("SET ROLE can execute only the coordinator RPC and recover leases", async (
   assert.equal(recovered.rows[0].n,1);
   await c.query("RESET ROLE"); });
 test("offline ACK is lease-bound, idempotent and consumes the reserved budget once", async () => { await c.query("INSERT INTO market_core.ingest_jobs VALUES ('10000000-0000-0000-0000-000000000011',repeat('e',64),$1,$2,$3,$4,1,'idem-e','PENDING',0,3,clock_timestamp(),NULL)",[id.li,id.p,id.r,id.bp]); const rev='50000000-0000-0000-0000-000000000001'; await c.query("INSERT INTO market_core.market_observations VALUES ('50000000-0000-0000-0000-000000000002',$1,$2,$3,'1day','2026-01-01','UTC','none',clock_timestamp())",[id.li,id.p,id.r]); await c.query("INSERT INTO market_core.market_observation_revisions VALUES ($1,'50000000-0000-0000-0000-000000000002',$2,NULL,repeat('f',64),1,1,1,1,NULL,clock_timestamp(),clock_timestamp(),clock_timestamp(),NULL,'{}')",[rev,id.li]); const claim = await c.query("SELECT * FROM market_core.claim_ingest_job('ack-worker','30000000-0000-0000-0000-000000000003',clock_timestamp(),'5 minutes')"); assert.equal(claim.rowCount,1); const started = await c.query("SELECT market_core.start_ingest_fetch($1,$2) AS ok",[claim.rows[0].job_id,"30000000-0000-0000-0000-000000000003"]); assert.equal(started.rows[0].ok,true); const bad = await c.query("SELECT market_core.complete_ingest_job($1,'30000000-0000-0000-0000-000000000099',$2,'provider-run-e',$3,1) AS ok",[claim.rows[0].job_id,'40000000-0000-0000-0000-000000000001',rev]); assert.equal(bad.rows[0].ok,false); assert.equal((await c.query("SELECT count(*)::int AS n FROM market_core.ingestion_runs WHERE job_id=$1",[claim.rows[0].job_id])).rows[0].n,0); const ack = await c.query("SELECT market_core.complete_ingest_job($1,'30000000-0000-0000-0000-000000000003',$2,'provider-run-e',$3,1) AS ok",[claim.rows[0].job_id,'40000000-0000-0000-0000-000000000001',rev]); assert.equal(ack.rows[0].ok,true); const again = await c.query("SELECT market_core.complete_ingest_job($1,'30000000-0000-0000-0000-000000000003',$2,'provider-run-e',$3,1) AS ok",[claim.rows[0].job_id,'40000000-0000-0000-0000-000000000002',rev]); assert.equal(again.rows[0].ok,false); assert.equal((await c.query("SELECT state FROM market_core.ingest_jobs WHERE job_id=$1",[claim.rows[0].job_id])).rows[0].state,"COMMITTED"); });
+
+
+test("SECURITY DEFINER is a NOLOGIN/NOBYPASSRLS owner, not the PG17 superuser", async () => {
+  const r = await c.query("SELECT rolcanlogin,rolbypassrls,rolsuper FROM pg_roles WHERE rolname='market_core_coordinator_owner'");
+  assert.equal(r.rows.length,1);
+  assert.equal(r.rows[0].rolcanlogin,false);
+  assert.equal(r.rows[0].rolbypassrls,false);
+  assert.equal(r.rows[0].rolsuper,false);
+  const fn = await c.query("SELECT proname,pg_get_userbyid(proowner) AS owner FROM pg_proc JOIN pg_namespace n ON n.oid=pronamespace WHERE n.nspname='market_core' AND proname IN ('claim_ingest_job','claim_ingest_job_safe','recover_expired_ingest_leases','recover_expired_ingest_leases_safe','start_ingest_fetch','complete_ingest_job')");
+  assert.equal(fn.rows.length,6);
+  assert.ok(fn.rows.every((x: {owner: string}) => x.owner === "market_core_coordinator_owner"));
+});
+
+test("pre-fetch terminal expiry releases reserved credits once", async () => {
+  const job="10000000-0000-0000-0000-000000000012";
+  const token="30000000-0000-0000-0000-000000000013";
+  await c.query("INSERT INTO market_core.ingest_jobs VALUES ($1,repeat('f',64),$2,$3,$4,$5,1,'idem-f','PENDING',0,1,clock_timestamp(),NULL)",[job,id.li,id.p,id.r,id.bp]);
+  const claim=await c.query("SELECT * FROM market_core.claim_ingest_job_safe('terminal-worker',$1)",[token]);
+  assert.equal(claim.rows[0].job_id,job);
+  assert.equal((await c.query("SELECT reserved_credits::text AS x FROM market_core.provider_budget_periods")).rows[0].x,"1.000000");
+  const recovered=await c.query("SELECT market_core.recover_expired_ingest_leases(clock_timestamp()+interval '6 minutes') AS n");
+  assert.equal(recovered.rows[0].n,1);
+  const j=await c.query("SELECT state,last_error FROM market_core.ingest_jobs WHERE job_id=$1",[job]);
+  assert.equal(j.rows[0].state,"DEAD_LETTER");
+  assert.equal(j.rows[0].last_error,"MAX_ATTEMPTS_PRE_FETCH");
+  assert.equal((await c.query("SELECT state FROM market_core.credit_reservations WHERE job_id=$1",[job])).rows[0].state,"RELEASED");
+  assert.equal((await c.query("SELECT reserved_credits::text AS x FROM market_core.provider_budget_periods")).rows[0].x,"0.000000");
+  assert.equal((await c.query("SELECT market_core.recover_expired_ingest_leases(clock_timestamp()+interval '7 minutes') AS n")).rows[0].n,0);
+  assert.equal((await c.query("SELECT reserved_credits::text AS x FROM market_core.provider_budget_periods")).rows[0].x,"0.000000");
+});
+
+test("conflicting run cannot ACK, debit credits, or commit the job", async () => {
+  const job="10000000-0000-0000-0000-000000000014";
+  const token="30000000-0000-0000-0000-000000000015";
+  const rev="50000000-0000-0000-0000-000000000016";
+  await c.query("INSERT INTO market_core.ingest_jobs VALUES ($1,repeat('1',64),$2,$3,$4,$5,1,'idem-conflict','PENDING',0,3,clock_timestamp(),NULL)",[job,id.li,id.p,id.r,id.bp]);
+  await c.query("INSERT INTO market_core.market_observations VALUES ('50000000-0000-0000-0000-000000000017',$1,$2,$3,'1day','2026-01-02','UTC','none',clock_timestamp())",[id.li,id.p,id.r]);
+  await c.query("INSERT INTO market_core.market_observation_revisions VALUES ($1,'50000000-0000-0000-0000-000000000017',$2,NULL,repeat('e',64),1,1,1,1,NULL,clock_timestamp(),clock_timestamp(),clock_timestamp(),NULL,'{}')",[rev,id.li]);
+  const claim=await c.query("SELECT * FROM market_core.claim_ingest_job_safe('conflict-worker',$1)",[token]);
+  assert.equal(claim.rows[0].job_id,job);
+  assert.equal((await c.query("SELECT market_core.start_ingest_fetch($1,$2) AS ok",[job,token])).rows[0].ok,true);
+  // Privileged fixture deliberately creates a conflicting key before the ACK.
+  await c.query("INSERT INTO market_core.ingestion_runs VALUES ('40000000-0000-0000-0000-000000000018',$1,'idem-conflict','RETRY',NULL,'FIXTURE',clock_timestamp(),'same-provider-run')",[job]);
+  const ack=await c.query("SELECT market_core.complete_ingest_job($1,$2,'40000000-0000-0000-0000-000000000019','same-provider-run',$3,1) AS ok",[job,token,rev]);
+  assert.equal(ack.rows[0].ok,false);
+  assert.equal((await c.query("SELECT state FROM market_core.ingest_jobs WHERE job_id=$1",[job])).rows[0].state,"FETCHING");
+  assert.equal((await c.query("SELECT state FROM market_core.credit_reservations WHERE job_id=$1",[job])).rows[0].state,"RESERVED");
+  const budget=await c.query("SELECT reserved_credits::text AS reserved,consumed_credits::text AS consumed FROM market_core.provider_budget_periods");
+  assert.equal(budget.rows[0].reserved,"1.000000");
+  assert.equal(budget.rows[0].consumed,"0.000000");
+});
