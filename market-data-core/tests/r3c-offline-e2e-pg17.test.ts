@@ -7,6 +7,8 @@ import { randomBytes } from "node:crypto";
 import { runOfflineIngestOnce } from "../offlinePipeline";
 import { AutonomousWorker } from "../autonomousWorker";
 import { ContinuousWorkerService } from "../continuousWorkerService";
+import { createTwelveDataOfflineProvider } from "../twelveDataProvider";
+import { canonicalIdentity, resolveProviderAlias } from "../identity";
 import type { DailyCandle } from "../twelveData";
 
 const db = new Client({
@@ -24,6 +26,11 @@ const ids = {
   instrument: "80000000-0000-0000-0000-000000000004",
   listing: "80000000-0000-0000-0000-000000000005",
   budget: "80000000-0000-0000-0000-000000000006",
+  twelveProvider: "80000000-0000-0000-0000-000000000012",
+  twelveBudget: "80000000-0000-0000-0000-000000000013",
+  twelveAlias: "80000000-0000-0000-0000-000000000014",
+  otherListing: "80000000-0000-0000-0000-000000000015",
+  otherAlias: "80000000-0000-0000-0000-000000000016",
 };
 const runtimeRoles = { worker: "r3d4_worker_login", workerB: "r3d4_worker_b_login", supervisor: "r3d4_supervisor_login" };
 const runtimePasswords = { worker: randomBytes(24).toString("hex"), workerB: randomBytes(24).toString("hex"), supervisor: randomBytes(24).toString("hex") };
@@ -86,12 +93,18 @@ before(async () => {
   await db.query(`GRANT SELECT (job_id, worker_id, lease_until) ON market_core.job_leases TO ${runtimeRoles.worker}, ${runtimeRoles.workerB}`);
   await db.query("INSERT INTO market_core.worker_identity_bindings VALUES ($1,$2),($3,$4)", [runtimeRoles.worker,"service-pg17",runtimeRoles.workerB,"worker-b"]);
   await db.query("INSERT INTO market_core.providers VALUES ($1,'FAKE_E2E','ACTIVE')", [ids.provider]);
+  await db.query("INSERT INTO market_core.providers VALUES ($1,'TWELVE_DATA','ACTIVE')", [ids.twelveProvider]);
   await db.query("INSERT INTO market_core.license_policies VALUES ($1,'offline-fixture',true,false,NULL)",[ids.rights]);
   await db.query("INSERT INTO market_core.issuers VALUES ($1,'Offline Test Issuer')",[ids.issuer]);
   await db.query("INSERT INTO market_core.instruments VALUES ($1,$2,'EQUITY','USD')",[ids.instrument,ids.issuer]);
   await db.query("INSERT INTO market_core.listings VALUES ($1,$2,'XNAS','USD','TEST',DATE '2020-01-01',NULL)",[ids.listing,ids.instrument]);
+  await db.query("INSERT INTO market_core.listings VALUES ($1,$2,'XNYS','USD','OTHER',DATE '2020-01-01',NULL)",[ids.otherListing,ids.instrument]);
   await db.query(`INSERT INTO market_core.provider_budget_periods
     VALUES ($1,$2,clock_timestamp()-interval '1 day',clock_timestamp()+interval '1 day',2,0,0)`,[ids.budget,ids.provider]);
+  await db.query(`INSERT INTO market_core.provider_budget_periods
+    VALUES ($1,$2,clock_timestamp()-interval '1 day',clock_timestamp()+interval '1 day',2,0,0)`,[ids.twelveBudget,ids.twelveProvider]);
+  await db.query("INSERT INTO market_core.provider_aliases VALUES ($1,$2,'TEST',$3,DATE '2020-01-01',NULL)",[ids.twelveAlias,ids.twelveProvider,ids.listing]);
+  await db.query("INSERT INTO market_core.provider_aliases VALUES ($1,$2,'OTHER',$3,DATE '2020-01-01',NULL)",[ids.otherAlias,ids.twelveProvider,ids.otherListing]);
 });
 afterEach(async () => {
   await db.query("DELETE FROM market_core.ingestion_runs");
@@ -143,7 +156,7 @@ test("offline claim -> fake -> strict validation -> R3-B revision -> one ACK + r
   assert.equal(row.rows[0].close,"105.500000000000");
   assert.equal(row.rows[0].exchange_timezone,"America/New_York");
   assert.equal((await db.query("SELECT count(*)::int AS n FROM market_core.ingestion_runs")).rows[0].n,1);
-  const budget = await db.query("SELECT reserved_credits::text, consumed_credits::text FROM market_core.provider_budget_periods");
+  const budget = await db.query("SELECT reserved_credits::text, consumed_credits::text FROM market_core.provider_budget_periods WHERE budget_period_id=$1", [ids.budget]);
   assert.equal(budget.rows[0].reserved_credits,"0.000000");
   assert.equal(budget.rows[0].consumed_credits,"1.000000");
   assert.deepEqual(await runOfflineIngestOnce(opts),{state:"NO_WORK"});
@@ -164,7 +177,7 @@ test("offline claim -> fake -> strict validation -> R3-B revision -> one ACK + r
   assert.equal((await db.query("SELECT count(*)::int AS n FROM market_core.market_observations")).rows[0].n,1);
   assert.equal((await db.query("SELECT count(*)::int AS n FROM market_core.market_observation_revisions")).rows[0].n,1);
   assert.equal((await db.query("SELECT count(*)::int AS n FROM market_core.ingestion_runs")).rows[0].n,2);
-  assert.equal((await db.query("SELECT consumed_credits::text AS consumed FROM market_core.provider_budget_periods")).rows[0].consumed,"2.000000");
+  assert.equal((await db.query("SELECT consumed_credits::text AS consumed FROM market_core.provider_budget_periods WHERE budget_period_id=$1", [ids.budget])).rows[0].consumed,"2.000000");
 });
 
 test("R3-D1 autonomous runner uses independent PG17 session and completes one queued job", async () => {
@@ -343,6 +356,64 @@ test("PG17 isolates two LOGIN workers on the active lease owner", async () => {
   releaseProvider();
   assert.equal((await running).state, "COMMITTED");
   await workerB.end();
+});
+
+test("R3-E0 PG17 LOGIN worker uses the Twelve Data adapter through R3-C", async () => {
+  const job = "80000000-0000-0000-0000-0000000000b6";
+  await db.query(`INSERT INTO market_core.ingest_jobs
+    (job_id,demand_key,listing_id,provider_id,rights_policy_id,budget_period_id,estimated_credits,idempotency_key,state,attempt,max_attempts,next_run_at,last_error)
+    VALUES ($1,$2,$3,$4,$5,$6,1,$7,'PENDING',0,3,clock_timestamp(),NULL)`,
+    [job,"e".repeat(64),ids.listing,ids.twelveProvider,ids.rights,ids.twelveBudget,"idem-"+job]);
+  const identity = canonicalIdentity({
+    instrument: { instrumentId: ids.instrument, issuerId: ids.issuer, kind: "EQUITY", denominationCurrency: "USD" },
+    listing: { listingId: ids.listing, instrumentId: ids.instrument, mic: "XNAS", tradingCurrency: "USD", ticker: "TEST", validFrom: "2020-01-01", validTo: null },
+  });
+  const alias = resolveProviderAlias("TWELVE_DATA", "TEST", "2026-01-05", [{
+    provider: "TWELVE_DATA", providerReference: "TEST", instrumentId: ids.instrument, listingId: ids.listing, validFrom: "2020-01-01", validTo: null,
+  }]);
+  const provider = createTwelveDataOfflineProvider({
+    env: { VERCEL_ENV:"preview", VERCEL_GIT_COMMIT_REF:"feat/r3-market-data-core-20261030", VERCEL_GIT_COMMIT_SHA:"a".repeat(40), SYNTRAKE_R3_PROVIDER_ENABLED:"enabled", SYNTRAKE_R3_PREVIEW_APPROVED_SHA:"a".repeat(40), SYNTRAKE_TWELVE_DATA_API_KEY:"offline-key-123456" },
+    resolve: async () => ({ instrument: identity, sourceAlias: alias, asOf: "2026-01-05" }),
+    transport: async () => new Response(JSON.stringify({ status:"ok", meta:{ symbol:"TEST", interval:"1day", currency:"USD", exchange_timezone:"America/New_York", type:"Common Stock", mic_code:"XNAS" }, values:[{ datetime:"2026-01-05", open:"100", high:"110", low:"90", close:"105.5", volume:"23" }] }), { status:200 }),
+    clock: () => new Date("2026-01-06T12:00:00Z"),
+  });
+  const worker = new Client({ host: process.env.PGHOST ?? "127.0.0.1", port: Number(process.env.PGPORT ?? 5432), user: runtimeRoles.workerB, password: runtimePasswords.workerB, database: process.env.PGDATABASE ?? "postgres", connectionTimeoutMillis: 3000 });
+  await worker.connect();
+  const result = await runOfflineIngestOnce({ db: worker, provider, workerId:"worker-b", leaseToken:"80000000-0000-0000-0000-0000000000b7", runId:"80000000-0000-0000-0000-0000000000b8", providerRunKey:"r3e0-login", consumedCredits:"1", exchangeTimezone:"America/New_York" });
+  assert.equal(result.state, "COMMITTED");
+  assert.equal((await db.query("SELECT state FROM market_core.ingest_jobs WHERE job_id=$1", [job])).rows[0].state, "COMMITTED");
+  assert.equal((await db.query("SELECT consumed_credits::text AS c FROM market_core.provider_budget_periods WHERE budget_period_id=$1", [ids.twelveBudget])).rows[0].c, "1.000000");
+  await worker.end();
+});
+
+test("R3-E0 rejects a Registry identity from another listing before HTTP or ACK", async () => {
+  const job = "80000000-0000-0000-0000-0000000000b9";
+  const revisionsBefore = (await db.query("SELECT count(*)::int AS n FROM market_core.market_observation_revisions")).rows[0].n as number;
+  await db.query(`INSERT INTO market_core.ingest_jobs
+    (job_id,demand_key,listing_id,provider_id,rights_policy_id,budget_period_id,estimated_credits,idempotency_key,state,attempt,max_attempts,next_run_at,last_error)
+    VALUES ($1,$2,$3,$4,$5,$6,1,$7,'PENDING',0,3,clock_timestamp(),NULL)`,
+    [job,"f".repeat(64),ids.listing,ids.twelveProvider,ids.rights,ids.twelveBudget,"idem-"+job]);
+  const otherIdentity = canonicalIdentity({
+    instrument: { instrumentId: ids.instrument, issuerId: ids.issuer, kind: "EQUITY", denominationCurrency: "USD" },
+    listing: { listingId: ids.otherListing, instrumentId: ids.instrument, mic: "XNYS", tradingCurrency: "USD", ticker: "OTHER", validFrom: "2020-01-01", validTo: null },
+  });
+  const otherAlias = resolveProviderAlias("TWELVE_DATA", "OTHER", "2026-01-05", [{
+    provider: "TWELVE_DATA", providerReference: "OTHER", instrumentId: ids.instrument, listingId: ids.otherListing, validFrom: "2020-01-01", validTo: null,
+  }]);
+  let transportCalls = 0;
+  const provider = createTwelveDataOfflineProvider({
+    env: { VERCEL_ENV:"preview", VERCEL_GIT_COMMIT_REF:"feat/r3-market-data-core-20261030", VERCEL_GIT_COMMIT_SHA:"a".repeat(40), SYNTRAKE_R3_PROVIDER_ENABLED:"enabled", SYNTRAKE_R3_PREVIEW_APPROVED_SHA:"a".repeat(40), SYNTRAKE_TWELVE_DATA_API_KEY:"offline-key-123456" },
+    resolve: async () => ({ instrument: otherIdentity, sourceAlias: otherAlias, asOf: "2026-01-05" }),
+    transport: async () => { transportCalls++; return new Response("unexpected"); },
+  });
+  const worker = new Client({ host: process.env.PGHOST ?? "127.0.0.1", port: Number(process.env.PGPORT ?? 5432), user: runtimeRoles.workerB, password: runtimePasswords.workerB, database: process.env.PGDATABASE ?? "postgres", connectionTimeoutMillis: 3000 });
+  await worker.connect();
+  await assert.rejects(runOfflineIngestOnce({ db: worker, provider, workerId:"worker-b", leaseToken:"80000000-0000-0000-0000-0000000000ba", runId:"80000000-0000-0000-0000-0000000000bb", providerRunKey:"r3e0-mismatch", consumedCredits:"1", exchangeTimezone:"America/New_York" }), /OFFLINE_PROVIDER_IDENTITY_MISMATCH/);
+  assert.equal(transportCalls, 0);
+  assert.equal((await db.query("SELECT state FROM market_core.ingest_jobs WHERE job_id=$1", [job])).rows[0].state, "FETCHING");
+  assert.equal((await db.query("SELECT count(*)::int AS n FROM market_core.market_observation_revisions")).rows[0].n, revisionsBefore);
+  assert.equal((await db.query("SELECT count(*)::int AS n FROM market_core.ingestion_runs WHERE job_id=$1", [job])).rows[0].n, 0);
+  await worker.end();
 });
 
 test("R3-D3 rejects invalid or revoked capability before claim, provider call, ACK or reservation", async () => {

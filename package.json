@@ -22,7 +22,8 @@
     "test:market-data:r3d1": "tsx --test --test-timeout=15000 market-data-core/tests/autonomousWorker.test.ts market-data-core/tests/r3c-offline-e2e-pg17.test.ts",
     "test:market-data:r3d2": "tsx --test --test-timeout=15000 market-data-core/tests/supervisor.test.ts market-data-core/tests/r3d2-pg17.test.ts",
     "test:market-data:r3d3": "tsx --test --test-timeout=15000 market-data-core/tests/continuousWorkerService.test.ts market-data-core/tests/autonomousWorker.test.ts market-data-core/tests/supervisor.test.ts && tsx --test --test-timeout=15000 market-data-core/tests/r3d2-pg17.test.ts && tsx --test --test-timeout=15000 market-data-core/tests/r3c-offline-e2e-pg17.test.ts",
-    "test:market-data:r3d4": "tsx --test --test-timeout=20000 market-data-core/tests/r3c-offline-e2e-pg17.test.ts"
+    "test:market-data:r3d4": "tsx --test --test-timeout=20000 market-data-core/tests/r3c-offline-e2e-pg17.test.ts",
+    "test:market-data:r3e0": "tsx --test --test-timeout=20000 market-data-core/tests/r3a.test.ts market-data-core/tests/r3c-offline-e2e-pg17.test.ts"
   },
   "overrides": {
     "@clerk/shared": "3.47.7",
