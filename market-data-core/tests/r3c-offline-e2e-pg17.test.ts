@@ -152,7 +152,7 @@ test("offline claim -> fake -> strict validation -> R3-B revision -> one ACK + r
   assert.equal(row.rows[0].close,"105.500000000000");
   assert.equal(row.rows[0].exchange_timezone,"America/New_York");
   assert.equal((await db.query("SELECT count(*)::int AS n FROM market_core.ingestion_runs")).rows[0].n,1);
-  const budget = await db.query("SELECT reserved_credits::text, consumed_credits::text FROM market_core.provider_budget_periods");
+  const budget = await db.query("SELECT reserved_credits::text, consumed_credits::text FROM market_core.provider_budget_periods WHERE budget_period_id=$1", [ids.budget]);
   assert.equal(budget.rows[0].reserved_credits,"0.000000");
   assert.equal(budget.rows[0].consumed_credits,"1.000000");
   assert.deepEqual(await runOfflineIngestOnce(opts),{state:"NO_WORK"});
@@ -173,7 +173,7 @@ test("offline claim -> fake -> strict validation -> R3-B revision -> one ACK + r
   assert.equal((await db.query("SELECT count(*)::int AS n FROM market_core.market_observations")).rows[0].n,1);
   assert.equal((await db.query("SELECT count(*)::int AS n FROM market_core.market_observation_revisions")).rows[0].n,1);
   assert.equal((await db.query("SELECT count(*)::int AS n FROM market_core.ingestion_runs")).rows[0].n,2);
-  assert.equal((await db.query("SELECT consumed_credits::text AS consumed FROM market_core.provider_budget_periods")).rows[0].consumed,"2.000000");
+  assert.equal((await db.query("SELECT consumed_credits::text AS consumed FROM market_core.provider_budget_periods WHERE budget_period_id=$1", [ids.budget])).rows[0].consumed,"2.000000");
 });
 
 test("R3-D1 autonomous runner uses independent PG17 session and completes one queued job", async () => {
