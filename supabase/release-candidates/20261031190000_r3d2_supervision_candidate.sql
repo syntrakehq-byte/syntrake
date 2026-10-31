@@ -1,4 +1,5 @@
 -- R3-D2 candidate only. Apply after R3-B, R3-C and R3-C3 in disposable PG17.
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE ROLE market_core_supervisor NOLOGIN NOBYPASSRLS;
 CREATE TABLE market_core.worker_heartbeats (
   worker_id text PRIMARY KEY CHECK (worker_id ~ '^[A-Za-z0-9_-]{1,64}$'),
@@ -26,10 +27,13 @@ CREATE POLICY supervisor_reservations_read ON market_core.credit_reservations FO
 
 CREATE OR REPLACE FUNCTION market_core.register_worker_instance(p_worker_id text, p_instance_id text)
 RETURNS text LANGUAGE plpgsql SECURITY DEFINER SET search_path = market_core, pg_catalog AS $$
-DECLARE token text := md5(random()::text || clock_timestamp()::text) || md5(random()::text || clock_timestamp()::text);
+DECLARE token text;
 BEGIN
   IF p_worker_id !~ '^[A-Za-z0-9_-]{1,64}$' OR p_instance_id !~ '^[A-Za-z0-9_-]{1,128}$' THEN RAISE EXCEPTION 'INVALID_WORKER_IDENTITY'; END IF;
-  INSERT INTO market_core.worker_instances VALUES (p_instance_id,p_worker_id,token,true);
+  UPDATE market_core.worker_instances SET active=false WHERE worker_id=p_worker_id AND active;
+  INSERT INTO market_core.worker_instances(instance_id,worker_id,capability_token,active)
+    VALUES (p_instance_id,p_worker_id,encode(gen_random_bytes(32),'hex'),true)
+    RETURNING capability_token INTO token;
   RETURN token;
 END $$;
 REVOKE ALL ON FUNCTION market_core.register_worker_instance(text,text) FROM PUBLIC;
