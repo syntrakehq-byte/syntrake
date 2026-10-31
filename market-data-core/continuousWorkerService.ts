@@ -2,6 +2,7 @@ import type { Client } from "pg";
 import { AutonomousWorker, type WorkerClientFactory, type WorkerEvent, type WorkerStats } from "./autonomousWorker";
 import type { OfflineProvider } from "./offlinePipeline";
 import { heartbeat } from "./supervisor";
+import { safeError } from "./autonomousWorker";
 
 export type WorkerServiceConfig = Readonly<{
   workerId: string;
@@ -37,7 +38,7 @@ export class ContinuousWorkerService {
   private heartbeatTimer: ReturnType<typeof setInterval> | undefined;
   private worker: AutonomousWorker | undefined;
   private signalHandlers: Array<readonly [NodeJS.Signals, () => void]> = [];
-  private heartbeatFailure: Error | undefined;
+  private heartbeatFailureCode: string | undefined;
 
   constructor(private readonly config: WorkerServiceConfig) {
     interval(config.pollIntervalMs, 1);
@@ -47,7 +48,7 @@ export class ContinuousWorkerService {
   }
 
   get isRunning(): boolean { return this.running !== undefined; }
-  get heartbeatError(): Error | undefined { return this.heartbeatFailure; }
+  get heartbeatError(): string | undefined { return this.heartbeatFailureCode; }
 
   private async sendHeartbeat(): Promise<void> {
     if (this.stopping) return;
@@ -58,8 +59,8 @@ export class ContinuousWorkerService {
       const accepted = await heartbeat(db, this.config.workerId, this.config.instanceId, this.config.capabilityToken);
       if (!accepted) throw new Error("WORKER_IDENTITY_REJECTED");
     } catch (error) {
-      this.heartbeatFailure = error instanceof Error ? error : new Error("HEARTBEAT_FAILURE");
-      this.config.onEvent?.({ kind: "FAILED", workerId: this.config.workerId, error: this.heartbeatFailure.message.split(/\s/, 1)[0] });
+      this.heartbeatFailureCode = safeError(error);
+      try { this.config.onEvent?.({ kind: "FAILED", workerId: this.config.workerId, error: this.heartbeatFailureCode }); } catch { /* observability cannot affect the worker */ }
     } finally {
       if (db) { try { await db.end(); } catch { /* heartbeat cleanup cannot change durable state */ } }
     }
@@ -68,7 +69,8 @@ export class ContinuousWorkerService {
   async start(): Promise<WorkerStats> {
     if (this.running) throw new Error("WORKER_ALREADY_RUNNING");
     this.stopping = false;
-    this.heartbeatFailure = undefined;
+    this.heartbeatFailureCode = undefined;
+    this.installSignalHandlers();
     const heartbeatMs = interval(this.config.heartbeatIntervalMs, DEFAULT_HEARTBEAT_MS);
     this.heartbeatTimer = setInterval(() => { void this.sendHeartbeat(); }, heartbeatMs);
     this.worker = new AutonomousWorker({ ...this.config, heartbeat: { instanceId: this.config.instanceId, capabilityToken: this.config.capabilityToken } });
@@ -87,6 +89,7 @@ export class ContinuousWorkerService {
 
   async shutdown(): Promise<void> {
     this.stopping = true;
+    this.worker?.stop();
     this.removeSignalHandlers();
     // AutonomousWorker is the owner of the active run; stop is wired by the
     // run wrapper below through the service's bounded shutdown promise.

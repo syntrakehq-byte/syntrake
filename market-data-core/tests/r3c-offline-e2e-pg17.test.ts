@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { Client } from "pg";
 import { runOfflineIngestOnce } from "../offlinePipeline";
 import { AutonomousWorker } from "../autonomousWorker";
+import { ContinuousWorkerService } from "../continuousWorkerService";
 import type { DailyCandle } from "../twelveData";
 
 const db = new Client({
@@ -217,4 +218,31 @@ test("malformed OHLC is rejected without persisting a revision or charging credi
     providerRunKey:"no-replay",consumedCredits:"1",
     exchangeTimezone:"America/New_York",
   }),{state:"NO_WORK"});
+});
+
+test("R3-D3 service sends periodic heartbeats during a slow offline task and shuts down cleanly", async () => {
+  const job = "80000000-0000-0000-0000-0000000000ae";
+  await createJob(job, "f");
+  const workerId = "service-pg17";
+  const instanceId = "instance-service-pg17";
+  const capabilityToken = (await db.query("SELECT market_core.register_worker_instance($1,$2) AS token", [workerId, instanceId])).rows[0].token as string;
+  const clientFactory = async () => new Client({ host: process.env.PGHOST ?? "127.0.0.1", port: Number(process.env.PGPORT ?? 5432), user: process.env.PGUSER ?? "postgres", password: process.env.PGPASSWORD ?? "postgres", database: process.env.PGDATABASE ?? "postgres", connectionTimeoutMillis: 3000 });
+  let providerStarted = false;
+  const service = new ContinuousWorkerService({
+    workerId, instanceId, capabilityToken, clientFactory, exchangeTimezone: "UTC", consumedCredits: "1",
+    heartbeatIntervalMs: 15, maxTasks: 1, maxPolls: 1,
+    provider: async () => { providerStarted = true; await new Promise(resolve => setTimeout(resolve, 100)); return response(); },
+  });
+  const running = service.start();
+  while (!providerStarted) await new Promise(resolve => setTimeout(resolve, 5));
+  await new Promise(resolve => setTimeout(resolve, 45));
+  const heartbeatRow = await db.query("SELECT last_seen_at FROM market_core.worker_heartbeats WHERE worker_id=$1 AND instance_id=$2", [workerId, instanceId]);
+  assert.equal(heartbeatRow.rowCount, 1);
+  const before = heartbeatRow.rows[0].last_seen_at as Date;
+  await running;
+  const stats = await service.shutdown().then(() => service.isRunning);
+  assert.equal(stats, false);
+  assert.equal((await db.query("SELECT state FROM market_core.ingest_jobs WHERE job_id=$1", [job])).rows[0].state, "COMMITTED");
+  assert.equal((await db.query("SELECT count(*)::int AS n FROM market_core.credit_reservations WHERE job_id=$1", [job])).rows[0].n, 1);
+  assert.ok(before instanceof Date);
 });

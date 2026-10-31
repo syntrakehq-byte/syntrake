@@ -37,3 +37,35 @@ test("service rejects a second start and removes signal handlers on shutdown", a
   await service.shutdown();
   assert.equal(service.isRunning, false);
 });
+
+test("heartbeat errors are allowlisted and throwing callbacks are contained", async () => {
+  let heartbeatCalls = 0;
+  const service = new ContinuousWorkerService({
+    workerId: "service-secret", instanceId: "instance-service-secret", capabilityToken: "z".repeat(64),
+    clientFactory: async () => client(async sql => {
+      if (sql.includes("record_worker_heartbeat")) { heartbeatCalls++; if (heartbeatCalls > 1) throw new Error("api_key=secret-value leaked"); return { rows: [{ record_worker_heartbeat: true }] }; }
+      return { rows: [] };
+    }), provider: async () => ({}), exchangeTimezone: "UTC", consumedCredits: "1",
+    heartbeatIntervalMs: 5, pollIntervalMs: 10, maxTasks: 1, maxPolls: 10, onEvent: () => { throw new Error("callback-secret"); },
+  });
+  const pending = service.start();
+  await new Promise(resolve => setTimeout(resolve, 40));
+  service.stop();
+  await pending;
+  assert.ok(heartbeatCalls >= 1);
+  assert.equal(service.heartbeatError, "WORKER_FAILURE");
+});
+
+test("shutdown stops a long idle poll without waiting for its configured interval", async () => {
+  const service = new ContinuousWorkerService({
+    workerId: "service-shutdown", instanceId: "instance-service-shutdown", capabilityToken: "q".repeat(64),
+    clientFactory: async () => client(async () => ({ rows: [] })), provider: async () => ({}), exchangeTimezone: "UTC",
+    consumedCredits: "1", pollIntervalMs: 60_000, maxTasks: 2, maxPolls: 2,
+  });
+  const pending = service.start();
+  await new Promise(resolve => setTimeout(resolve, 20));
+  const started = Date.now();
+  await service.shutdown();
+  assert.ok(Date.now() - started < 1000);
+  assert.equal((await pending).stopped, true);
+});
