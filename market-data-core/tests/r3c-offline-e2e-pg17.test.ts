@@ -27,6 +27,7 @@ const ids = {
 };
 const runtimeRoles = { worker: "r3d4_worker_login", supervisor: "r3d4_supervisor_login" };
 const runtimePasswords = { worker: randomBytes(24).toString("hex"), supervisor: randomBytes(24).toString("hex") };
+const useRuntimeIdentity = process.env.R3D4_ONLY === "1";
 const candle: DailyCandle = {
   marketDate: "2026-01-05", open: "100.00", high: "110.00",
   low: "90.00", close: "105.50", volume: "23",
@@ -237,7 +238,7 @@ test("R3-D3 service sends periodic heartbeats during a slow offline task and shu
   const workerId = "service-pg17";
   const instanceId = "instance-service-pg17";
   const capabilityToken = (await db.query("SELECT market_core.register_worker_instance($1,$2) AS token", [workerId, instanceId])).rows[0].token as string;
-  const clientFactory = async () => new Client({ host: process.env.PGHOST ?? "127.0.0.1", port: Number(process.env.PGPORT ?? 5432), user: runtimeRoles.worker, password: runtimePasswords.worker, database: process.env.PGDATABASE ?? "postgres", connectionTimeoutMillis: 3000 });
+  const clientFactory = async () => new Client({ host: process.env.PGHOST ?? "127.0.0.1", port: Number(process.env.PGPORT ?? 5432), user: useRuntimeIdentity ? runtimeRoles.worker : (process.env.PGUSER ?? "postgres"), password: useRuntimeIdentity ? runtimePasswords.worker : (process.env.PGPASSWORD ?? "postgres"), database: process.env.PGDATABASE ?? "postgres", connectionTimeoutMillis: 3000 });
   let providerStarted = false;
   let releaseProvider!: () => void;
   const providerBlocked = new Promise<void>(resolve => { releaseProvider = resolve; });
