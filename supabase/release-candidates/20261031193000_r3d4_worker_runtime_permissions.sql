@@ -3,6 +3,13 @@
 -- No financial DML is granted here; reservations, balances and ACK remain RPC-only.
 GRANT USAGE ON SCHEMA market_core TO market_core_ingest;
 
+-- LOGIN identities inherit the runtime group but remain current_user.  The
+-- coordinator policy is intentionally exact for SET ROLE; this additional
+-- read policy is the least privilege bridge for the disposable LOGIN worker.
+CREATE POLICY ingest_runtime_jobs_read ON market_core.ingest_jobs
+  FOR SELECT TO market_core_ingest
+  USING (pg_has_role(current_user, 'market_core_ingest', 'member'));
+
 GRANT SELECT (provider_id, provider_key)
   ON market_core.providers TO market_core_ingest;
 GRANT SELECT (listing_id, valid_from, valid_to)
