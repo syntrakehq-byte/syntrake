@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { Client } from "pg";
+import { randomBytes } from "node:crypto";
 import { runOfflineIngestOnce } from "../offlinePipeline";
 import { AutonomousWorker } from "../autonomousWorker";
 import { ContinuousWorkerService } from "../continuousWorkerService";
@@ -24,6 +25,8 @@ const ids = {
   listing: "80000000-0000-0000-0000-000000000005",
   budget: "80000000-0000-0000-0000-000000000006",
 };
+const runtimeRoles = { worker: "r3d4_worker_login", supervisor: "r3d4_supervisor_login" };
+const runtimePasswords = { worker: randomBytes(24).toString("hex"), supervisor: randomBytes(24).toString("hex") };
 const candle: DailyCandle = {
   marketDate: "2026-01-05", open: "100.00", high: "110.00",
   low: "90.00", close: "105.50", volume: "23",
@@ -70,6 +73,12 @@ before(async () => {
     "supabase/release-candidates/20261031183000_r3c3_sql_recovery_candidate.sql"),"utf8"));
   await db.query(await readFile(resolve(process.cwd(),
     "supabase/release-candidates/20261031190000_r3d2_supervision_candidate.sql"),"utf8"));
+  await db.query(await readFile(resolve(process.cwd(),
+    "supabase/release-candidates/20261031193000_r3d4_worker_runtime_permissions.sql"),"utf8"));
+  await db.query(`CREATE ROLE ${runtimeRoles.worker} LOGIN PASSWORD '${runtimePasswords.worker}';`);
+  await db.query(`CREATE ROLE ${runtimeRoles.supervisor} LOGIN PASSWORD '${runtimePasswords.supervisor}';`);
+  await db.query(`GRANT market_core_ingest TO ${runtimeRoles.worker}`);
+  await db.query(`GRANT market_core_supervisor TO ${runtimeRoles.supervisor}`);
   await db.query("INSERT INTO market_core.providers VALUES ($1,'FAKE_E2E','ACTIVE')", [ids.provider]);
   await db.query("INSERT INTO market_core.license_policies VALUES ($1,'offline-fixture',true,false,NULL)",[ids.rights]);
   await db.query("INSERT INTO market_core.issuers VALUES ($1,'Offline Test Issuer')",[ids.issuer]);
@@ -86,6 +95,8 @@ afterEach(async () => {
   await db.query("UPDATE market_core.provider_budget_periods SET reserved_credits=0,consumed_credits=0");
 });
 after(async () => {
+  await db.query(`DROP ROLE IF EXISTS ${runtimeRoles.worker}`);
+  await db.query(`DROP ROLE IF EXISTS ${runtimeRoles.supervisor}`);
   await db.query("DROP SCHEMA IF EXISTS market_core CASCADE");
   await db.query("DROP EXTENSION IF EXISTS btree_gist");
   await db.query("DROP ROLE IF EXISTS market_core_reader");
@@ -226,7 +237,7 @@ test("R3-D3 service sends periodic heartbeats during a slow offline task and shu
   const workerId = "service-pg17";
   const instanceId = "instance-service-pg17";
   const capabilityToken = (await db.query("SELECT market_core.register_worker_instance($1,$2) AS token", [workerId, instanceId])).rows[0].token as string;
-  const clientFactory = async () => new Client({ host: process.env.PGHOST ?? "127.0.0.1", port: Number(process.env.PGPORT ?? 5432), user: process.env.PGUSER ?? "postgres", password: process.env.PGPASSWORD ?? "postgres", database: process.env.PGDATABASE ?? "postgres", connectionTimeoutMillis: 3000 });
+  const clientFactory = async () => new Client({ host: process.env.PGHOST ?? "127.0.0.1", port: Number(process.env.PGPORT ?? 5432), user: runtimeRoles.worker, password: runtimePasswords.worker, database: process.env.PGDATABASE ?? "postgres", connectionTimeoutMillis: 3000 });
   let providerStarted = false;
   let releaseProvider!: () => void;
   const providerBlocked = new Promise<void>(resolve => { releaseProvider = resolve; });
@@ -253,6 +264,11 @@ test("R3-D3 service sends periodic heartbeats during a slow offline task and shu
   assert.equal(stats, false);
   assert.equal((await db.query("SELECT state FROM market_core.ingest_jobs WHERE job_id=$1", [job])).rows[0].state, "COMMITTED");
   assert.equal((await db.query("SELECT count(*)::int AS n FROM market_core.credit_reservations WHERE job_id=$1", [job])).rows[0].n, 1);
+  const supervisor = new Client({ host: process.env.PGHOST ?? "127.0.0.1", port: Number(process.env.PGPORT ?? 5432), user: runtimeRoles.supervisor, password: runtimePasswords.supervisor, database: process.env.PGDATABASE ?? "postgres", connectionTimeoutMillis: 3000 });
+  await supervisor.connect();
+  const supervisorView = await supervisor.query("SELECT * FROM market_core.supervisor_snapshot($1::interval)", ["1 minute"]);
+  assert.ok(supervisorView.rows.some(row => row.worker_id === workerId));
+  await supervisor.end();
 });
 
 test("PG17 least-privilege probe identifies the missing ingest catalog read and permits supervisor inspection", async () => {
