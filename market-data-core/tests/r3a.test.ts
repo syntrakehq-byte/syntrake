@@ -71,7 +71,7 @@ test("registry identity requires explicit IDs and aliases resolve only at an as-
 test("DataEnvelope validates PIT, rights, source refs and status/value consistency", () => {
   const base = { status: "AVAILABLE", value: { close: "1.00" }, sourceRefs: [{ provider: "TWELVE_DATA", originalSourceId: "series", requestId: null, sourceDocumentUri: null }], firstSeenAt: "2026-10-30T00:00:00Z", ingestedAt: "2026-10-30T01:00:00Z", asKnownAt: "2026-10-30T00:30:00Z", revisionId: "rev-1", schemaVersion: "1.0", quality: { flags: [], coverage: "FULL" }, rights: { policyId: "p1", display: false, retentionUntil: null } } as const;
   assert.equal(validateEnvelope(base, (value): value is object => typeof value === "object" && value !== null).status, "AVAILABLE");
-  for (const invalid of [{ ...base, value: undefined }, { ...base, ingestedAt: "bad" }, { ...base, sourceRefs: [] }, { ...base, rights: { policyId: "", display: false, retentionUntil: null } }, { ...base, status: "UNAVAILABLE", value: {} }, { ...base, quality: { flags: [], coverage: "PARTIAL" } }]) assert.throws(() => validateEnvelope(invalid), /INVALID_PROVIDER_RESPONSE/);
+  for (const invalid of [{ ...base, value: undefined }, { ...base, ingestedAt: "bad" }, { ...base, sourceRefs: [] }, { ...base, rights: { policyId: "", display: false, retentionUntil: null } }, { ...base, status: "UNAVAILABLE", value: {} }, { ...base, quality: { flags: [], coverage: "PARTIAL" } }]) assert.throws(() => validateEnvelope(invalid, (v): v is object => typeof v === "object" && v !== null), /INVALID_PROVIDER_RESPONSE/);
 });
 
 test("R3A preview gate is exact SHA, branch and opt-in; NEVER production", () => {
@@ -195,4 +195,104 @@ test("refresh is pure and conservative; durable reserve is a separate R3-B gate"
   assert.equal(decideRefresh({...p,lastIngestMs:40_000}).state,"FETCH");
   failure(()=>decideRefresh({...p,remainingCredits:-1}),"INVALID_REQUEST");
   failure(()=>decideRefresh({...p,lastIngestMs:200_000}),"INVALID_REQUEST");
+});
+
+test("registry-owned listing resolves into Twelve Data adapter without ticker-key rejection", async () => {
+  const identity = canonicalIdentity({
+    instrument: { instrumentId: "inst-msft", issuerId: "issuer-msft", kind: "EQUITY", denominationCurrency: "USD" },
+    listing: { listingId: "listing-nasdaq", instrumentId: "inst-msft", mic: "XNAS", tradingCurrency: "USD", ticker: "AAPL", validFrom: "2020-01-01", validTo: null },
+  });
+  const candidates = [
+    { provider: "TWELVE_DATA" as const, providerReference: "AAPL", instrumentId: "inst-msft", listingId: "listing-nasdaq", validFrom: "2020-01-01", validTo: null },
+    { provider: "SECOND_PROVIDER" as const, providerReference: "AAPL.US", instrumentId: "inst-msft", listingId: "listing-nasdaq", validFrom: "2020-01-01", validTo: null },
+  ];
+  assert.equal(resolveProviderAlias("SECOND_PROVIDER", "AAPL.US", "2026-10-29", candidates).listingId, identity.listingId);
+  const sourceAlias = resolveProviderAlias("TWELVE_DATA", "AAPL", "2026-10-29", candidates);
+  let called = 0;
+  const result = await fetchDailySeries({
+    env: approved, instrument: identity, sourceAlias, asOf: "2026-10-29", outputSize: 2,
+    transport: async (url, req) => {
+      called++;
+      assert.equal(new URL(url).searchParams.get("symbol"), "AAPL");
+      assert.equal(new URL(url).searchParams.has("apikey"), false);
+      assert.equal(new Headers(req.headers).get("authorization"), `apikey ${approved.SYNTRAKE_TWELVE_DATA_API_KEY}`);
+      return ok({ status: "ok", meta, values });
+    },
+    clock: () => new Date("2026-10-30T12:00:00Z"),
+  });
+  assert.equal(called, 1);
+  assert.equal(result.instrument.key, "instrument:inst-msft:listing:listing-nasdaq");
+  assert.equal(result.envelope.sourceRefs[0].provider, "TWELVE_DATA");
+  assert.ok(result.envelope.sourceRefs[0].originalSourceId.includes("AAPL"));
+  assert.equal(result.envelope.rights.display, false);
+  assert.equal(result.envelope.status, "AVAILABLE");
+
+  const wrong = { ...sourceAlias, listingId: "listing-other" };
+  let forbiddenCalls = 0;
+  await asyncFailure(() => fetchDailySeries({
+    env: approved, instrument: identity, sourceAlias: wrong, asOf: "2026-10-29",
+    outputSize: 2, transport: async () => { forbiddenCalls++; return ok({status:"ok",meta,values}); },
+  }), "INVALID_REQUEST");
+  await asyncFailure(() => fetchDailySeries({
+    env: approved, instrument: identity, outputSize: 2,
+    transport: async () => { forbiddenCalls++; return ok({status:"ok",meta,values}); },
+  }), "INVALID_REQUEST");
+  assert.equal(forbiddenCalls, 0);
+});
+
+test("temporal alias cannot be exact on invalid date, overlap or missing registry IDs", () => {
+  const a = { provider: "TWELVE_DATA" as const, providerReference: "AAPL", listingId: "listing-one",
+    instrumentId: "inst-one", validFrom: "2026-01-01", validTo: "2026-10-29" };
+  assert.equal(resolveProviderAlias("TWELVE_DATA", "AAPL", "2026-10-29", [a]).status, "UNRESOLVED");
+  assert.equal(resolveProviderAlias("TWELVE_DATA", "AAPL", "2026-10-28", [a]).status, "EXACT");
+  assert.equal(resolveProviderAlias("TWELVE_DATA", "AAPL", "2026-10-28", [a, a]).status, "AMBIGUOUS");
+  assert.equal(resolveProviderAlias("TWELVE_DATA", "AAPL", "2026-10-28", [{ ...a, instrumentId: null }]).status, "REVIEW_REQUIRED");
+  for (const candidate of [
+    { ...a, listingId: "" }, { ...a, instrumentId: "bad space" },
+    { ...a, validFrom: "2026-02-30" }, { ...a, validTo: "2025-10-01" },
+  ]) failure(() => resolveProviderAlias("TWELVE_DATA", "AAPL", "2026-10-28", [candidate]), "INVALID_REQUEST");
+  failure(() => resolveProviderAlias("TWELVE_DATA", "AAPL", "2026-02-30", [a]), "INVALID_REQUEST");
+  failure(() => canonicalIdentity({
+    instrument: { instrumentId: "inst-a", issuerId: null, kind: "EQUITY", denominationCurrency: "USD" },
+    listing: { listingId: "list-a", instrumentId: "inst-a", mic: "XNAS", tradingCurrency: "USD",
+      ticker: "AAPL", validFrom: "2026-02-30", validTo: null },
+  }), "INVALID_INSTRUMENT");
+});
+
+test("envelope validation checks actual payload and rejects untrustworthy nested/time fields", () => {
+  const good = {
+    status: "AVAILABLE", value: [{close:"120.01"}],
+    sourceRefs: [{provider:"TWELVE_DATA",originalSourceId:"series:AAPL",requestId:null,sourceDocumentUri:null}],
+    firstSeenAt:"2026-10-30T00:00:00Z",ingestedAt:"2026-10-30T01:00:00Z",
+    asKnownAt:"2026-10-30T00:30:00Z",revisionId:"rev-1",schemaVersion:"1.0",
+    quality:{flags:[],coverage:"FULL"},rights:{policyId:"source-contract-not-yet-approved",display:false,retentionUntil:null},
+  };
+  const isPrices = (v:unknown):v is readonly {close:string}[] =>
+    Array.isArray(v) && v.every(x=>typeof x?.close==="string");
+  assert.equal(validateEnvelope(good, isPrices).status,"AVAILABLE");
+  const broken = [
+    {...good, value:{arbitrary:true}},
+    {...good, firstSeenAt:"2026-02-30T00:00:00Z"},
+    {...good, firstSeenAt:"2026-10-30T02:00:00Z"},
+    {...good, asKnownAt:"2026-10-30T03:00:00Z"},
+    {...good, sourceRefs:[{...good.sourceRefs[0],requestId:undefined}]},
+    {...good, sourceRefs:[{...good.sourceRefs[0],sourceDocumentUri:"http://wrong.test/"}]},
+    {...good, rights:{policyId:"source",display:"yes",retentionUntil:null}},
+    {...good, status:"UNAVAILABLE",value:undefined,quality:{flags:[],coverage:"NONE"}},
+    {...good, status:"PARTIAL",quality:{flags:[],coverage:"FULL"}},
+  ];
+  for(const invalid of broken) failure(()=>validateEnvelope(invalid,isPrices),"INVALID_PROVIDER_RESPONSE");
+  failure(() => (validateEnvelope as (...args: unknown[])=>unknown)(good),"INVALID_PROVIDER_RESPONSE");
+});
+
+test("observation revision is content-addressed and differs for a corrected price at same row count", async () => {
+  const input = { env:approved,instrument:aapl,outputSize:2,clock:()=>new Date("2026-10-30T12:00:00Z") };
+  const first = await fetchDailySeries({...input,transport:async()=>ok({status:"ok",meta,values})});
+  const corrected = values.map((row,i)=>i===0 ? {...row,close:"124.01"}:row);
+  const second = await fetchDailySeries({...input,transport:async()=>ok({status:"ok",meta,values:corrected})});
+  assert.equal(first.candles.length, second.candles.length);
+  assert.notEqual(first.envelope.revisionId,second.envelope.revisionId);
+  assert.ok(first.envelope.revisionId.startsWith("sha256:"));
+  assert.equal(first.envelope.sourceRefs[0].originalSourceId,second.envelope.sourceRefs[0].originalSourceId);
+  assert.equal(first.envelope.rights.display,false);
 });
