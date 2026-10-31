@@ -79,9 +79,9 @@ before(async () => {
   await db.query(`CREATE ROLE ${runtimeRoles.worker} LOGIN PASSWORD '${runtimePasswords.worker}';`);
   await db.query(`CREATE ROLE ${runtimeRoles.workerB} LOGIN PASSWORD '${runtimePasswords.workerB}';`);
   await db.query(`CREATE ROLE ${runtimeRoles.supervisor} LOGIN PASSWORD '${runtimePasswords.supervisor}';`);
-  await db.query(`GRANT market_core_ingest TO ${runtimeRoles.worker}`);
-  await db.query(`GRANT market_core_ingest TO ${runtimeRoles.workerB}`);
-  await db.query(`GRANT market_core_supervisor TO ${runtimeRoles.supervisor}`);
+  await db.query(`GRANT market_core_ingest TO ${runtimeRoles.worker} WITH INHERIT TRUE, SET FALSE`);
+  await db.query(`GRANT market_core_ingest TO ${runtimeRoles.workerB} WITH INHERIT TRUE, SET FALSE`);
+  await db.query(`GRANT market_core_supervisor TO ${runtimeRoles.supervisor} WITH INHERIT TRUE, SET FALSE`);
   await db.query("INSERT INTO market_core.worker_identity_bindings VALUES ($1,$2),($3,$4)", [runtimeRoles.worker,"service-pg17",runtimeRoles.workerB,"worker-b"]);
   await db.query("INSERT INTO market_core.providers VALUES ($1,'FAKE_E2E','ACTIVE')", [ids.provider]);
   await db.query("INSERT INTO market_core.license_policies VALUES ($1,'offline-fixture',true,false,NULL)",[ids.rights]);
@@ -297,8 +297,12 @@ test("PG17 LOGIN worker cannot read or write outside an active claim", async () 
   await createJob(job, "b");
   const worker = new Client({ host: process.env.PGHOST ?? "127.0.0.1", port: Number(process.env.PGPORT ?? 5432), user: runtimeRoles.worker, password: runtimePasswords.worker, database: process.env.PGDATABASE ?? "postgres", connectionTimeoutMillis: 3000 });
   await worker.connect();
+  await assert.rejects(worker.query("SET ROLE market_core_ingest"), /permission denied to set role/);
+  await assert.doesNotReject(worker.query("RESET ROLE"));
   const hidden = await worker.query("SELECT job_id FROM market_core.ingest_jobs WHERE job_id=$1", [job]);
   assert.equal(hidden.rows.length, 0);
+  const spoof = await worker.query("SELECT * FROM market_core.claim_ingest_job_safe($1,$2)", ["worker-b", "80000000-0000-0000-0000-0000000000b1"]);
+  assert.equal(spoof.rows.length, 0);
   await assert.rejects(worker.query(`INSERT INTO market_core.market_observations
     (observation_id,listing_id,provider_id,rights_policy_id,interval,market_date,exchange_timezone,adjustment,created_at)
     VALUES ('80000000-0000-0000-0000-0000000000b1',$1,$2,$3,'1day',DATE '2026-01-05','UTC','none',clock_timestamp())`, [ids.listing, ids.provider, ids.rights]), /row-level security|permission denied/);

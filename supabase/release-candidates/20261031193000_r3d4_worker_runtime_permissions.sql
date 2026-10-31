@@ -3,6 +3,21 @@
 -- No financial DML is granted here; reservations, balances and ACK remain RPC-only.
 GRANT USAGE ON SCHEMA market_core TO market_core_ingest;
 
+CREATE OR REPLACE FUNCTION market_core.claim_ingest_job_safe(p_worker_id text, p_lease_token uuid)
+RETURNS TABLE(job_id uuid, reservation_id uuid, demand_key text)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = market_core, pg_catalog AS $$
+BEGIN
+  IF p_worker_id IS NULL OR p_worker_id !~ '^[A-Za-z0-9_-]{1,64}$' OR p_lease_token IS NULL
+    THEN RAISE EXCEPTION 'INVALID_WORKER_IDENTITY'; END IF;
+  IF session_user NOT IN ('postgres','market_core_coordinator_owner')
+     AND NOT EXISTS (SELECT 1 FROM market_core.worker_identity_bindings
+                     WHERE login_role = session_user AND worker_id = p_worker_id) THEN
+    RETURN;
+  END IF;
+  RETURN QUERY SELECT * FROM market_core.claim_ingest_job(
+    p_worker_id,p_lease_token,clock_timestamp(),interval '5 minutes');
+END $$;
+
 CREATE TABLE market_core.worker_identity_bindings (
   login_role name PRIMARY KEY,
   worker_id text NOT NULL UNIQUE
