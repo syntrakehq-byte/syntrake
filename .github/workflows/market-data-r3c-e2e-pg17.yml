@@ -1,0 +1,36 @@
+name: market-data-r3c-e2e-pg17
+on:
+  pull_request:
+    paths:
+      - "market-data-core/offlinePipeline.ts"
+      - "market-data-core/tests/r3c-offline-e2e-pg17.test.ts"
+      - ".github/workflows/market-data-r3c-e2e-pg17.yml"
+      - "supabase/release-candidates/**"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  offline-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with: { node-version: "22", cache: npm }
+      - run: npm ci
+      - name: Require real PostgreSQL 17
+        run: psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -tAc "SELECT current_setting('server_version') LIKE '17.%'" | tr -d ' ' | grep -qx t
+        env: { PGPASSWORD: postgres }
+      - run: npm run typecheck:market-data
+      - name: Execute offline provider through R3-B/C and ACK
+        run: npx tsx --test --test-timeout=15000 market-data-core/tests/r3c-offline-e2e-pg17.test.ts
