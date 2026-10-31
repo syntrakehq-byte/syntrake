@@ -6,9 +6,10 @@ GRANT USAGE ON SCHEMA market_core TO market_core_ingest;
 -- LOGIN identities inherit the runtime group but remain current_user.  The
 -- coordinator policy is intentionally exact for SET ROLE; this additional
 -- read policy is the least privilege bridge for the disposable LOGIN worker.
+DROP POLICY IF EXISTS ingest_runtime_jobs_read ON market_core.ingest_jobs;
 CREATE POLICY ingest_runtime_jobs_read ON market_core.ingest_jobs
   FOR SELECT TO market_core_ingest
-  USING (pg_has_role(current_user, 'market_core_ingest', 'member'));
+  USING (state IN ('LEASED','FETCHING'));
 
 GRANT SELECT (provider_id, provider_key)
   ON market_core.providers TO market_core_ingest;
@@ -16,7 +17,7 @@ GRANT SELECT (listing_id, valid_from, valid_to)
   ON market_core.listings TO market_core_ingest;
 GRANT SELECT (rights_policy_id, cache_allowed, retention_until)
   ON market_core.license_policies TO market_core_ingest;
-GRANT SELECT (observation_id, listing_id, provider_id, interval, market_date, rights_policy_id)
+GRANT SELECT (observation_id, listing_id, provider_id, interval, market_date, adjustment, rights_policy_id)
   ON market_core.market_observations TO market_core_ingest;
 GRANT SELECT (revision_id, observation_id, source_revision)
   ON market_core.market_observation_revisions TO market_core_ingest;
@@ -69,8 +70,22 @@ CREATE POLICY ingest_runtime_revision_read ON market_core.market_observation_rev
 
 CREATE POLICY ingest_runtime_observation_write ON market_core.market_observations
   FOR INSERT TO market_core_ingest
-  WITH CHECK (pg_has_role(current_user, 'market_core_ingest', 'member'));
+  WITH CHECK (EXISTS (
+    SELECT 1 FROM market_core.ingest_jobs j
+    WHERE j.listing_id = market_observations.listing_id
+      AND j.provider_id = market_observations.provider_id
+      AND j.rights_policy_id = market_observations.rights_policy_id
+      AND j.state IN ('LEASED','FETCHING')
+  ));
 
 CREATE POLICY ingest_runtime_revision_write ON market_core.market_observation_revisions
   FOR INSERT TO market_core_ingest
-  WITH CHECK (pg_has_role(current_user, 'market_core_ingest', 'member'));
+  WITH CHECK (EXISTS (
+    SELECT 1
+    FROM market_core.market_observations o
+    JOIN market_core.ingest_jobs j
+      ON j.listing_id = o.listing_id AND j.provider_id = o.provider_id
+     AND j.rights_policy_id = o.rights_policy_id
+    WHERE o.observation_id = market_observation_revisions.observation_id
+      AND j.state IN ('LEASED','FETCHING')
+  ));

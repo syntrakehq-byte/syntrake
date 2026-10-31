@@ -288,6 +288,21 @@ test("PG17 least-privilege probe permits only the worker catalog read and superv
   await db.query("RESET ROLE");
 });
 
+test("PG17 LOGIN worker cannot read or write outside an active claim", async () => {
+  const job = "80000000-0000-0000-0000-0000000000b0";
+  await createJob(job, "b");
+  const worker = new Client({ host: process.env.PGHOST ?? "127.0.0.1", port: Number(process.env.PGPORT ?? 5432), user: runtimeRoles.worker, password: runtimePasswords.worker, database: process.env.PGDATABASE ?? "postgres", connectionTimeoutMillis: 3000 });
+  await worker.connect();
+  const hidden = await worker.query("SELECT job_id FROM market_core.ingest_jobs WHERE job_id=$1", [job]);
+  assert.equal(hidden.rows.length, 0);
+  await assert.rejects(worker.query(`INSERT INTO market_core.market_observations
+    (observation_id,listing_id,provider_id,rights_policy_id,interval,market_date,exchange_timezone,adjustment,created_at)
+    VALUES ('80000000-0000-0000-0000-0000000000b1',$1,$2,$3,'1day',DATE '2026-01-05','UTC','none',clock_timestamp())`, [ids.listing, ids.provider, ids.rights]), /row-level security|permission denied/);
+  await assert.rejects(worker.query("UPDATE market_core.provider_budget_periods SET reserved_credits=reserved_credits+1"), /permission denied|row-level security/);
+  await assert.rejects(worker.query("SELECT * FROM market_core.supervisor_snapshot('1 minute'::interval)"), /permission denied|function/);
+  await worker.end();
+});
+
 test("R3-D3 rejects invalid or revoked capability before claim, provider call, ACK or reservation", async () => {
   const job = "80000000-0000-0000-0000-0000000000af";
   await createJob(job, "a");
