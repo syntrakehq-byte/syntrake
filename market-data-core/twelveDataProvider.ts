@@ -22,6 +22,13 @@ export function createTwelveDataOfflineProvider(input: Readonly<{
 }>): OfflineProvider {
   return async claim => {
     const resolved = await input.resolve(claim);
+    if (
+      resolved.instrument.listingId !== claim.listing_id ||
+      resolved.sourceAlias.listingId !== claim.listing_id ||
+      resolved.instrument.instrumentId !== resolved.sourceAlias.instrumentId
+    ) {
+      throw new Error("OFFLINE_PROVIDER_IDENTITY_MISMATCH");
+    }
     const series: DailySeries = await fetchDailySeries({
       env: input.env,
       instrument: resolved.instrument,
