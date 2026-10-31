@@ -67,6 +67,8 @@ before(async () => {
     "supabase/release-candidates/20261031170000_r3c_coordinator_candidate.sql"),"utf8"));
   await db.query(await readFile(resolve(process.cwd(),
     "supabase/release-candidates/20261031183000_r3c3_sql_recovery_candidate.sql"),"utf8"));
+  await db.query(await readFile(resolve(process.cwd(),
+    "supabase/release-candidates/20261031190000_r3d2_supervision_candidate.sql"),"utf8"));
   await db.query("INSERT INTO market_core.providers VALUES ($1,'FAKE_E2E','ACTIVE')", [ids.provider]);
   await db.query("INSERT INTO market_core.license_policies VALUES ($1,'offline-fixture',true,false,NULL)",[ids.rights]);
   await db.query("INSERT INTO market_core.issuers VALUES ($1,'Offline Test Issuer')",[ids.issuer]);
@@ -88,6 +90,7 @@ after(async () => {
   await db.query("DROP ROLE IF EXISTS market_core_reader");
   await db.query("DROP ROLE IF EXISTS market_core_ingest");
   await db.query("DROP ROLE IF EXISTS market_core_coordinator_owner");
+  await db.query("DROP ROLE IF EXISTS market_core_supervisor");
   await db.query("DROP ROLE IF EXISTS anon");
   await db.query("DROP ROLE IF EXISTS authenticated");
   await db.end();
@@ -145,10 +148,11 @@ test("offline claim -> fake -> strict validation -> R3-B revision -> one ACK + r
 test("R3-D1 autonomous runner uses independent PG17 session and completes one queued job", async () => {
   const job = "80000000-0000-0000-0000-0000000000aa";
   await createJob(job, "c");
+  const capabilityToken = (await db.query("SELECT market_core.register_worker_instance('autonomous-pg17','instance-d2') AS token")).rows[0].token as string;
   const worker = new AutonomousWorker({
     workerId: "autonomous-pg17", exchangeTimezone: "UTC", maxTasks: 1,
     clientFactory: async () => new Client({ host: process.env.PGHOST ?? "127.0.0.1", port: Number(process.env.PGPORT ?? 5432), user: process.env.PGUSER ?? "postgres", password: process.env.PGPASSWORD ?? "postgres", database: process.env.PGDATABASE ?? "postgres", connectionTimeoutMillis: 3000 }),
-    provider: async () => response(), consumedCredits: "1",
+    provider: async () => response(), consumedCredits: "1", heartbeat: { instanceId: "instance-d2", capabilityToken },
   });
   const stats = await worker.run();
   assert.equal(stats.committed, 1);
