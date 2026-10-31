@@ -1,5 +1,6 @@
 import { instrumentIdentity, MarketDataError, record, type InstrumentIdentity } from "./identity";
 import { requireR3AProviderReady } from "./gate";
+import { validateEnvelope, type DataEnvelope } from "./contracts";
 
 export type DailyCandle = Readonly<{
   marketDate: string; // Exchange-local trading DATE; NEVER convert to midnight UTC.
@@ -8,6 +9,7 @@ export type DailyCandle = Readonly<{
 }>;
 export type DailySeries = Readonly<{
   instrument: InstrumentIdentity;
+  provider: "TWELVE_DATA";
   interval: "1day";
   adjustment: "none";
   exchangeTimezone: string;
@@ -15,6 +17,8 @@ export type DailySeries = Readonly<{
   latency: "NOT_VERIFIED";
   evidence: "PROVIDER_RESPONSE";
   candles: readonly DailyCandle[]; // Chronological ascending, contiguous calendar days NOT assumed.
+  provenance: Readonly<{ provider: "TWELVE_DATA"; originalSourceId: string; requestId: null; sourceDocumentUri: null }>;
+  envelope: DataEnvelope<readonly DailyCandle[]>;
 }>;
 
 type Env = Readonly<Record<string, string | undefined>>;
@@ -85,11 +89,13 @@ function parseSeries(raw: unknown, instrument: InstrumentIdentity, observedAtUtc
     }
   }
   return Object.freeze({
-    instrument, interval: "1day" as const,
+    provider: "TWELVE_DATA" as const, instrument, interval: "1day" as const,
     adjustment: "none" as const, exchangeTimezone: meta.exchange_timezone,
     observedAtUtc, latency: "NOT_VERIFIED" as const,
     evidence: "PROVIDER_RESPONSE" as const,
     candles: Object.freeze(candles.reverse()),
+    provenance: { provider: "TWELVE_DATA" as const, originalSourceId: "twelve-data:time_series", requestId: null, sourceDocumentUri: null },
+    envelope: undefined as never,
   });
 }
 
@@ -164,5 +170,12 @@ export async function fetchDailySeries(input: Readonly<{
   if (!(now instanceof Date) || Number.isNaN(now.valueOf())) throw new MarketDataError("INVALID_REQUEST");
   const series = parseSeries(body, instrument, now.toISOString());
   if (series.candles.length > input.outputSize) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
-  return series;
+  const envelope = validateEnvelope<readonly DailyCandle[]>({
+    status: "AVAILABLE", value: series.candles, sourceRefs: [series.provenance],
+    marketDate: series.candles[series.candles.length - 1]?.marketDate,
+    firstSeenAt: series.observedAtUtc, ingestedAt: series.observedAtUtc, asKnownAt: series.observedAtUtc,
+    revisionId: `${series.instrument.key}:${series.candles.length}`, schemaVersion: "1.0",
+    quality: { flags: ["LATENCY_NOT_VERIFIED"], coverage: "FULL" }, rights: { policyId: "provider-contract-pending", display: false, retentionUntil: null },
+  }, value => Array.isArray(value));
+  return Object.freeze({ ...series, envelope });
 }

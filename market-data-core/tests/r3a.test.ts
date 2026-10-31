@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { instrumentIdentity, MarketDataError } from "../identity";
+import { canonicalIdentity, instrumentIdentity, MarketDataError, resolveProviderAlias } from "../identity";
+import { validateEnvelope } from "../contracts";
 import { isR3AProviderReady } from "../gate";
 import { decideRefresh } from "../refreshPolicy";
 import { fetchDailySeries } from "../twelveData";
@@ -27,6 +28,7 @@ const transport = async (url: string, opts: RequestInit) => {
   assert.equal(opts.method, "GET");
   assert.equal(opts.cache, "no-store");
   assert.equal(opts.redirect, "error");
+  assert.equal(new Headers(opts.headers).get("authorization"), `apikey ${approved.SYNTRAKE_TWELVE_DATA_API_KEY}`);
   return ok({status:"ok",meta,values});
 };
 function failure(action: () => unknown, code: string) {
@@ -52,6 +54,24 @@ test("instrument identity is exchange+type+currency+symbol scoped, FX direction 
     {kind:"FX",symbol:"EUR/USD",mic:"XNAS",currency:"USD"},
     {kind:"FX",symbol:"EUR/EUR",currency:"EUR"},
   ]) failure(()=>instrumentIdentity(v),"INVALID_INSTRUMENT");
+});
+
+test("registry identity requires explicit IDs and aliases resolve only at an as-of date", () => {
+  const resolved = canonicalIdentity({ instrument: { instrumentId: "inst-a", issuerId: "issuer-a", kind: "EQUITY", denominationCurrency: "USD" }, listing: { listingId: "list-a", instrumentId: "inst-a", mic: "XNAS", tradingCurrency: "USD", ticker: "AAPL", validFrom: "2020-01-01", validTo: null } });
+  assert.equal(resolved.instrumentId, "inst-a");
+  assert.equal(resolved.listingId, "list-a");
+  const aliases = [{ provider: "TWELVE_DATA" as const, providerReference: "AAPL", listingId: "list-old", instrumentId: "inst-a", validFrom: "2020-01-01", validTo: "2024-01-01" }, { provider: "TWELVE_DATA" as const, providerReference: "AAPL", listingId: "list-new", instrumentId: "inst-a", validFrom: "2024-01-01", validTo: null }];
+  assert.equal(resolveProviderAlias("TWELVE_DATA", "AAPL", "2023-01-01", aliases).listingId, "list-old");
+  assert.equal(resolveProviderAlias("TWELVE_DATA", "AAPL", "2025-01-01", aliases).listingId, "list-new");
+  assert.equal(resolveProviderAlias("TWELVE_DATA", "UNKNOWN", "2025-01-01", aliases).status, "UNRESOLVED");
+  assert.equal(resolveProviderAlias("TWELVE_DATA", "AAPL", "2019-01-01", aliases).status, "UNRESOLVED");
+  assert.throws(() => canonicalIdentity({ instrument: { instrumentId: "", issuerId: null, kind: "EQUITY", denominationCurrency: "USD" }, listing: { listingId: "list-a", instrumentId: "", mic: "XNAS", tradingCurrency: "USD", ticker: "AAPL", validFrom: "2020-01-01", validTo: null } }), /INVALID_INSTRUMENT/);
+});
+
+test("DataEnvelope validates PIT, rights, source refs and status/value consistency", () => {
+  const base = { status: "AVAILABLE", value: { close: "1.00" }, sourceRefs: [{ provider: "TWELVE_DATA", originalSourceId: "series", requestId: null, sourceDocumentUri: null }], firstSeenAt: "2026-10-30T00:00:00Z", ingestedAt: "2026-10-30T01:00:00Z", asKnownAt: "2026-10-30T00:30:00Z", revisionId: "rev-1", schemaVersion: "1.0", quality: { flags: [], coverage: "FULL" }, rights: { policyId: "p1", display: false, retentionUntil: null } } as const;
+  assert.equal(validateEnvelope(base, (value): value is object => typeof value === "object" && value !== null).status, "AVAILABLE");
+  for (const invalid of [{ ...base, value: undefined }, { ...base, ingestedAt: "bad" }, { ...base, sourceRefs: [] }, { ...base, rights: { policyId: "", display: false, retentionUntil: null } }, { ...base, status: "UNAVAILABLE", value: {} }, { ...base, quality: { flags: [], coverage: "PARTIAL" } }]) assert.throws(() => validateEnvelope(invalid), /INVALID_PROVIDER_RESPONSE/);
 });
 
 test("R3A preview gate is exact SHA, branch and opt-in; NEVER production", () => {
@@ -90,6 +110,8 @@ test("daily candles have exact string price, exchange date, UTC ingestion time; 
   assert.equal(out.latency,"NOT_VERIFIED");
   assert.equal(out.adjustment,"none");
   assert.equal(out.evidence,"PROVIDER_RESPONSE");
+  assert.equal(out.provider, "TWELVE_DATA");
+  assert.equal(out.envelope.sourceRefs[0].provider, "TWELVE_DATA");
   assert.equal(Object.prototype.hasOwnProperty.call(out,"portfolioValue"),false);
   assert.equal(captured.length,1);
   const u=new URL(captured[0]);
