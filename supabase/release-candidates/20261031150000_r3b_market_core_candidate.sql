@@ -21,8 +21,7 @@ CREATE TABLE market_core.license_policies (
   policy_key text NOT NULL UNIQUE,
   cache_allowed boolean NOT NULL DEFAULT false,
   display_allowed boolean NOT NULL DEFAULT false,
-  retention_until timestamptz,
-  CHECK (retention_until IS NULL OR retention_until > now())
+  retention_until timestamptz
 );
 CREATE TABLE market_core.issuers (
   issuer_id uuid PRIMARY KEY,
@@ -48,7 +47,7 @@ CREATE TABLE market_core.listings (
   UNIQUE (listing_id, valid_from)
 );
 ALTER TABLE market_core.listings ADD CONSTRAINT listings_no_overlapping_identity EXCLUDE USING gist (
-  instrument_id WITH =, ticker WITH =, COALESCE(mic, '') WITH =, trading_currency WITH =,
+  instrument_id WITH =, ticker WITH =, (COALESCE(mic, '')) WITH =, trading_currency WITH =,
   daterange(valid_from, valid_to, '[)') WITH &&
 );
 CREATE TABLE market_core.provider_aliases (
@@ -121,5 +120,11 @@ GRANT SELECT ON ALL TABLES IN SCHEMA market_core TO market_core_reader;
 GRANT SELECT, INSERT, UPDATE ON market_core.market_observations, market_core.market_observation_revisions TO market_core_ingest;
 CREATE POLICY reader_market_data ON market_core.market_observations FOR SELECT TO market_core_reader USING (current_user = 'market_core_reader');
 CREATE POLICY reader_market_revisions ON market_core.market_observation_revisions FOR SELECT TO market_core_reader USING (current_user = 'market_core_reader');
+CREATE POLICY reader_providers ON market_core.providers FOR SELECT TO market_core_reader USING (current_user = 'market_core_reader');
+CREATE POLICY reader_license_policies ON market_core.license_policies FOR SELECT TO market_core_reader USING (current_user = 'market_core_reader');
+CREATE POLICY reader_issuers ON market_core.issuers FOR SELECT TO market_core_reader USING (current_user = 'market_core_reader');
+CREATE POLICY reader_instruments ON market_core.instruments FOR SELECT TO market_core_reader USING (current_user = 'market_core_reader');
+CREATE POLICY reader_listings ON market_core.listings FOR SELECT TO market_core_reader USING (current_user = 'market_core_reader');
+CREATE POLICY reader_aliases ON market_core.provider_aliases FOR SELECT TO market_core_reader USING (current_user = 'market_core_reader');
 CREATE POLICY ingest_observations ON market_core.market_observations FOR INSERT TO market_core_ingest WITH CHECK (current_user = 'market_core_ingest');
 CREATE POLICY ingest_revisions ON market_core.market_observation_revisions FOR INSERT TO market_core_ingest WITH CHECK (current_user = 'market_core_ingest');
