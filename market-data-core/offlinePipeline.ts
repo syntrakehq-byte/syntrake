@@ -8,7 +8,7 @@
  */
 import { createHash, randomUUID } from "node:crypto";
 import type { Client } from "pg";
-import { validateEnvelope, type DataEnvelope } from "./contracts";
+import { validateEnvelope } from "./contracts";
 import type { DailyCandle } from "./twelveData";
 
 type Claimed = Readonly<{
@@ -46,7 +46,7 @@ function candleValid(value: unknown): value is DailyCandle {
   const [o,h,l,c] = [x.open,x.high,x.low,x.close].map(v => scaled(v as string));
   return l > 0n && o >= l && o <= h && c >= l && c <= h;
 }
-function parseEnvelope(raw: unknown): DataEnvelope<readonly DailyCandle[]> {
+function parseEnvelope(raw: unknown) {
   const result = validateEnvelope<readonly DailyCandle[]>(raw,
     (value): value is readonly DailyCandle[] => Array.isArray(value) &&
       value.length === 1 && value.every(candleValid));
