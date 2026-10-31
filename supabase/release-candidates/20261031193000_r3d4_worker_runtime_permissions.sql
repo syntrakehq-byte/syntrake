@@ -28,6 +28,8 @@ GRANT SELECT ON market_core.worker_identity_bindings TO market_core_ingest;
 GRANT SELECT ON market_core.worker_identity_bindings TO market_core_coordinator_owner;
 CREATE POLICY worker_identity_self_read ON market_core.worker_identity_bindings
   FOR SELECT TO PUBLIC USING (login_role = current_user);
+CREATE POLICY worker_identity_owner_read ON market_core.worker_identity_bindings
+  FOR SELECT TO market_core_coordinator_owner USING (true);
 GRANT SELECT (job_id, worker_id, lease_until) ON market_core.job_leases TO market_core_ingest;
 CREATE POLICY worker_identity_lease_read ON market_core.job_leases
   FOR SELECT TO PUBLIC USING (EXISTS (
