@@ -39,6 +39,7 @@ function candleValid(value: unknown): value is DailyCandle {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const x = value as Record<string, unknown>;
   if (typeof x.marketDate !== "string" || !day.test(x.marketDate) ||
+    !Number.isFinite(Date.parse(x.marketDate + "T00:00:00Z")) ||
     new Date(x.marketDate + "T00:00:00Z").toISOString().slice(0, 10) !== x.marketDate) return false;
   if (![x.open, x.high, x.low, x.close].every(v => typeof v === "string" && price.test(v))) return false;
   if (x.volume !== null && (typeof x.volume !== "string" || !volume.test(x.volume))) return false;
@@ -71,15 +72,20 @@ export async function runOfflineIngestOnce(input: Readonly<{
   runId: string;
   providerRunKey: string;
   consumedCredits: string;
+  exchangeTimezone: string;
 }>): Promise<OfflineResult> {
   const { db } = input;
   if (typeof input.provider !== "function" ||
     ![input.leaseToken, input.runId].every(x => uuid.test(x)) ||
     !/^[A-Za-z0-9_-]{1,64}$/.test(input.workerId) ||
     !/^[A-Za-z0-9_-]{1,80}$/.test(input.providerRunKey) ||
+    typeof input.exchangeTimezone !== "string" || input.exchangeTimezone.length > 70 ||
     !/^(?:0|[1-9]\d{0,12})(?:\.\d{1,6})?$/.test(input.consumedCredits)) {
     throw new Error("INVALID_OFFLINE_WORK");
   }
+
+  try { new Intl.DateTimeFormat("en-US", { timeZone: input.exchangeTimezone }); }
+  catch { throw new Error("INVALID_EXCHANGE_TIMEZONE"); }
 
   const claim = await db.query<{ job_id: string }>(
     "SELECT job_id FROM market_core.claim_ingest_job($1,$2,clock_timestamp(),interval '5 minutes')",
@@ -135,9 +141,9 @@ export async function runOfflineIngestOnce(input: Readonly<{
       `INSERT INTO market_core.market_observations
        (observation_id, listing_id, provider_id, rights_policy_id, interval,
         market_date, exchange_timezone, adjustment, created_at)
-       VALUES ($1,$2,$3,$4,'1day',$5,'UTC','none',clock_timestamp())
+       VALUES ($1,$2,$3,$4,'1day',$5,$6,'none',clock_timestamp())
        ON CONFLICT (listing_id, provider_id, interval, market_date, adjustment) DO NOTHING`,
-      [observationId, job.listing_id, job.provider_id, job.rights_policy_id, c.marketDate],
+      [observationId, job.listing_id, job.provider_id, job.rights_policy_id, c.marketDate, input.exchangeTimezone],
     );
     const obs = await db.query<{ observation_id: string; rights_policy_id: string }>(
       `SELECT observation_id, rights_policy_id FROM market_core.market_observations
