@@ -97,12 +97,12 @@ BEGIN
     RETURN;
   END IF;
   SELECT * INTO b FROM market_core.provider_budget_periods WHERE budget_period_id=j.budget_period_id FOR UPDATE;
-  IF b.reserved_credits + b.consumed_credits + j.estimated_credits > b.max_estimated_credits THEN
-    UPDATE market_core.ingest_jobs SET state='DEAD_LETTER', last_error='BUDGET_EXHAUSTED' WHERE market_core.ingest_jobs.job_id=j.job_id;
-    RETURN;
-  END IF;
   SELECT cr.reservation_id INTO r FROM market_core.credit_reservations cr WHERE cr.job_id=j.job_id AND cr.state='RESERVED' FOR UPDATE;
   IF r IS NULL THEN
+    IF b.reserved_credits + b.consumed_credits + j.estimated_credits > b.max_estimated_credits THEN
+      UPDATE market_core.ingest_jobs SET state='DEAD_LETTER', last_error='BUDGET_EXHAUSTED' WHERE market_core.ingest_jobs.job_id=j.job_id;
+      RETURN;
+    END IF;
     r := p_lease_token;
     INSERT INTO market_core.credit_reservations VALUES (r,j.job_id,b.budget_period_id,j.estimated_credits,NULL,'RESERVED');
     UPDATE market_core.provider_budget_periods SET reserved_credits=reserved_credits+j.estimated_credits WHERE budget_period_id=b.budget_period_id;
@@ -120,7 +120,9 @@ DECLARE l market_core.job_leases%ROWTYPE; j market_core.ingest_jobs%ROWTYPE;
 BEGIN
   SELECT * INTO l FROM market_core.job_leases WHERE job_id=p_job_id AND lease_token=p_lease_token AND lease_until > clock_timestamp() FOR UPDATE;
   IF NOT FOUND THEN RETURN false; END IF;
+  IF p_revision_id IS NULL OR p_consumed IS NULL OR p_consumed < 0 THEN RETURN false; END IF;
   SELECT * INTO j FROM market_core.ingest_jobs WHERE job_id=p_job_id FOR UPDATE;
+  IF NOT EXISTS (SELECT 1 FROM market_core.market_observation_revisions WHERE revision_id=p_revision_id) THEN RETURN false; END IF;
   INSERT INTO market_core.ingestion_runs(run_id,job_id,idempotency_key,provider_run_key,state,result_revision_id,error_code,created_at)
   VALUES(p_run_id,p_job_id,j.idempotency_key,p_provider_run_key,'SUCCESS',p_revision_id,NULL,clock_timestamp())
   ON CONFLICT (job_id, provider_run_key) DO NOTHING;
