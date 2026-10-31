@@ -1,14 +1,18 @@
 /** R3-A: provider identity is NEVER just a ticker. This domain has no portfolio/ledger dependencies. */
 export type InstrumentKind = "EQUITY" | "ETF" | "FX";
-export type Provider = "TWELVE_DATA";
+export type Provider = "TWELVE_DATA" | (string & {});
 export type InstrumentIdentity = Readonly<{
-  provider: Provider;
   kind: InstrumentKind;
   symbol: string;
   mic: string | null;
   currency: string;
   key: string;
+  instrumentId: string | null;
+  listingId: string | null;
 }>;
+export type MatchStatus = "EXACT" | "AMBIGUOUS" | "UNRESOLVED" | "REVIEW_REQUIRED";
+export type ProviderAlias = Readonly<{ provider: Provider; providerReference: string; listingId: string | null; instrumentId: string | null; validFrom: string | null; validTo: string | null }>;
+export type AliasResolution = Readonly<{ status: MatchStatus; alias: ProviderAlias; instrumentId: string | null; listingId: string | null }>;
 
 export type MarketDataErrorCode =
   | "INVALID_INSTRUMENT" | "DISABLED" | "INVALID_CONFIG" | "RATE_LIMITED"
@@ -53,9 +57,17 @@ export function instrumentIdentity(value: unknown): InstrumentIdentity {
   }
   const actualMic = kind === "FX" ? null : (mic as string);
   return Object.freeze({
-    provider: "TWELVE_DATA" as const, kind, symbol, mic: actualMic, currency,
-    key: ["TWELVE_DATA", kind, actualMic ?? "FX", symbol, currency].join(":"),
+    kind, symbol, mic: actualMic, currency, instrumentId: null, listingId: null,
+    key: [kind, actualMic ?? "FX", symbol, currency].join(":"),
   });
+}
+
+export function resolveProviderAlias(provider: Provider, providerReference: string, candidates: readonly ProviderAlias[]): AliasResolution {
+  const matches = candidates.filter(x => x.provider === provider && x.providerReference === providerReference);
+  if (matches.length !== 1) return { status: matches.length === 0 ? "UNRESOLVED" : "AMBIGUOUS", alias: matches[0] ?? { provider, providerReference, listingId: null, instrumentId: null, validFrom: null, validTo: null }, instrumentId: null, listingId: null };
+  const alias = matches[0];
+  if (!alias.listingId && !alias.instrumentId) return { status: "REVIEW_REQUIRED", alias, instrumentId: null, listingId: null };
+  return { status: "EXACT", alias, instrumentId: alias.instrumentId, listingId: alias.listingId };
 }
 
 export function record(value: unknown): Record<string, unknown> | null {

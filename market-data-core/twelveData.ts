@@ -8,7 +8,6 @@ export type DailyCandle = Readonly<{
 }>;
 export type DailySeries = Readonly<{
   instrument: InstrumentIdentity;
-  provider: "TWELVE_DATA";
   interval: "1day";
   adjustment: "none";
   exchangeTimezone: string;
@@ -86,7 +85,7 @@ function parseSeries(raw: unknown, instrument: InstrumentIdentity, observedAtUtc
     }
   }
   return Object.freeze({
-    provider: "TWELVE_DATA" as const, instrument, interval: "1day" as const,
+    instrument, interval: "1day" as const,
     adjustment: "none" as const, exchangeTimezone: meta.exchange_timezone,
     observedAtUtc, latency: "NOT_VERIFIED" as const,
     evidence: "PROVIDER_RESPONSE" as const,
@@ -119,8 +118,7 @@ export async function fetchDailySeries(input: Readonly<{
     kind: input.instrument?.kind, symbol: input.instrument?.symbol,
     mic: input.instrument?.mic, currency: input.instrument?.currency,
   });
-  if (input.instrument.provider !== "TWELVE_DATA" || instrument.key !== input.instrument.key ||
-      !Number.isSafeInteger(input.outputSize) || input.outputSize < 1 || input.outputSize > 1000) {
+  if (instrument.key !== input.instrument.key || !Number.isSafeInteger(input.outputSize) || input.outputSize < 1 || input.outputSize > 1000) {
     throw new MarketDataError("INVALID_REQUEST");
   }
   const url = new URL("https://api.twelvedata.com/time_series");
@@ -129,12 +127,11 @@ export async function fetchDailySeries(input: Readonly<{
   url.searchParams.set("outputsize", String(input.outputSize));
   url.searchParams.set("adjust", "none"); // Explicit to prevent implicit corporate-action rewrites.
   if (instrument.mic) url.searchParams.set("mic_code", instrument.mic);
-  url.searchParams.set("apikey", apikey); // Provider's documented API mechanism; NEVER log URL.
 
   let response: Response;
   try {
     response = await (input.transport ?? fetch)(url.toString(), {
-      method: "GET", headers: { Accept: "application/json" },
+      method: "GET", headers: { Accept: "application/json", Authorization: `apikey ${apikey}` },
       cache: "no-store", redirect: "error", signal: AbortSignal.timeout(5000),
     });
   } catch {

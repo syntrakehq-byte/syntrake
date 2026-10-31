@@ -40,7 +40,7 @@ test("instrument identity is exchange+type+currency+symbol scoped, FX direction 
   const other = instrumentIdentity({kind:"EQUITY", symbol:"AAPL", mic:"XETR", currency:"EUR"});
   assert.notEqual(aapl.key, other.key);
   assert.equal(instrumentIdentity({kind:"ETF",symbol:"SPY",mic:"ARCX",currency:"USD"}).kind,"ETF");
-  assert.equal(instrumentIdentity({kind:"FX",symbol:"EUR/USD",currency:"USD"}).key,"TWELVE_DATA:FX:FX:EUR/USD:USD");
+  assert.equal(instrumentIdentity({kind:"FX",symbol:"EUR/USD",currency:"USD"}).key,"FX:FX:EUR/USD:USD");
   assert.notEqual(instrumentIdentity({kind:"FX",symbol:"USD/EUR",currency:"EUR"}).key,
     instrumentIdentity({kind:"FX",symbol:"EUR/USD",currency:"USD"}).key);
   for(const v of [
@@ -73,7 +73,6 @@ test("no provider call without exact R3 authorization; invalid client identity f
   const fetcher=async()=>{count++;return ok({status:"ok",meta,values});};
   await asyncFailure(()=>fetchDailySeries({env:{},instrument:aapl,outputSize:2,transport:fetcher}),"DISABLED");
   await asyncFailure(()=>fetchDailySeries({env:approved,instrument:{...aapl,key:"client-overridden"},outputSize:2,transport:fetcher}),"INVALID_REQUEST");
-  await asyncFailure(()=>fetchDailySeries({env:approved,instrument:{...aapl,provider:"OTHER" as never},outputSize:2,transport:fetcher}),"INVALID_REQUEST");
   await asyncFailure(()=>fetchDailySeries({env:approved,instrument:aapl,outputSize:1001,transport:fetcher}),"INVALID_REQUEST");
   assert.equal(count,0);
 });
@@ -100,7 +99,7 @@ test("daily candles have exact string price, exchange date, UTC ingestion time; 
   assert.equal(u.searchParams.get("mic_code"),"XNAS");
   assert.equal(u.searchParams.get("interval"),"1day");
   assert.equal(u.searchParams.get("adjust"),"none");
-  assert.equal(u.searchParams.get("apikey"),approved.SYNTRAKE_TWELVE_DATA_API_KEY);
+  assert.equal(u.searchParams.has("apikey"),false);
 });
 
 test("malformed and inconsistent provider data fail closed, never use last good/zeros",async()=>{
