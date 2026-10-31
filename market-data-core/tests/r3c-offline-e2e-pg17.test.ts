@@ -156,6 +156,34 @@ test("R3-D1 autonomous runner uses independent PG17 session and completes one qu
   assert.equal((await db.query("SELECT count(*)::int AS n FROM market_core.ingestion_runs WHERE job_id=$1", [job])).rows[0].n, 1);
 });
 
+test("R3-D1 idle polling observes a task created after the queue was empty", async () => {
+  const worker = new AutonomousWorker({
+    workerId: "idle-pg17", exchangeTimezone: "UTC", pollIntervalMs: 10, maxTasks: 1, maxPolls: 20, consumedCredits: "1",
+    clientFactory: async () => new Client({ host: process.env.PGHOST ?? "127.0.0.1", port: Number(process.env.PGPORT ?? 5432), user: process.env.PGUSER ?? "postgres", password: process.env.PGPASSWORD ?? "postgres", database: process.env.PGDATABASE ?? "postgres", connectionTimeoutMillis: 3000 }),
+    provider: async () => response(),
+  });
+  const running = worker.run();
+  await new Promise(resolve => setTimeout(resolve, 30));
+  const job = "80000000-0000-0000-0000-0000000000ab";
+  await createJob(job, "d");
+  const stats = await running;
+  assert.equal(stats.committed, 1);
+  assert.equal((await db.query("SELECT state FROM market_core.ingest_jobs WHERE job_id=$1", [job])).rows[0].state, "COMMITTED");
+});
+
+test("R3-D1 parallel workers produce one provider call, ACK and reservation", async () => {
+  const job = "80000000-0000-0000-0000-0000000000ac";
+  await createJob(job, "e");
+  let providerCalls = 0;
+  const clientFactory = async () => new Client({ host: process.env.PGHOST ?? "127.0.0.1", port: Number(process.env.PGPORT ?? 5432), user: process.env.PGUSER ?? "postgres", password: process.env.PGPASSWORD ?? "postgres", database: process.env.PGDATABASE ?? "postgres", connectionTimeoutMillis: 3000 });
+  const makeWorker = (workerId: string) => new AutonomousWorker({ workerId, exchangeTimezone: "UTC", maxTasks: 1, maxPolls: 1, consumedCredits: "1", clientFactory, provider: async () => { providerCalls++; return response(); } });
+  const [left, right] = await Promise.all([makeWorker("parallel-left").run(), makeWorker("parallel-right").run()]);
+  assert.equal(left.committed + right.committed, 1);
+  assert.equal(providerCalls, 1);
+  assert.equal((await db.query("SELECT count(*)::int AS n FROM market_core.ingestion_runs WHERE job_id=$1", [job])).rows[0].n, 1);
+  assert.equal((await db.query("SELECT count(*)::int AS n FROM market_core.credit_reservations WHERE job_id=$1", [job])).rows[0].n, 1);
+});
+
 test("malformed OHLC is rejected without persisting a revision or charging credits", async () => {
   await createJob("80000000-0000-0000-0000-00000000000d","c");
   const previous = (await db.query("SELECT count(*)::int AS n FROM market_core.market_observation_revisions")).rows[0].n as number;
