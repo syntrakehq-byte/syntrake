@@ -72,8 +72,8 @@ export function validateEnvelope<T>(
   const x = value;
   if (!["AVAILABLE", "STALE", "PARTIAL", "UNAVAILABLE", "LICENSE_BLOCKED", "AMBIGUOUS"].includes(String(x.status))) rejected();
   if (!utcTime(x.firstSeenAt) || !utcTime(x.ingestedAt) || !utcTime(x.asKnownAt)) rejected();
-  if (x.firstSeenAt > x.ingestedAt || x.asKnownAt > x.ingestedAt) rejected();
-  if (x.publishedAt !== undefined && (!utcTime(x.publishedAt) || x.publishedAt > x.ingestedAt)) rejected();
+  if (Date.parse(x.firstSeenAt as string) > Date.parse(x.ingestedAt as string) || Date.parse(x.asKnownAt as string) > Date.parse(x.ingestedAt as string)) rejected();
+  if (x.publishedAt !== undefined && (!utcTime(x.publishedAt) || Date.parse(x.publishedAt) > Date.parse(x.ingestedAt as string))) rejected();
   if (x.eventTime !== undefined && !utcTime(x.eventTime)) rejected();
   if (x.marketDate !== undefined && !marketDay(x.marketDate)) rejected();
   if (!nonEmpty(x.revisionId) || typeof x.schemaVersion !== "string" || !/^\d+\.\d+$/.test(x.schemaVersion)) rejected();
