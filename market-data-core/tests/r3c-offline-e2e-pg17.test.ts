@@ -272,12 +272,10 @@ test("R3-D3 service sends periodic heartbeats during a slow offline task and shu
   await supervisor.end();
 });
 
-test("PG17 least-privilege probe identifies the missing ingest catalog read and permits supervisor inspection", async () => {
+test("PG17 least-privilege probe permits only the worker catalog read and supervisor inspection", async () => {
   await db.query("SET ROLE market_core_ingest");
-  await assert.rejects(
-    db.query("SELECT provider_id, provider_key FROM market_core.providers LIMIT 1"),
-    /permission denied for table providers/,
-  );
+  const provider = await db.query("SELECT provider_id, provider_key FROM market_core.providers LIMIT 1");
+  assert.ok(Array.isArray(provider.rows));
   await db.query("RESET ROLE");
   await db.query("SET ROLE market_core_supervisor");
   const snapshot = await db.query("SELECT * FROM market_core.supervisor_snapshot($1::interval)", ["1 minute"]);
