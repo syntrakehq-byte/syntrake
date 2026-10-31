@@ -37,7 +37,7 @@ export class ContinuousWorkerService {
   private starting = false;
   private heartbeatTimer: ReturnType<typeof setInterval> | undefined;
   private heartbeatInFlight = false;
-  private heartbeatPending: Promise<void> | undefined;
+  private heartbeatPending: Promise<boolean> | undefined;
   private worker: AutonomousWorker | undefined;
   private signalHandlers: Array<readonly [NodeJS.Signals, () => void]> = [];
   private heartbeatFailureCode: string | undefined;
@@ -52,24 +52,26 @@ export class ContinuousWorkerService {
   get isRunning(): boolean { return this.running !== undefined || this.starting; }
   get heartbeatError(): string | undefined { return this.heartbeatFailureCode; }
 
-  private async sendHeartbeat(): Promise<void> {
-    if (this.stopping) return;
+  private async sendHeartbeat(): Promise<boolean> {
+    if (this.stopping) return false;
     let db: Client | undefined;
     try {
       db = await this.config.clientFactory();
       await db.connect();
       const accepted = await heartbeat(db, this.config.workerId, this.config.instanceId, this.config.capabilityToken);
       if (!accepted) throw new Error("WORKER_IDENTITY_REJECTED");
+      return true;
     } catch (error) {
       this.heartbeatFailureCode = safeError(error);
       try { this.config.onEvent?.({ kind: "FAILED", workerId: this.config.workerId, error: this.heartbeatFailureCode }); } catch { /* observability cannot affect the worker */ }
+      return false;
     } finally {
       if (db) { try { await db.end(); } catch { /* heartbeat cleanup cannot change durable state */ } }
     }
   }
 
-  private heartbeatTick(): Promise<void> {
-    if (this.stopping || this.heartbeatInFlight) return Promise.resolve();
+  private heartbeatTick(): Promise<boolean> {
+    if (this.stopping || this.heartbeatInFlight) return Promise.resolve(false);
     this.heartbeatInFlight = true;
     const pending = this.sendHeartbeat().finally(() => {
       this.heartbeatInFlight = false;
@@ -84,13 +86,13 @@ export class ContinuousWorkerService {
     this.starting = true;
     this.stopping = false;
     this.heartbeatFailureCode = undefined;
-    const worker = new AutonomousWorker({ ...this.config });
-    this.worker = worker;
     try {
+      const worker = new AutonomousWorker({ ...this.config, heartbeat: { instanceId: this.config.instanceId, capabilityToken: this.config.capabilityToken } });
+      this.worker = worker;
       this.installSignalHandlers();
       const heartbeatMs = interval(this.config.heartbeatIntervalMs, DEFAULT_HEARTBEAT_MS);
       this.heartbeatTimer = setInterval(() => { void this.heartbeatTick().catch(() => { /* tick is isolated */ }); }, heartbeatMs);
-      await this.heartbeatTick();
+      if (!(await this.heartbeatTick())) throw new Error("WORKER_IDENTITY_REJECTED");
       this.running = worker.run();
       return await this.running;
     }

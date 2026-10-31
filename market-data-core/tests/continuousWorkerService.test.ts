@@ -26,7 +26,7 @@ test("service keeps bounded lifecycle and stops the reused AutonomousWorker", as
 test("service rejects a second start and removes signal handlers on shutdown", async () => {
   const service = new ContinuousWorkerService({
     workerId: "service-second", instanceId: "instance-service-second", capabilityToken: "y".repeat(64),
-    clientFactory: async () => client(async () => ({ rows: [] })), provider: async () => ({}),
+    clientFactory: async () => client(async sql => sql.includes("record_worker_heartbeat") ? { rows: [{ record_worker_heartbeat: true }] } : { rows: [] }), provider: async () => ({}),
     exchangeTimezone: "UTC", consumedCredits: "1", maxTasks: 1, maxPolls: 1,
   });
   const running = service.start();
@@ -59,7 +59,7 @@ test("heartbeat errors are allowlisted and throwing callbacks are contained", as
 test("shutdown stops a long idle poll without waiting for its configured interval", async () => {
   const service = new ContinuousWorkerService({
     workerId: "service-shutdown", instanceId: "instance-service-shutdown", capabilityToken: "q".repeat(64),
-    clientFactory: async () => client(async () => ({ rows: [] })), provider: async () => ({}), exchangeTimezone: "UTC",
+    clientFactory: async () => client(async sql => sql.includes("record_worker_heartbeat") ? { rows: [{ record_worker_heartbeat: true }] } : { rows: [] }), provider: async () => ({}), exchangeTimezone: "UTC",
     consumedCredits: "1", pollIntervalMs: 60_000, maxTasks: 2, maxPolls: 2,
   });
   const pending = service.start();
@@ -80,8 +80,10 @@ test("failed worker initialization leaves no timer or signal handlers behind", a
   });
   await assert.rejects(service.start(), /INVALID_WORKER_IDENTITY/);
   await new Promise(resolve => setTimeout(resolve, 25));
+  assert.equal(service.isRunning, false);
   assert.equal(process.listenerCount("SIGINT"), beforeInt);
   assert.equal(process.listenerCount("SIGTERM"), beforeTerm);
+  await assert.rejects(service.start(), /INVALID_WORKER_IDENTITY/);
 });
 
 test("heartbeat ticks are single-flight and drain during stop", async () => {

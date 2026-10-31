@@ -267,3 +267,23 @@ test("PG17 least-privilege probe identifies the missing ingest catalog read and 
   assert.ok(Array.isArray(snapshot.rows));
   await db.query("RESET ROLE");
 });
+
+test("R3-D3 rejects invalid or revoked capability before claim, provider call, ACK or reservation", async () => {
+  const job = "80000000-0000-0000-0000-0000000000af";
+  await createJob(job, "g");
+  const clientFactory = async () => new Client({ host: process.env.PGHOST ?? "127.0.0.1", port: Number(process.env.PGPORT ?? 5432), user: process.env.PGUSER ?? "postgres", password: process.env.PGPASSWORD ?? "postgres", database: process.env.PGDATABASE ?? "postgres", connectionTimeoutMillis: 3000 });
+  let providerCalls = 0;
+  const base = { workerId: "capability-pg17", instanceId: "instance-capability-pg17", clientFactory, provider: async () => { providerCalls++; return response(); }, exchangeTimezone: "UTC", consumedCredits: "1", maxTasks: 1, maxPolls: 1, heartbeatIntervalMs: 10 } as const;
+  const invalid = new ContinuousWorkerService({ ...base, capabilityToken: "0".repeat(64) });
+  await assert.rejects(invalid.start(), /WORKER_IDENTITY_REJECTED/);
+  assert.equal(providerCalls, 0);
+  assert.equal((await db.query("SELECT state FROM market_core.ingest_jobs WHERE job_id=$1", [job])).rows[0].state, "PENDING");
+  assert.equal((await db.query("SELECT count(*)::int AS n FROM market_core.credit_reservations WHERE job_id=$1", [job])).rows[0].n, 0);
+
+  const oldToken = (await db.query("SELECT market_core.register_worker_instance($1,$2) AS token", [base.workerId, base.instanceId])).rows[0].token as string;
+  await db.query("SELECT market_core.register_worker_instance($1,$2)", [base.workerId, "instance-capability-replacement"]);
+  const revoked = new ContinuousWorkerService({ ...base, capabilityToken: oldToken });
+  await assert.rejects(revoked.start(), /WORKER_IDENTITY_REJECTED/);
+  assert.equal(providerCalls, 0);
+  assert.equal((await db.query("SELECT count(*)::int AS n FROM market_core.credit_reservations WHERE job_id=$1", [job])).rows[0].n, 0);
+});
