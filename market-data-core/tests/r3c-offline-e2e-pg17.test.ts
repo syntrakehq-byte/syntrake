@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { Client } from "pg";
 import { runOfflineIngestOnce } from "../offlinePipeline";
+import { AutonomousWorker } from "../autonomousWorker";
 import type { DailyCandle } from "../twelveData";
 
 const db = new Client({
@@ -139,6 +140,20 @@ test("offline claim -> fake -> strict validation -> R3-B revision -> one ACK + r
   assert.equal((await db.query("SELECT count(*)::int AS n FROM market_core.market_observation_revisions")).rows[0].n,1);
   assert.equal((await db.query("SELECT count(*)::int AS n FROM market_core.ingestion_runs")).rows[0].n,2);
   assert.equal((await db.query("SELECT consumed_credits::text AS consumed FROM market_core.provider_budget_periods")).rows[0].consumed,"2.000000");
+});
+
+test("R3-D1 autonomous runner uses independent PG17 session and completes one queued job", async () => {
+  const job = "80000000-0000-0000-0000-0000000000aa";
+  await createJob(job, "c");
+  const worker = new AutonomousWorker({
+    workerId: "autonomous-pg17", exchangeTimezone: "UTC", maxTasks: 1,
+    clientFactory: async () => new Client({ host: process.env.PGHOST ?? "127.0.0.1", port: Number(process.env.PGPORT ?? 5432), user: process.env.PGUSER ?? "postgres", password: process.env.PGPASSWORD ?? "postgres", database: process.env.PGDATABASE ?? "postgres", connectionTimeoutMillis: 3000 }),
+    provider: async () => response(),
+  });
+  const stats = await worker.run();
+  assert.equal(stats.committed, 1);
+  assert.equal((await db.query("SELECT state FROM market_core.ingest_jobs WHERE job_id=$1", [job])).rows[0].state, "COMMITTED");
+  assert.equal((await db.query("SELECT count(*)::int AS n FROM market_core.ingestion_runs WHERE job_id=$1", [job])).rows[0].n, 1);
 });
 
 test("malformed OHLC is rejected without persisting a revision or charging credits", async () => {
