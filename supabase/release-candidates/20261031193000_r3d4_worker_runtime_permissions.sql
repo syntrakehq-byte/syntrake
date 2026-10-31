@@ -20,6 +20,8 @@ GRANT SELECT (observation_id, listing_id, provider_id, interval, market_date, ri
   ON market_core.market_observations TO market_core_ingest;
 GRANT SELECT (revision_id, observation_id, source_revision)
   ON market_core.market_observation_revisions TO market_core_ingest;
+GRANT INSERT ON market_core.market_observations, market_core.market_observation_revisions
+  TO market_core_ingest;
 
 CREATE POLICY ingest_runtime_provider_read ON market_core.providers
   FOR SELECT TO market_core_ingest
@@ -64,3 +66,11 @@ CREATE POLICY ingest_runtime_revision_read ON market_core.market_observation_rev
     WHERE o.observation_id = market_observation_revisions.observation_id
       AND j.state IN ('LEASED','FETCHING')
   ));
+
+CREATE POLICY ingest_runtime_observation_write ON market_core.market_observations
+  FOR INSERT TO market_core_ingest
+  WITH CHECK (pg_has_role(current_user, 'market_core_ingest', 'member'));
+
+CREATE POLICY ingest_runtime_revision_write ON market_core.market_observation_revisions
+  FOR INSERT TO market_core_ingest
+  WITH CHECK (pg_has_role(current_user, 'market_core_ingest', 'member'));
