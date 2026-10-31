@@ -16,7 +16,8 @@
     "test:investing:pg17:readonly": "tsx --test investing-core/tests/pg17-release-readonly.test.ts",
     "test:investing:r2f:mock": "tsx --test investing-core/tests/verifySignedClerkRlsAB.test.ts",
     "test:market-data": "tsx --test market-data-core/tests/r3a.test.ts",
-    "typecheck:market-data": "tsc -p tsconfig.market-data.json --noEmit"
+    "typecheck:market-data": "tsc -p tsconfig.market-data.json --noEmit",
+    "test:market-data:r3b": "tsx --test market-data-core/tests/r3b-pg17.test.ts"
   },
   "overrides": {
     "@clerk/shared": "3.47.7",
