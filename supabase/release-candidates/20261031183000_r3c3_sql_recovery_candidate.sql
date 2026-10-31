@@ -88,7 +88,7 @@ END $$;
 CREATE OR REPLACE FUNCTION market_core.claim_ingest_job(
   p_worker_id text, p_lease_token uuid, p_now timestamptz, p_lease_for interval)
 RETURNS TABLE(job_id uuid, reservation_id uuid, demand_key text)
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = market_core, pg_catalog AS $
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = market_core, pg_catalog AS $$
 DECLARE
   j market_core.ingest_jobs%ROWTYPE;
   b market_core.provider_budget_periods%ROWTYPE;
@@ -145,7 +145,7 @@ BEGIN
   INSERT INTO market_core.job_leases VALUES
     (j.job_id,p_worker_id,p_lease_token,p_now,p_now+p_lease_for,p_now);
   RETURN QUERY SELECT j.job_id,r,j.demand_key;
-END $;
+END $$;
 
 -- One-way durable transition BEFORE invoking any potentially billable provider.
 CREATE FUNCTION market_core.start_ingest_fetch(p_job_id uuid, p_lease_token uuid)
