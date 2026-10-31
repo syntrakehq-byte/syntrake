@@ -53,7 +53,7 @@ function parseEnvelope(raw: unknown): DataEnvelope<readonly DailyCandle[]> {
   if (result.status !== "AVAILABLE" || result.value.length !== 1) {
     throw new Error("OFFLINE_PROVIDER_NOT_AVAILABLE");
   }
-  return result;
+  return { ...result, status: "AVAILABLE" as const, value: result.value };
 }
 
 /**
