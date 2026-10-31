@@ -148,7 +148,7 @@ test("R3-D1 autonomous runner uses independent PG17 session and completes one qu
   const worker = new AutonomousWorker({
     workerId: "autonomous-pg17", exchangeTimezone: "UTC", maxTasks: 1,
     clientFactory: async () => new Client({ host: process.env.PGHOST ?? "127.0.0.1", port: Number(process.env.PGPORT ?? 5432), user: process.env.PGUSER ?? "postgres", password: process.env.PGPASSWORD ?? "postgres", database: process.env.PGDATABASE ?? "postgres", connectionTimeoutMillis: 3000 }),
-    provider: async () => response(),
+    provider: async () => response(), consumedCredits: "1",
   });
   const stats = await worker.run();
   assert.equal(stats.committed, 1);
