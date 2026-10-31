@@ -101,6 +101,9 @@ afterEach(async () => {
   await db.query("UPDATE market_core.provider_budget_periods SET reserved_credits=0,consumed_credits=0");
 });
 after(async () => {
+  await db.query(`REVOKE ALL ON market_core.worker_identity_bindings, market_core.job_leases FROM ${runtimeRoles.worker}, ${runtimeRoles.workerB}`);
+  await db.query(`REVOKE market_core_ingest FROM ${runtimeRoles.worker}, ${runtimeRoles.workerB}`);
+  await db.query(`REVOKE market_core_supervisor FROM ${runtimeRoles.supervisor}`);
   await db.query(`DROP ROLE IF EXISTS ${runtimeRoles.worker}`);
   await db.query(`DROP ROLE IF EXISTS ${runtimeRoles.workerB}`);
   await db.query(`DROP ROLE IF EXISTS ${runtimeRoles.supervisor}`);

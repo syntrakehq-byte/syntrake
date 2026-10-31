@@ -25,6 +25,7 @@ CREATE TABLE market_core.worker_identity_bindings (
 ALTER TABLE market_core.worker_identity_bindings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE market_core.worker_identity_bindings FORCE ROW LEVEL SECURITY;
 GRANT SELECT ON market_core.worker_identity_bindings TO market_core_ingest;
+GRANT SELECT ON market_core.worker_identity_bindings TO market_core_coordinator_owner;
 CREATE POLICY worker_identity_self_read ON market_core.worker_identity_bindings
   FOR SELECT TO PUBLIC USING (login_role = current_user);
 GRANT SELECT (job_id, worker_id, lease_until) ON market_core.job_leases TO market_core_ingest;
