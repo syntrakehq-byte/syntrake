@@ -122,7 +122,12 @@ BEGIN
   IF NOT FOUND THEN RETURN false; END IF;
   IF p_revision_id IS NULL OR p_consumed IS NULL OR p_consumed < 0 THEN RETURN false; END IF;
   SELECT * INTO j FROM market_core.ingest_jobs WHERE job_id=p_job_id FOR UPDATE;
-  IF NOT EXISTS (SELECT 1 FROM market_core.market_observation_revisions WHERE revision_id=p_revision_id) THEN RETURN false; END IF;
+  IF p_consumed > j.estimated_credits THEN RETURN false; END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM market_core.market_observation_revisions r
+    JOIN market_core.market_observations o USING (observation_id)
+    WHERE r.revision_id=p_revision_id AND o.listing_id=j.listing_id AND o.provider_id=j.provider_id AND o.rights_policy_id=j.rights_policy_id
+  ) THEN RETURN false; END IF;
   INSERT INTO market_core.ingestion_runs(run_id,job_id,idempotency_key,provider_run_key,state,result_revision_id,error_code,created_at)
   VALUES(p_run_id,p_job_id,j.idempotency_key,p_provider_run_key,'SUCCESS',p_revision_id,NULL,clock_timestamp())
   ON CONFLICT (job_id, provider_run_key) DO NOTHING;
@@ -147,8 +152,7 @@ ALTER TABLE market_core.credit_reservations FORCE ROW LEVEL SECURITY;
 ALTER TABLE market_core.ingestion_runs FORCE ROW LEVEL SECURITY;
 REVOKE UPDATE ON market_core.provider_budget_periods, market_core.ingest_jobs FROM market_core_ingest;
 GRANT SELECT ON market_core.provider_budget_periods, market_core.ingest_jobs TO market_core_ingest;
-GRANT INSERT, DELETE ON market_core.job_leases TO market_core_ingest;
-GRANT INSERT ON market_core.credit_reservations, market_core.ingestion_runs TO market_core_ingest;
+REVOKE ALL ON market_core.job_leases, market_core.credit_reservations, market_core.ingestion_runs FROM market_core_ingest;
 CREATE POLICY coordinator_budget ON market_core.provider_budget_periods FOR SELECT TO market_core_ingest USING (current_user = 'market_core_ingest');
 CREATE POLICY coordinator_budget_update ON market_core.provider_budget_periods FOR UPDATE TO market_core_ingest USING (current_user = 'market_core_ingest') WITH CHECK (current_user = 'market_core_ingest');
 CREATE POLICY coordinator_jobs ON market_core.ingest_jobs FOR SELECT TO market_core_ingest USING (current_user = 'market_core_ingest');
