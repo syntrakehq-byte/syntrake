@@ -158,7 +158,7 @@ test("malformed OHLC is rejected without persisting a revision or charging credi
   // Fixture-only clock travel proves a timed-out billable call is NOT replayed.
   const recovery = await db.query("SELECT market_core.recover_expired_ingest_leases(clock_timestamp()+interval '6 minutes') AS n");
   assert.equal(recovery.rows[0].n,1);
-  const held = await db.query("SELECT j.state,j.last_error,r.state AS reservation_state,b.reserved_credits::text AS reserved FROM market_core.ingest_jobs j JOIN market_core.credit_reservations r USING(job_id) JOIN market_core.provider_budget_periods b USING(budget_period_id)");
+  const held = await db.query("SELECT j.state,j.last_error,r.state AS reservation_state,b.reserved_credits::text AS reserved FROM market_core.ingest_jobs j JOIN market_core.credit_reservations r ON r.job_id=j.job_id JOIN market_core.provider_budget_periods b ON b.budget_period_id=r.budget_period_id");
   assert.equal(held.rows[0].state,"DEAD_LETTER");
   assert.equal(held.rows[0].last_error,"COST_UNCERTAIN");
   assert.equal(held.rows[0].reservation_state,"RESERVED");
