@@ -270,7 +270,7 @@ test("PG17 least-privilege probe identifies the missing ingest catalog read and 
 
 test("R3-D3 rejects invalid or revoked capability before claim, provider call, ACK or reservation", async () => {
   const job = "80000000-0000-0000-0000-0000000000af";
-  await createJob(job, "g");
+  await createJob(job, "a");
   const clientFactory = async () => new Client({ host: process.env.PGHOST ?? "127.0.0.1", port: Number(process.env.PGPORT ?? 5432), user: process.env.PGUSER ?? "postgres", password: process.env.PGPASSWORD ?? "postgres", database: process.env.PGDATABASE ?? "postgres", connectionTimeoutMillis: 3000 });
   let providerCalls = 0;
   const base = { workerId: "capability-pg17", instanceId: "instance-capability-pg17", clientFactory, provider: async () => { providerCalls++; return response(); }, exchangeTimezone: "UTC", consumedCredits: "1", maxTasks: 1, maxPolls: 1, heartbeatIntervalMs: 10 } as const;
