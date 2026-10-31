@@ -110,6 +110,28 @@ CREATE OR REPLACE FUNCTION market_core.prevent_revision_mutation() RETURNS trigg
 CREATE TRIGGER revisions_append_only BEFORE UPDATE OR DELETE ON market_core.market_observation_revisions FOR EACH ROW EXECUTE FUNCTION market_core.prevent_revision_mutation();
 CREATE INDEX observations_pit_idx ON market_core.market_observations (listing_id, market_date, observation_id);
 CREATE INDEX revisions_pit_idx ON market_core.market_observation_revisions (observation_id, as_known_at DESC);
+CREATE OR REPLACE FUNCTION market_core.read_market_pit(p_listing_id uuid, p_cutoff timestamptz)
+RETURNS TABLE (market_date date, status text, revision_id uuid, close_value numeric)
+LANGUAGE sql STABLE AS $$
+  WITH ranked AS (
+    SELECT o.market_date, o.rights_policy_id, r.revision_id, r.close_value,
+           row_number() OVER (PARTITION BY o.observation_id ORDER BY r.as_known_at DESC, r.ingested_at DESC, r.revision_id DESC) AS rn
+    FROM market_core.market_observations o
+    JOIN market_core.market_observation_revisions r ON r.observation_id = o.observation_id
+    WHERE o.listing_id = p_listing_id
+      AND r.first_seen_at <= p_cutoff
+      AND r.ingested_at <= p_cutoff
+      AND r.as_known_at <= p_cutoff
+  )
+  SELECT x.market_date,
+         CASE WHEN lp.display_allowed AND lp.cache_allowed AND (lp.retention_until IS NULL OR lp.retention_until > p_cutoff) THEN 'AVAILABLE' ELSE 'LICENSE_BLOCKED' END,
+         x.revision_id,
+         CASE WHEN lp.display_allowed AND lp.cache_allowed AND (lp.retention_until IS NULL OR lp.retention_until > p_cutoff) THEN x.close_value ELSE NULL END
+  FROM ranked x JOIN market_core.license_policies lp ON lp.rights_policy_id = x.rights_policy_id
+  WHERE x.rn = 1;
+$$;
+REVOKE ALL ON FUNCTION market_core.read_market_pit(uuid, timestamptz) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION market_core.read_market_pit(uuid, timestamptz) TO market_core_reader;
 
 DO $$ DECLARE t text; BEGIN
   FOREACH t IN ARRAY ARRAY['providers','license_policies','issuers','instruments','listings','provider_aliases','market_observations','market_observation_revisions'] LOOP
