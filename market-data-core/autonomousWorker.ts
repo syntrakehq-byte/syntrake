@@ -1,6 +1,7 @@
 import type { Client } from "pg";
 import { randomUUID } from "node:crypto";
 import { runOfflineIngestOnce, type OfflineProvider, type OfflineResult } from "./offlinePipeline";
+import { heartbeat } from "./supervisor";
 
 export type WorkerEvent = Readonly<{ kind: "STARTED" | "COMMITTED" | "NO_WORK" | "FAILED" | "STOPPED"; workerId: string; jobId?: string; error?: string }>;
 export type WorkerStats = Readonly<{ attempts: number; claimAttempts: number; committed: number; noWork: number; failed: number; recovered: number; stopped: boolean }>;
@@ -26,6 +27,7 @@ export class AutonomousWorker {
     maxTasks?: number;
     maxPolls?: number;
     consumedCredits: string;
+    heartbeat?: Readonly<{ instanceId: string; capabilityToken: string }>;
     onEvent?: (event: WorkerEvent) => void;
   }>) {
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(input.workerId)) throw new Error("INVALID_WORKER_IDENTITY");
@@ -47,6 +49,7 @@ export class AutonomousWorker {
       try {
         db = await this.input.clientFactory();
         await db.connect();
+        if (this.input.heartbeat && !(await heartbeat(db, this.input.workerId, this.input.heartbeat.instanceId, this.input.heartbeat.capabilityToken))) throw new Error("WORKER_IDENTITY_REJECTED");
         const recovered = await db.query<{ recover_expired_ingest_leases_safe: number }>("SELECT market_core.recover_expired_ingest_leases_safe() AS recover_expired_ingest_leases_safe");
         this.statsValue = { ...this.statsValue, recovered: this.statsValue.recovered + Number(recovered.rows[0]?.recover_expired_ingest_leases_safe ?? 0) };
         const result: OfflineResult = await runOfflineIngestOnce({

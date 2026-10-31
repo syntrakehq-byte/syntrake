@@ -1,7 +1,7 @@
 import type { Client } from "pg";
 export type SupervisorSnapshot = Readonly<{ workerId: string; instanceId: string; active: boolean; leases: number; pending: number; fetching: number; uncertain: number }>;
-export async function heartbeat(db: Client, workerId: string, instanceId: string): Promise<boolean> {
-  const result = await db.query<{ record_worker_heartbeat: boolean }>("SELECT market_core.record_worker_heartbeat($1,$2) AS record_worker_heartbeat", [workerId, instanceId]);
+export async function heartbeat(db: Client, workerId: string, instanceId: string, capabilityToken: string): Promise<boolean> {
+  const result = await db.query<{ record_worker_heartbeat: boolean }>("SELECT market_core.record_worker_heartbeat($1,$2,$3) AS record_worker_heartbeat", [workerId, instanceId, capabilityToken]);
   return result.rows[0]?.record_worker_heartbeat === true;
 }
 export async function inspect(db: Client, staleAfter = "2 minutes"): Promise<SupervisorSnapshot[]> {
