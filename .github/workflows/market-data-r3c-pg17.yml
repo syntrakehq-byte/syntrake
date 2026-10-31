@@ -1,0 +1,26 @@
+name: market-data-r3c-pg17
+on:
+  pull_request:
+    paths: ["market-data-core/**", "supabase/release-candidates/**", ".github/workflows/market-data-r3c-pg17.yml", "package.json"]
+  workflow_dispatch:
+permissions: { contents: read }
+jobs:
+  r3c-pg17:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    services:
+      postgres:
+        image: postgres:17
+        env: { POSTGRES_PASSWORD: postgres, POSTGRES_DB: postgres }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with: { node-version: "22", cache: npm }
+      - run: npm ci
+      - run: psql -h 127.0.0.1 -U postgres -d postgres -tAc "SELECT current_setting('server_version') LIKE '17.%'" | tr -d ' ' | grep -qx t
+        env: { PGPASSWORD: postgres }
+      - run: npm run test:market-data:r3c
