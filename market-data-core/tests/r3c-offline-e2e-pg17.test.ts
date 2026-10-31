@@ -64,6 +64,8 @@ before(async () => {
     "supabase/release-candidates/20261031150000_r3b_market_core_candidate.sql"),"utf8"));
   await db.query(await readFile(resolve(process.cwd(),
     "supabase/release-candidates/20261031170000_r3c_coordinator_candidate.sql"),"utf8"));
+  await db.query(await readFile(resolve(process.cwd(),
+    "supabase/release-candidates/20261031183000_r3c3_sql_recovery_candidate.sql"),"utf8"));
   await db.query("INSERT INTO market_core.providers VALUES ($1,'FAKE_E2E','ACTIVE')", [ids.provider]);
   await db.query("INSERT INTO market_core.license_policies VALUES ($1,'offline-fixture',true,false,NULL)",[ids.rights]);
   await db.query("INSERT INTO market_core.issuers VALUES ($1,'Offline Test Issuer')",[ids.issuer]);
@@ -84,6 +86,7 @@ after(async () => {
   await db.query("DROP EXTENSION IF EXISTS btree_gist");
   await db.query("DROP ROLE IF EXISTS market_core_reader");
   await db.query("DROP ROLE IF EXISTS market_core_ingest");
+  await db.query("DROP ROLE IF EXISTS market_core_coordinator_owner");
   await db.query("DROP ROLE IF EXISTS anon");
   await db.query("DROP ROLE IF EXISTS authenticated");
   await db.end();
@@ -151,5 +154,20 @@ test("malformed OHLC is rejected without persisting a revision or charging credi
   assert.equal((await db.query("SELECT count(*)::int AS n FROM market_core.market_observation_revisions")).rows[0].n,previous);
   assert.equal((await db.query("SELECT count(*)::int AS n FROM market_core.ingestion_runs")).rows[0].n,0);
   assert.equal((await db.query("SELECT consumed_credits::text AS value FROM market_core.provider_budget_periods")).rows[0].value,"0.000000");
-  assert.equal((await db.query("SELECT state FROM market_core.ingest_jobs")).rows[0].state,"LEASED");
+  assert.equal((await db.query("SELECT state FROM market_core.ingest_jobs")).rows[0].state,"FETCHING");
+  // Fixture-only clock travel proves a timed-out billable call is NOT replayed.
+  const recovery = await db.query("SELECT market_core.recover_expired_ingest_leases(clock_timestamp()+interval '6 minutes') AS n");
+  assert.equal(recovery.rows[0].n,1);
+  const held = await db.query("SELECT j.state,j.last_error,r.state AS reservation_state,b.reserved_credits::text AS reserved FROM market_core.ingest_jobs j JOIN market_core.credit_reservations r USING(job_id) JOIN market_core.provider_budget_periods b USING(budget_period_id)");
+  assert.equal(held.rows[0].state,"DEAD_LETTER");
+  assert.equal(held.rows[0].last_error,"COST_UNCERTAIN");
+  assert.equal(held.rows[0].reservation_state,"RESERVED");
+  assert.equal(held.rows[0].reserved,"1.000000");
+  assert.deepEqual(await runOfflineIngestOnce({
+    db, provider:async()=>{throw Error("NEVER_REFETCH");},
+    workerId:"no-replay",leaseToken:"80000000-0000-0000-0000-000000000010",
+    runId:"80000000-0000-0000-0000-000000000011",
+    providerRunKey:"no-replay",consumedCredits:"1",
+    exchangeTimezone:"America/New_York",
+  }),{state:"NO_WORK"});
 });
