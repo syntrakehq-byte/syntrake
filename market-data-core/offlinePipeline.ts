@@ -60,9 +60,9 @@ function parseEnvelope(raw: unknown) {
  * A single explicitly injected fake provider and one claim. No sleep, polling,
  * environment secrets or external HTTP. The database is a disposable PG17.
  *
- * Claim reserves credits before calling the fake provider; invalid responses
- * leave the leased job for bounded lease recovery, without a false ACK.
- * Revision insertion and successful ACK are one PostgreSQL transaction.
+ * Claim reserves credits, then enters FETCHING BEFORE the fake provider call.
+ * A failure after FETCHING is COST_UNCERTAIN on recovery: never silently
+ * retry a potentially billable operation. Revision and ACK share a transaction.
  */
 export async function runOfflineIngestOnce(input: Readonly<{
   db: Client;
@@ -88,7 +88,7 @@ export async function runOfflineIngestOnce(input: Readonly<{
   catch { throw new Error("INVALID_EXCHANGE_TIMEZONE"); }
 
   const claim = await db.query<{ job_id: string }>(
-    "SELECT job_id FROM market_core.claim_ingest_job($1,$2,clock_timestamp(),interval '5 minutes')",
+    "SELECT job_id FROM market_core.claim_ingest_job_safe($1,$2)",
     [input.workerId, input.leaseToken],
   );
   if (claim.rows.length === 0) return { state: "NO_WORK" };
@@ -104,6 +104,12 @@ export async function runOfflineIngestOnce(input: Readonly<{
       WHERE j.job_id=$1`, [jobId]);
   const job = result.rows[0];
   if (!job) throw new Error("OFFLINE_JOB_MISSING");
+
+  // Durable fence: a lease expiring after this point must never auto-fetch again.
+  const fence = await db.query<{ ok: boolean }>(
+    "SELECT market_core.start_ingest_fetch($1,$2) AS ok", [jobId, input.leaseToken],
+  );
+  if (fence.rows[0]?.ok !== true) throw new Error("OFFLINE_FETCH_FENCE_REJECTED");
 
   const envelope = parseEnvelope(await input.provider(job));
   if (envelope.sourceRefs.every(s => s.provider !== job.provider_key) ||
