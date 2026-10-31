@@ -1,0 +1,36 @@
+name: market-data-r3a
+
+on:
+  pull_request:
+    paths:
+      - "market-data-core/**"
+      - "tsconfig.market-data.json"
+      - "package.json"
+      - ".github/workflows/market-data-r3a.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  r3a-domain-and-provider:
+    name: Offline Twelve Data contract and fail-closed Preview gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run test:market-data
+        env:
+          SYNTRAKE_R3_PROVIDER_ENABLED: disabled
+      - run: npm run typecheck:market-data
+      - name: Verify R3A remains non-operational in CI and requires no provider billing
+        run: |
+          test -z "${SYNTRAKE_TWELVE_DATA_API_KEY:-}" || { echo 'R3A CI must not use a live provider key'; exit 1; }
+          echo 'R3-A provider was not contacted: deterministic response fixtures only.'
