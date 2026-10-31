@@ -25,8 +25,8 @@ const ids = {
   listing: "80000000-0000-0000-0000-000000000005",
   budget: "80000000-0000-0000-0000-000000000006",
 };
-const runtimeRoles = { worker: "r3d4_worker_login", supervisor: "r3d4_supervisor_login" };
-const runtimePasswords = { worker: randomBytes(24).toString("hex"), supervisor: randomBytes(24).toString("hex") };
+const runtimeRoles = { worker: "r3d4_worker_login", workerB: "r3d4_worker_b_login", supervisor: "r3d4_supervisor_login" };
+const runtimePasswords = { worker: randomBytes(24).toString("hex"), workerB: randomBytes(24).toString("hex"), supervisor: randomBytes(24).toString("hex") };
 const useRuntimeIdentity = process.env.R3D4_ONLY === "1";
 const candle: DailyCandle = {
   marketDate: "2026-01-05", open: "100.00", high: "110.00",
@@ -77,9 +77,12 @@ before(async () => {
   await db.query(await readFile(resolve(process.cwd(),
     "supabase/release-candidates/20261031193000_r3d4_worker_runtime_permissions.sql"),"utf8"));
   await db.query(`CREATE ROLE ${runtimeRoles.worker} LOGIN PASSWORD '${runtimePasswords.worker}';`);
+  await db.query(`CREATE ROLE ${runtimeRoles.workerB} LOGIN PASSWORD '${runtimePasswords.workerB}';`);
   await db.query(`CREATE ROLE ${runtimeRoles.supervisor} LOGIN PASSWORD '${runtimePasswords.supervisor}';`);
   await db.query(`GRANT market_core_ingest TO ${runtimeRoles.worker}`);
+  await db.query(`GRANT market_core_ingest TO ${runtimeRoles.workerB}`);
   await db.query(`GRANT market_core_supervisor TO ${runtimeRoles.supervisor}`);
+  await db.query("INSERT INTO market_core.worker_identity_bindings VALUES ($1,$2),($3,$4)", [runtimeRoles.worker,"service-pg17",runtimeRoles.workerB,"worker-b"]);
   await db.query("INSERT INTO market_core.providers VALUES ($1,'FAKE_E2E','ACTIVE')", [ids.provider]);
   await db.query("INSERT INTO market_core.license_policies VALUES ($1,'offline-fixture',true,false,NULL)",[ids.rights]);
   await db.query("INSERT INTO market_core.issuers VALUES ($1,'Offline Test Issuer')",[ids.issuer]);
@@ -97,6 +100,7 @@ afterEach(async () => {
 });
 after(async () => {
   await db.query(`DROP ROLE IF EXISTS ${runtimeRoles.worker}`);
+  await db.query(`DROP ROLE IF EXISTS ${runtimeRoles.workerB}`);
   await db.query(`DROP ROLE IF EXISTS ${runtimeRoles.supervisor}`);
   await db.query("DROP SCHEMA IF EXISTS market_core CASCADE");
   await db.query("DROP EXTENSION IF EXISTS btree_gist");
@@ -301,6 +305,35 @@ test("PG17 LOGIN worker cannot read or write outside an active claim", async () 
   await assert.rejects(worker.query("UPDATE market_core.provider_budget_periods SET reserved_credits=reserved_credits+1"), /permission denied|row-level security/);
   await assert.rejects(worker.query("SELECT * FROM market_core.supervisor_snapshot('1 minute'::interval)"), /permission denied|function/);
   await worker.end();
+});
+
+test("PG17 isolates two LOGIN workers on the active lease owner", async () => {
+  const job = "80000000-0000-0000-0000-0000000000b2";
+  await createJob(job, "c");
+  let providerStarted = false;
+  let releaseProvider!: () => void;
+  const blocked = new Promise<void>(resolve => { releaseProvider = resolve; });
+  const workerB = new Client({ host: process.env.PGHOST ?? "127.0.0.1", port: Number(process.env.PGPORT ?? 5432), user: runtimeRoles.workerB, password: runtimePasswords.workerB, database: process.env.PGDATABASE ?? "postgres", connectionTimeoutMillis: 3000 });
+  await workerB.connect();
+  const running = runOfflineIngestOnce({
+    db: workerB, workerId: "worker-b", leaseToken: "80000000-0000-0000-0000-0000000000b3",
+    runId: "80000000-0000-0000-0000-0000000000b4", providerRunKey: "worker-b-run",
+    consumedCredits: "1", exchangeTimezone: "UTC",
+    provider: async () => { providerStarted = true; await blocked; return response(); },
+  });
+  const deadline = Date.now() + 3000;
+  while (!providerStarted && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(providerStarted, true);
+  const workerA = new Client({ host: process.env.PGHOST ?? "127.0.0.1", port: Number(process.env.PGPORT ?? 5432), user: runtimeRoles.worker, password: runtimePasswords.worker, database: process.env.PGDATABASE ?? "postgres", connectionTimeoutMillis: 3000 });
+  await workerA.connect();
+  assert.equal((await workerA.query("SELECT job_id FROM market_core.ingest_jobs WHERE job_id=$1", [job])).rows.length, 0);
+  await assert.rejects(workerA.query(`INSERT INTO market_core.market_observations
+    (observation_id,listing_id,provider_id,rights_policy_id,interval,market_date,exchange_timezone,adjustment,created_at)
+    VALUES ('80000000-0000-0000-0000-0000000000b5',$1,$2,$3,'1day',DATE '2026-01-05','UTC','none',clock_timestamp())`, [ids.listing, ids.provider, ids.rights]), /row-level security|permission denied/);
+  await workerA.end();
+  releaseProvider();
+  assert.equal((await running).state, "COMMITTED");
+  await workerB.end();
 });
 
 test("R3-D3 rejects invalid or revoked capability before claim, provider call, ACK or reservation", async () => {

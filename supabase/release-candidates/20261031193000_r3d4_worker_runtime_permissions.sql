@@ -3,13 +3,30 @@
 -- No financial DML is granted here; reservations, balances and ACK remain RPC-only.
 GRANT USAGE ON SCHEMA market_core TO market_core_ingest;
 
+CREATE TABLE market_core.worker_identity_bindings (
+  login_role name PRIMARY KEY,
+  worker_id text NOT NULL UNIQUE
+);
+ALTER TABLE market_core.worker_identity_bindings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE market_core.worker_identity_bindings FORCE ROW LEVEL SECURITY;
+GRANT SELECT ON market_core.worker_identity_bindings TO market_core_ingest;
+CREATE POLICY worker_identity_self_read ON market_core.worker_identity_bindings
+  FOR SELECT TO market_core_ingest USING (login_role = current_user);
+GRANT SELECT (job_id, worker_id, lease_until) ON market_core.job_leases TO market_core_ingest;
+CREATE POLICY worker_identity_lease_read ON market_core.job_leases
+  FOR SELECT TO market_core_ingest USING (EXISTS (
+    SELECT 1 FROM market_core.worker_identity_bindings b
+    WHERE b.login_role = current_user AND b.worker_id = job_leases.worker_id
+  ));
+
 -- LOGIN identities inherit the runtime group but remain current_user.  The
 -- coordinator policy is intentionally exact for SET ROLE; this additional
 -- read policy is the least privilege bridge for the disposable LOGIN worker.
 DROP POLICY IF EXISTS ingest_runtime_jobs_read ON market_core.ingest_jobs;
 CREATE POLICY ingest_runtime_jobs_read ON market_core.ingest_jobs
   FOR SELECT TO market_core_ingest
-  USING (state IN ('LEASED','FETCHING'));
+  USING (EXISTS (SELECT 1 FROM market_core.job_leases l
+    WHERE l.job_id = ingest_jobs.job_id AND l.lease_until > clock_timestamp()));
 
 GRANT SELECT (provider_id, provider_key)
   ON market_core.providers TO market_core_ingest;
@@ -27,34 +44,34 @@ GRANT INSERT ON market_core.market_observations, market_core.market_observation_
 CREATE POLICY ingest_runtime_provider_read ON market_core.providers
   FOR SELECT TO market_core_ingest
   USING (EXISTS (
-    SELECT 1 FROM market_core.ingest_jobs j
+    SELECT 1 FROM market_core.ingest_jobs j JOIN market_core.job_leases l ON l.job_id=j.job_id
     WHERE j.provider_id = providers.provider_id
-      AND j.state IN ('LEASED','FETCHING')
+      AND l.lease_until > clock_timestamp()
   ));
 
 CREATE POLICY ingest_runtime_listing_read ON market_core.listings
   FOR SELECT TO market_core_ingest
   USING (EXISTS (
-    SELECT 1 FROM market_core.ingest_jobs j
+    SELECT 1 FROM market_core.ingest_jobs j JOIN market_core.job_leases l ON l.job_id=j.job_id
     WHERE j.listing_id = listings.listing_id
-      AND j.state IN ('LEASED','FETCHING')
+      AND l.lease_until > clock_timestamp()
   ));
 
 CREATE POLICY ingest_runtime_rights_read ON market_core.license_policies
   FOR SELECT TO market_core_ingest
   USING (EXISTS (
-    SELECT 1 FROM market_core.ingest_jobs j
+    SELECT 1 FROM market_core.ingest_jobs j JOIN market_core.job_leases l ON l.job_id=j.job_id
     WHERE j.rights_policy_id = license_policies.rights_policy_id
-      AND j.state IN ('LEASED','FETCHING')
+      AND l.lease_until > clock_timestamp()
   ));
 
 CREATE POLICY ingest_runtime_observation_read ON market_core.market_observations
   FOR SELECT TO market_core_ingest
   USING (EXISTS (
-    SELECT 1 FROM market_core.ingest_jobs j
+    SELECT 1 FROM market_core.ingest_jobs j JOIN market_core.job_leases l ON l.job_id=j.job_id
     WHERE j.listing_id = market_observations.listing_id
       AND j.provider_id = market_observations.provider_id
-      AND j.state IN ('LEASED','FETCHING')
+      AND l.lease_until > clock_timestamp()
   ));
 
 CREATE POLICY ingest_runtime_revision_read ON market_core.market_observation_revisions
@@ -64,18 +81,19 @@ CREATE POLICY ingest_runtime_revision_read ON market_core.market_observation_rev
     FROM market_core.market_observations o
     JOIN market_core.ingest_jobs j
       ON j.listing_id = o.listing_id AND j.provider_id = o.provider_id
+    JOIN market_core.job_leases l ON l.job_id=j.job_id
     WHERE o.observation_id = market_observation_revisions.observation_id
-      AND j.state IN ('LEASED','FETCHING')
+      AND l.lease_until > clock_timestamp()
   ));
 
 CREATE POLICY ingest_runtime_observation_write ON market_core.market_observations
   FOR INSERT TO market_core_ingest
   WITH CHECK (EXISTS (
-    SELECT 1 FROM market_core.ingest_jobs j
+    SELECT 1 FROM market_core.ingest_jobs j JOIN market_core.job_leases l ON l.job_id=j.job_id
     WHERE j.listing_id = market_observations.listing_id
       AND j.provider_id = market_observations.provider_id
       AND j.rights_policy_id = market_observations.rights_policy_id
-      AND j.state IN ('LEASED','FETCHING')
+      AND l.lease_until > clock_timestamp()
   ));
 
 CREATE POLICY ingest_runtime_revision_write ON market_core.market_observation_revisions
@@ -86,6 +104,7 @@ CREATE POLICY ingest_runtime_revision_write ON market_core.market_observation_re
     JOIN market_core.ingest_jobs j
       ON j.listing_id = o.listing_id AND j.provider_id = o.provider_id
      AND j.rights_policy_id = o.rights_policy_id
+    JOIN market_core.job_leases l ON l.job_id=j.job_id
     WHERE o.observation_id = market_observation_revisions.observation_id
-      AND j.state IN ('LEASED','FETCHING')
+      AND l.lease_until > clock_timestamp()
   ));
