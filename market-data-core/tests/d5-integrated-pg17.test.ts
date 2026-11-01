@@ -83,7 +83,7 @@ test("D5 integrated offline AAPL discovery -> Registry/D3 -> D4 -> R3-C -> worke
   let simulatedHttpCalls = 0;
   const offlineProvider = createTwelveDataOfflineProvider({
     env: { VERCEL_ENV: "preview", VERCEL_GIT_COMMIT_REF: "feat/r3-market-data-core-20261030", SYNTRAKE_R3_PROVIDER_ENABLED: "enabled", VERCEL_GIT_COMMIT_SHA: "a".repeat(40), SYNTRAKE_R3_PREVIEW_APPROVED_SHA: "a".repeat(40), SYNTRAKE_TWELVE_DATA_API_KEY: "offline-test-key-1234" },
-    resolve: async claim => { assert.equal(claim.listing_id, ownedInstrument.listingId); return { instrument: ownedInstrument, sourceAlias: ownedAlias, asOf: "2025-01-02T00:00:00Z" }; },
+    resolve: async claim => { assert.equal(claim.listing_id, ownedInstrument.listingId); return { instrument: ownedInstrument, sourceAlias: ownedAlias, asOf: "2025-01-02" }; },
     transport: async (_url, init) => { simulatedHttpCalls++; assert.equal((init.headers as Record<string, string>).Authorization, "apikey offline-test-key-1234"); return new Response(JSON.stringify({ status: "ok", meta: { symbol: "AAPL", interval: "1day", currency: "USD", exchange_timezone: "America/New_York", type: "Common Stock", mic_code: "XNAS" }, values: [{ datetime: "2025-01-02", open: "100.00", high: "110.00", low: "90.00", close: "105.50", volume: "23" }] }), { status: 200 }); },
   });
   let providerError: string | null = null;
