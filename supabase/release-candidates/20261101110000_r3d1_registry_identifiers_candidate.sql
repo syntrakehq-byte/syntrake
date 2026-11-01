@@ -5,14 +5,11 @@ DO $$ BEGIN CREATE ROLE market_core_catalog_reader NOLOGIN; EXCEPTION WHEN dupli
 DO $$ BEGIN CREATE ROLE market_core_registry_reviewer NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 ALTER TABLE market_core.listings ADD COLUMN IF NOT EXISTS mic_role text;
-UPDATE market_core.listings SET mic_role = CASE WHEN mic IS NULL THEN NULL ELSE 'OPERATING' END WHERE mic_role IS NULL;
 ALTER TABLE market_core.listings ADD CONSTRAINT listings_mic_role_coherent CHECK ((mic IS NULL AND mic_role IS NULL) OR (mic IS NOT NULL AND mic_role IN ('OPERATING','SEGMENT')));
 ALTER TABLE market_core.provider_aliases ADD COLUMN IF NOT EXISTS identifier_type text NOT NULL DEFAULT 'PROVIDER_NATIVE';
 ALTER TABLE market_core.provider_aliases ADD COLUMN IF NOT EXISTS identifier_scope text NOT NULL DEFAULT 'LISTING';
 ALTER TABLE market_core.provider_aliases ADD CONSTRAINT provider_aliases_type_scope_valid CHECK (
-  (identifier_type IN ('PROVIDER_NATIVE','TICKER') AND identifier_scope IN ('INSTRUMENT','LISTING'))
-  OR (identifier_type IN ('ISIN','FIGI') AND identifier_scope IN ('INSTRUMENT','LISTING'))
-  OR (identifier_type IN ('CIK','LEI') AND identifier_scope = 'ISSUER')
+  (identifier_type IN ('PROVIDER_NATIVE','TICKER') AND identifier_scope = 'LISTING')
 );
 
 CREATE TABLE market_core.catalog_sources (
@@ -84,7 +81,7 @@ CREATE TABLE market_core.catalog_candidate_identifiers (
   mic char(4),
   created_at timestamptz NOT NULL,
   UNIQUE (candidate_id, identifier_type, identifier_value, identifier_scope, snapshot_id),
-  CHECK ((identifier_type IN ('CIK','LEI') AND identifier_scope='ISSUER') OR (identifier_type IN ('ISIN','FIGI') AND identifier_scope IN ('INSTRUMENT','LISTING')) OR (identifier_type IN ('PROVIDER_NATIVE','TICKER') AND identifier_scope IN ('INSTRUMENT','LISTING'))),
+  CHECK ((identifier_type='ISIN' AND identifier_scope='INSTRUMENT') OR (identifier_type='FIGI' AND identifier_scope IN ('INSTRUMENT','LISTING')) OR (identifier_type IN ('CIK','LEI') AND identifier_scope='ISSUER') OR (identifier_type IN ('PROVIDER_NATIVE','TICKER') AND identifier_scope IN ('INSTRUMENT','LISTING'))),
   CHECK (valid_to IS NULL OR valid_from IS NULL OR valid_to > valid_from),
   CHECK (mic IS NULL OR mic ~ '^[A-Z0-9]{4}$')
 );
@@ -104,7 +101,7 @@ CREATE TABLE market_core.instrument_identifiers (
   verified boolean NOT NULL DEFAULT false,
   created_at timestamptz NOT NULL,
   UNIQUE (identifier_type, identifier_value, identifier_scope, issuer_id, instrument_id, listing_id, snapshot_id),
-  CHECK ((identifier_type IN ('CIK','LEI') AND identifier_scope='ISSUER' AND issuer_id IS NOT NULL AND instrument_id IS NULL AND listing_id IS NULL) OR (identifier_type IN ('ISIN','FIGI') AND identifier_scope='INSTRUMENT' AND instrument_id IS NOT NULL AND issuer_id IS NULL AND listing_id IS NULL) OR (identifier_type IN ('ISIN','FIGI','PROVIDER_NATIVE','TICKER') AND identifier_scope='LISTING' AND listing_id IS NOT NULL AND issuer_id IS NULL AND instrument_id IS NULL)),
+  CHECK ((identifier_type IN ('CIK','LEI') AND identifier_scope='ISSUER' AND issuer_id IS NOT NULL AND instrument_id IS NULL AND listing_id IS NULL) OR (identifier_type='ISIN' AND identifier_scope='INSTRUMENT' AND instrument_id IS NOT NULL AND issuer_id IS NULL AND listing_id IS NULL) OR (identifier_type='FIGI' AND identifier_scope='INSTRUMENT' AND instrument_id IS NOT NULL AND issuer_id IS NULL AND listing_id IS NULL) OR (identifier_type='FIGI' AND identifier_scope='LISTING' AND listing_id IS NOT NULL AND issuer_id IS NULL AND instrument_id IS NULL) OR (identifier_type IN ('PROVIDER_NATIVE','TICKER') AND identifier_scope='LISTING' AND listing_id IS NOT NULL AND issuer_id IS NULL AND instrument_id IS NULL)),
   CHECK (valid_to IS NULL OR valid_from IS NULL OR valid_to > valid_from)
 );
 CREATE TABLE market_core.catalog_review_decisions (
@@ -117,7 +114,7 @@ CREATE TABLE market_core.catalog_review_decisions (
   decided_at timestamptz NOT NULL,
   UNIQUE (candidate_id, evidence_hash)
 );
-CREATE OR REPLACE FUNCTION market_core.validate_catalog_lineage() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION market_core.validate_catalog_lineage() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=market_core,pg_catalog AS $$
 DECLARE candidate_snapshot uuid; snapshot_source uuid;
 BEGIN
   SELECT snapshot_id INTO candidate_snapshot FROM market_core.catalog_candidates WHERE candidate_id=NEW.candidate_id;
@@ -126,7 +123,7 @@ BEGIN
   RETURN NEW;
 END $$;
 CREATE TRIGGER catalog_identifier_lineage BEFORE INSERT OR UPDATE ON market_core.catalog_candidate_identifiers FOR EACH ROW EXECUTE FUNCTION market_core.validate_catalog_lineage();
-CREATE OR REPLACE FUNCTION market_core.validate_registry_identifier_lineage() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION market_core.validate_registry_identifier_lineage() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=market_core,pg_catalog AS $$
 DECLARE snapshot_source uuid;
 BEGIN
   SELECT source_id INTO snapshot_source FROM market_core.catalog_snapshots WHERE snapshot_id=NEW.snapshot_id;
@@ -142,6 +139,19 @@ BEGIN
   RETURN NEW;
 END $$;
 CREATE TRIGGER catalog_source_rights BEFORE INSERT OR UPDATE ON market_core.catalog_sources FOR EACH ROW EXECUTE FUNCTION market_core.validate_catalog_source_rights();
+CREATE OR REPLACE FUNCTION market_core.validate_catalog_storage_rights() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=market_core,pg_catalog AS $$
+DECLARE allowed boolean; source_key_id uuid;
+BEGIN
+  source_key_id := CASE WHEN TG_TABLE_NAME='catalog_snapshots' THEN NEW.source_id ELSE (SELECT source_id FROM market_core.catalog_snapshots WHERE snapshot_id=NEW.snapshot_id) END;
+  SELECT cs.storage_allowed AND lp.cache_allowed INTO allowed FROM market_core.catalog_sources cs JOIN market_core.license_policies lp ON lp.rights_policy_id=cs.rights_policy_id WHERE cs.source_id=source_key_id;
+  IF allowed IS DISTINCT FROM true THEN RAISE EXCEPTION 'catalog storage is not permitted'; END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER catalog_snapshot_storage_rights BEFORE INSERT ON market_core.catalog_snapshots FOR EACH ROW EXECUTE FUNCTION market_core.validate_catalog_storage_rights();
+CREATE TRIGGER catalog_candidate_storage_rights BEFORE INSERT ON market_core.catalog_candidates FOR EACH ROW EXECUTE FUNCTION market_core.validate_catalog_storage_rights();
+CREATE TRIGGER catalog_identifier_storage_rights BEFORE INSERT ON market_core.catalog_candidate_identifiers FOR EACH ROW EXECUTE FUNCTION market_core.validate_catalog_storage_rights();
+CREATE OR REPLACE FUNCTION market_core.prevent_source_history_mutation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'catalog source history is append-only'; END $$;
+CREATE TRIGGER catalog_sources_append_only BEFORE UPDATE OR DELETE ON market_core.catalog_sources FOR EACH ROW EXECUTE FUNCTION market_core.prevent_source_history_mutation();
 CREATE OR REPLACE FUNCTION market_core.prevent_catalog_history_mutation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'catalog history is append-only'; END $$;
 CREATE TRIGGER catalog_snapshots_append_only BEFORE UPDATE OR DELETE ON market_core.catalog_snapshots FOR EACH ROW EXECUTE FUNCTION market_core.prevent_catalog_history_mutation();
 CREATE TRIGGER catalog_candidates_append_only BEFORE UPDATE OR DELETE ON market_core.catalog_candidates FOR EACH ROW EXECUTE FUNCTION market_core.prevent_catalog_history_mutation();
@@ -161,12 +171,14 @@ ALTER TABLE market_core.catalog_candidate_identifiers FORCE ROW LEVEL SECURITY;
 ALTER TABLE market_core.catalog_review_decisions FORCE ROW LEVEL SECURITY;
 ALTER TABLE market_core.instrument_identifiers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE market_core.instrument_identifiers FORCE ROW LEVEL SECURITY;
+CREATE UNIQUE INDEX instrument_identifiers_issuer_uq ON market_core.instrument_identifiers(identifier_type,identifier_value,identifier_scope,issuer_id,snapshot_id) WHERE issuer_id IS NOT NULL AND instrument_id IS NULL AND listing_id IS NULL;
+CREATE UNIQUE INDEX instrument_identifiers_instrument_uq ON market_core.instrument_identifiers(identifier_type,identifier_value,identifier_scope,instrument_id,snapshot_id) WHERE issuer_id IS NULL AND instrument_id IS NOT NULL AND listing_id IS NULL;
+CREATE UNIQUE INDEX instrument_identifiers_listing_uq ON market_core.instrument_identifiers(identifier_type,identifier_value,identifier_scope,listing_id,snapshot_id) WHERE issuer_id IS NULL AND instrument_id IS NULL AND listing_id IS NOT NULL;
 REVOKE ALL ON market_core.catalog_sources, market_core.catalog_snapshots, market_core.catalog_candidates, market_core.catalog_candidate_identifiers, market_core.catalog_review_decisions, market_core.instrument_identifiers FROM PUBLIC;
 GRANT USAGE ON SCHEMA market_core TO market_core_catalog_ingest, market_core_catalog_reader, market_core_registry_reviewer;
 GRANT SELECT ON market_core.catalog_sources, market_core.catalog_snapshots, market_core.catalog_candidates, market_core.catalog_candidate_identifiers, market_core.instrument_identifiers TO market_core_catalog_reader, market_core_registry_reviewer;
 GRANT INSERT ON market_core.catalog_sources, market_core.catalog_snapshots, market_core.catalog_candidates, market_core.catalog_candidate_identifiers TO market_core_catalog_ingest;
 GRANT INSERT ON market_core.catalog_review_decisions TO market_core_registry_reviewer;
-GRANT INSERT ON market_core.instrument_identifiers TO market_core_catalog_ingest;
 CREATE POLICY catalog_reader_sources ON market_core.catalog_sources FOR SELECT TO market_core_catalog_reader, market_core_registry_reviewer USING (current_user IN ('market_core_catalog_reader','market_core_registry_reviewer'));
 CREATE POLICY catalog_reader_snapshots ON market_core.catalog_snapshots FOR SELECT TO market_core_catalog_reader, market_core_registry_reviewer USING (current_user IN ('market_core_catalog_reader','market_core_registry_reviewer'));
 CREATE POLICY catalog_reader_candidates ON market_core.catalog_candidates FOR SELECT TO market_core_catalog_reader, market_core_registry_reviewer USING (current_user IN ('market_core_catalog_reader','market_core_registry_reviewer'));
@@ -176,5 +188,6 @@ CREATE POLICY catalog_ingest_snapshots ON market_core.catalog_snapshots FOR INSE
 CREATE POLICY catalog_ingest_candidates ON market_core.catalog_candidates FOR INSERT TO market_core_catalog_ingest WITH CHECK (current_user='market_core_catalog_ingest');
 CREATE POLICY catalog_ingest_identifiers ON market_core.catalog_candidate_identifiers FOR INSERT TO market_core_catalog_ingest WITH CHECK (current_user='market_core_catalog_ingest');
 CREATE POLICY catalog_review_insert ON market_core.catalog_review_decisions FOR INSERT TO market_core_registry_reviewer WITH CHECK (current_user='market_core_registry_reviewer');
+GRANT SELECT ON market_core.catalog_review_decisions TO market_core_registry_reviewer;
+CREATE POLICY catalog_review_reader ON market_core.catalog_review_decisions FOR SELECT TO market_core_registry_reviewer USING (current_user='market_core_registry_reviewer');
 CREATE POLICY registry_identifier_reader ON market_core.instrument_identifiers FOR SELECT TO market_core_catalog_reader, market_core_registry_reviewer USING (current_user IN ('market_core_catalog_reader','market_core_registry_reviewer'));
-CREATE POLICY registry_identifier_ingest ON market_core.instrument_identifiers FOR INSERT TO market_core_catalog_ingest WITH CHECK (current_user='market_core_catalog_ingest');

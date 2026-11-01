@@ -18,7 +18,7 @@ before(async () => {
   await db.query("INSERT INTO market_core.license_policies VALUES ($1,'catalog-a',true,false,NULL),($2,'catalog-b',false,false,NULL)", [ids.rightsA,ids.rightsB]);
   await db.query("INSERT INTO market_core.issuers VALUES ($1,'Apple Inc.')", [ids.issuer]);
   await db.query("INSERT INTO market_core.instruments VALUES ($1,$2,'EQUITY','USD')", [ids.instrument,ids.issuer]);
-  await db.query("INSERT INTO market_core.listings(listing_id,instrument_id,mic,mic_role,trading_currency,ticker,valid_from,valid_to) VALUES ($1,$2,'XNAS','OPERATING','USD','AAPL',DATE '1980-12-12',NULL),($3,$2,'XNGS','SEGMENT','USD','AAPL',DATE '1980-12-12',NULL)", [ids.listingNas,ids.instrument,ids.listingNgs]);
+  await db.query("INSERT INTO market_core.listings(listing_id,instrument_id,mic,mic_role,trading_currency,ticker,valid_from,valid_to) VALUES ($1,$2,'XNAS','OPERATING','USD','AAPL',DATE '1980-12-12',NULL),($3,$2,'XNGS',NULL,'USD','AAPL',DATE '1980-12-12',NULL)", [ids.listingNas,ids.instrument,ids.listingNgs]);
 });
 after(async () => { try { await db.query("RESET ROLE"); await db.query("DROP SCHEMA IF EXISTS market_core CASCADE"); await db.query("DROP EXTENSION IF EXISTS btree_gist"); for (const role of ["market_core_catalog_ingest","market_core_catalog_reader","market_core_registry_reviewer","market_core_reader","market_core_ingest","anon","authenticated"]) await db.query(`DROP ROLE IF EXISTS ${role}`); } finally { await db.end(); } });
 
@@ -40,6 +40,15 @@ test("D1 rejects wrong identifier scopes, contradictory MIC roles, aliases and l
   await assert.rejects(db.query("INSERT INTO market_core.catalog_candidate_identifiers VALUES ('b0000000-0000-0000-0000-000000000013',$1,'ISIN','US0378331005','INSTRUMENT',$2,$3,NULL,NULL,'IDENTIFIER_RECORD','STRONG',true,'XNAS',clock_timestamp())", [ids.candidateA,ids.sourceB,ids.snapB]));
   await db.query("INSERT INTO market_core.provider_aliases VALUES ('b0000000-0000-0000-0000-000000000006',$1,'AAPL',$2,DATE '2020-01-01',DATE '2025-01-01','TICKER','LISTING')", [ids.providerA,ids.listingNas]);
   await assert.rejects(db.query("INSERT INTO market_core.provider_aliases VALUES ('b0000000-0000-0000-0000-000000000007',$1,'AAPL',$2,DATE '2024-01-01',NULL,'TICKER','LISTING')", [ids.providerA,ids.listingNas]));
+  await assert.rejects(db.query("INSERT INTO market_core.provider_aliases VALUES ('b0000000-0000-0000-0000-000000000014',$1,'ISSUER-CIK',$2,DATE '2020-01-01',NULL,'CIK','ISSUER')", [ids.providerA,ids.listingNas]));
+  await db.query("SET ROLE market_core_catalog_ingest");
+  await assert.rejects(db.query("INSERT INTO market_core.instrument_identifiers(identifier_id,identifier_type,identifier_value,identifier_scope,instrument_id,source_id,snapshot_id,evidence_kind,verified,created_at) VALUES ('b0000000-0000-0000-0000-000000000015','ISIN','US0378331005','INSTRUMENT',$1,$2,$3,'IDENTIFIER_RECORD',true,clock_timestamp())", [ids.instrument,ids.sourceA,ids.snapA]));
+  await db.query("RESET ROLE");
+  await db.query("INSERT INTO market_core.catalog_sources VALUES ('b0000000-0000-0000-0000-000000000016',$1,'SRC_NOCACHE','LISTINGS',$2,false,false,NULL,clock_timestamp())", [ids.providerA,ids.rightsB]);
+  await db.query("SET ROLE market_core_catalog_ingest");
+  await assert.rejects(db.query("INSERT INTO market_core.catalog_snapshots VALUES ('b0000000-0000-0000-0000-000000000017',$1,'blocked',clock_timestamp(),NULL,NULL,repeat('e',64),'REVIEW_REQUIRED',clock_timestamp())", ['b0000000-0000-0000-0000-000000000016']));
+  await db.query("RESET ROLE");
+  assert.equal((await db.query("SELECT mic_role FROM market_core.listings WHERE listing_id=$1", [ids.listingNgs])).rows[0].mic_role, null);
 });
 
 test("D1 preserves append-only snapshots, review history and no EXACT state", async () => {
@@ -59,4 +68,22 @@ test("D1 restricted catalog roles cannot access financial tables or mutate histo
   await db.query("SET ROLE market_core_catalog_ingest");
   await assert.rejects(db.query("UPDATE market_core.catalog_sources SET source_key='MUTATED' WHERE source_id=$1", [ids.sourceA]));
   await db.query("RESET ROLE");
+  await db.query("SET ROLE market_core_registry_reviewer");
+  assert.equal((await db.query("SELECT count(*)::int AS n FROM market_core.catalog_review_decisions")).rows[0].n,1);
+  await db.query("RESET ROLE");
+});
+
+test("D1 rejects duplicate canonical identifiers under independent PG17 sessions", async () => {
+  const a = new Client({ host: process.env.PGHOST ?? "127.0.0.1", port: Number(process.env.PGPORT ?? 5432), user: process.env.PGUSER ?? "postgres", password: process.env.PGPASSWORD ?? "postgres", database: process.env.PGDATABASE ?? "postgres" });
+  const b = new Client({ host: process.env.PGHOST ?? "127.0.0.1", port: Number(process.env.PGPORT ?? 5432), user: process.env.PGUSER ?? "postgres", password: process.env.PGPASSWORD ?? "postgres", database: process.env.PGDATABASE ?? "postgres" });
+  await Promise.all([a.connect(), b.connect()]);
+  try {
+    const sql = "INSERT INTO market_core.instrument_identifiers(identifier_id,identifier_type,identifier_value,identifier_scope,instrument_id,source_id,snapshot_id,evidence_kind,verified,created_at) VALUES ($1,'FIGI','BBG000B9XRY4','INSTRUMENT',$2,$3,$4,'IDENTIFIER_RECORD',false,clock_timestamp())";
+    const results = await Promise.allSettled([
+      a.query(sql, ['b0000000-0000-0000-0000-000000000018',ids.instrument,ids.sourceA,ids.snapA]),
+      b.query(sql, ['b0000000-0000-0000-0000-000000000019',ids.instrument,ids.sourceA,ids.snapA]),
+    ]);
+    assert.equal(results.filter(x => x.status === 'fulfilled').length, 1);
+    assert.equal(results.filter(x => x.status === 'rejected').length, 1);
+  } finally { await Promise.all([a.end(), b.end()]); }
 });
