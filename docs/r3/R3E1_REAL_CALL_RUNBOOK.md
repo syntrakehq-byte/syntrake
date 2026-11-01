@@ -15,10 +15,9 @@ Procedimento, somente após autorização separada do proprietário:
 
 ```powershell
 $env:VERCEL_ENV = "preview"
-$env:VERCEL_GIT_COMMIT_SHA = "<SHA_EXATO_DO_CHECKOUT>"
 $env:SYNTRAKE_R3E1_REAL_CALL_ENABLED = "confirm-once"
 $env:SYNTRAKE_R3E1_APPROVED_ENV = "preview"
-$env:SYNTRAKE_R3E1_APPROVED_SHA = $env:VERCEL_GIT_COMMIT_SHA
+$env:SYNTRAKE_R3E1_APPROVED_SHA = "<SHA_APROVADO_INDEPENDENTEMENTE>"
 $env:SYNTRAKE_TWELVE_DATA_API_KEY = (Get-Secret SYNTRAKE_TWELVE_DATA_API_KEY)
 npm run twelve-data:real:once
 Remove-Item Env:SYNTRAKE_TWELVE_DATA_API_KEY
