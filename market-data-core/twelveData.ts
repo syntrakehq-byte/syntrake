@@ -200,8 +200,11 @@ export async function fetchDailySeries(input: Readonly<{
   }
   if (!response.ok) throw new MarketDataError("PROVIDER_UNAVAILABLE", null, response.status);
   input.onResponseHeaders?.({
-    remaining: sanitizeCreditHeader(response.headers.get("x-ratelimit-remaining") ?? response.headers.get("x-credits-remaining")),
-    used: sanitizeCreditHeader(response.headers.get("x-ratelimit-used") ?? response.headers.get("x-credits-used")),
+    // Twelve Data documents these names as the authoritative usage headers.
+    // Keep the older aliases only as compatibility fallbacks for test doubles
+    // and previously deployed transports; all values remain sanitized.
+    remaining: sanitizeCreditHeader(response.headers.get("api-credits-left") ?? response.headers.get("x-ratelimit-remaining") ?? response.headers.get("x-credits-remaining")),
+    used: sanitizeCreditHeader(response.headers.get("api-credits-used") ?? response.headers.get("x-ratelimit-used") ?? response.headers.get("x-credits-used")),
   });
   const declaredLength = response.headers.get("content-length");
   if (declaredLength && /^\d+$/.test(declaredLength) && Number(declaredLength) > 512_000) {

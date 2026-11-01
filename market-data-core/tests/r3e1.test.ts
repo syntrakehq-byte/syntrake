@@ -15,7 +15,7 @@ test("R3-E1 gate is closed by default and rejects wrong SHA/env/credentials", as
 });
 test("R3-E1 validates simulated response, headers and makes one transport call", async () => {
   let calls=0;
-  const result = await runTwelveDataRealOnce({ checkoutSha, env:base, instrument, sourceAlias:alias, asOf:"2026-01-01", transport: async (_url: string, init: RequestInit) => { calls++; assert.match(String(new Headers(init.headers).get("authorization")), /^apikey /); return new Response(JSON.stringify({status:"ok",meta:{symbol:"AAPL",interval:"1day",currency:"USD",exchange_timezone:"America/New_York",type:"Common Stock",mic_code:"XNAS"},values:[{datetime:"2026-01-01",open:"100",high:"110",low:"90",close:"105.5",volume:"10"}]}),{status:200,headers:{"x-ratelimit-remaining":"99","x-ratelimit-used":"1"}}); } });
+  const result = await runTwelveDataRealOnce({ checkoutSha, env:base, instrument, sourceAlias:alias, asOf:"2026-01-01", transport: async (_url: string, init: RequestInit) => { calls++; assert.match(String(new Headers(init.headers).get("authorization")), /^apikey /); return new Response(JSON.stringify({status:"ok",meta:{symbol:"AAPL",interval:"1day",currency:"USD",exchange_timezone:"America/New_York",type:"Common Stock",mic_code:"XNAS"},values:[{datetime:"2026-01-01",open:"100",high:"110",low:"90",close:"105.5",volume:"10"}]}),{status:200,headers:{"api-credits-left":"99","api-credits-used":"1","x-ratelimit-remaining":"not-used"}}); } });
   assert.equal(result.series.candles[0].close,"105.5");
   assert.deepEqual(result.usage,{remaining:"99",used:"1"});
   assert.equal(calls,1);
