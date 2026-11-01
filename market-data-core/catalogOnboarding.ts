@@ -22,7 +22,7 @@ export type CatalogOnboardingResult = Readonly<{
 }>;
 
 function candidateId(source: CatalogSource, candidate: CatalogCandidate): string {
-  const digest = createHash("sha256").update(`${source.snapshotId}|${candidate.providerReference.providerReference}|${candidate.providerReference.scope}`).digest("hex");
+  const digest = createHash("sha256").update(`${source.snapshotId}|${candidate.providerReference.providerReference}|${candidate.providerReference.scope}|${candidate.listing?.mic ?? "NO_MIC"}`).digest("hex");
   return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-4${digest.slice(13, 16)}-8${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
 }
 
@@ -35,7 +35,7 @@ export function createPostgresCatalogPersistence(db: CatalogSqlClient, sourceId:
         (candidate_id,snapshot_id,provider_reference,provider_identifier_type,provider_scope,legal_name,asset_class,ticker,mic,mic_role,trading_currency,denomination_currency,valid_from,valid_to,review_state,created_at)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'REVIEW_REQUIRED',clock_timestamp())
         ON CONFLICT (snapshot_id,provider_reference,provider_scope) DO NOTHING`, [id, source.snapshotId, candidate.providerReference.providerReference, candidate.providerReference.identifierType, candidate.providerReference.scope, candidate.descriptiveName ?? null, candidate.descriptiveAssetClass ?? null, candidate.listing?.ticker ?? null, candidate.listing?.mic ?? null, candidate.listing?.micRole ?? null, candidate.listing?.tradingCurrency ?? null, candidate.instrument?.denominationCurrency ?? candidate.descriptiveCurrency ?? null, candidate.listing?.validity.validFrom ?? null, candidate.listing?.validity.validTo ?? null]);
-      const row = (await db.query("SELECT candidate_id FROM market_core.catalog_candidates WHERE snapshot_id=$1 AND provider_reference=$2 AND provider_scope=$3", [source.snapshotId, candidate.providerReference.providerReference, candidate.providerReference.scope])).rows[0];
+      const row = (await db.query("SELECT candidate_id FROM market_core.catalog_candidates WHERE snapshot_id=$1 AND provider_reference=$2 AND provider_scope=$3 AND mic IS NOT DISTINCT FROM $4", [source.snapshotId, candidate.providerReference.providerReference, candidate.providerReference.scope, candidate.listing?.mic ?? null])).rows[0];
       const persistedId = String(row?.candidate_id ?? id);
       for (const evidence of candidate.identifiers) {
         const evidenceId = createHash("sha256").update(`${persistedId}|${evidence.type}|${evidence.value}|${evidence.scope}`).digest("hex").slice(0, 32);
