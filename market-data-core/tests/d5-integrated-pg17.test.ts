@@ -39,7 +39,7 @@ before(async () => {
   await db.query(`CREATE ROLE ${workerRole} LOGIN PASSWORD '${workerPassword}';`);
   await db.query(`CREATE ROLE ${readerRole} LOGIN PASSWORD '${readerPassword}';`);
   await db.query(`GRANT market_core_ingest TO ${workerRole} WITH INHERIT TRUE, SET FALSE`);
-  await db.query(`GRANT market_core_reader TO ${readerRole} WITH INHERIT TRUE, SET FALSE`);
+  await db.query(`GRANT market_core_reader TO ${readerRole} WITH INHERIT TRUE, SET TRUE`);
   await db.query("INSERT INTO market_core.worker_identity_bindings VALUES ($1,$2)", [workerRole, "d5-worker"]);
   await db.query("INSERT INTO market_core.providers VALUES ($1,'TWELVE_DATA','ACTIVE')", [ids.provider]);
   await db.query("INSERT INTO market_core.license_policies VALUES ($1,'d5-rights',true,true,NULL)", [ids.rights]);
@@ -109,7 +109,7 @@ test("D5 integrated offline AAPL discovery -> Registry/D3 -> D4 -> R3-C -> worke
   assert.equal((await db.query("SELECT consumed_credits::text FROM market_core.provider_budget_periods WHERE budget_period_id=$1", [ids.budget])).rows[0].consumed_credits, "1.000000");
   const replay = await new AutonomousWorker({ workerId: "d5-worker", clientFactory: async () => new Client({ connectionString: `postgres://${workerRole}:${workerPassword}@localhost:5432/postgres` }), provider: offlineProvider, exchangeTimezone: "America/New_York", maxTasks: 1, maxPolls: 1, consumedCredits: "1" }).run();
   assert.equal(replay.committed, 0); assert.equal(simulatedHttpCalls, 1);
-  const reader = new Client({ connectionString: `postgres://${readerRole}:${readerPassword}@localhost:5432/postgres` }); await reader.connect();
+  const reader = new Client({ connectionString: `postgres://${readerRole}:${readerPassword}@localhost:5432/postgres` }); await reader.connect(); await reader.query("SET ROLE market_core_reader");
   await db.query("UPDATE market_core.license_policies SET display_allowed=true WHERE rights_policy_id=$1", [ids.rights]);
   assert.equal((await reader.query("SELECT status FROM market_core.read_market_pit($1,TIMESTAMPTZ '2027-01-04')", [ids.listing])).rows[0].status, "AVAILABLE");
   await db.query("UPDATE market_core.license_policies SET display_allowed=false WHERE rights_policy_id=$1", [ids.rights]);
