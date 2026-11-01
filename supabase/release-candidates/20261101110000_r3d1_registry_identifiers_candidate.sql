@@ -142,7 +142,7 @@ CREATE TRIGGER catalog_source_rights BEFORE INSERT OR UPDATE ON market_core.cata
 CREATE OR REPLACE FUNCTION market_core.validate_catalog_storage_rights() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=market_core,pg_catalog AS $$
 DECLARE allowed boolean; source_key_id uuid;
 BEGIN
-  source_key_id := CASE WHEN TG_TABLE_NAME='catalog_snapshots' THEN NEW.source_id ELSE (SELECT source_id FROM market_core.catalog_snapshots WHERE snapshot_id=NEW.snapshot_id) END;
+  source_key_id := CASE WHEN TG_TABLE_NAME='catalog_snapshots' THEN (to_jsonb(NEW)->>'source_id')::uuid ELSE (SELECT source_id FROM market_core.catalog_snapshots WHERE snapshot_id=(to_jsonb(NEW)->>'snapshot_id')::uuid) END;
   SELECT cs.storage_allowed AND lp.cache_allowed INTO allowed FROM market_core.catalog_sources cs JOIN market_core.license_policies lp ON lp.rights_policy_id=cs.rights_policy_id WHERE cs.source_id=source_key_id;
   IF allowed IS DISTINCT FROM true THEN RAISE EXCEPTION 'catalog storage is not permitted'; END IF;
   RETURN NEW;
