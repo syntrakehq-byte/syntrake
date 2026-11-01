@@ -23,6 +23,7 @@
     "test:market-data:d3": "tsx --test --test-timeout=10000 market-data-core/tests/d3-canonical-identity.test.ts",
     "test:market-data:d3:pg17": "tsx --test --test-timeout=20000 market-data-core/tests/d3-canonical-resolution-pg17.test.ts",
     "test:market-data:d4": "tsx --test --test-timeout=10000 market-data-core/tests/d4-provider-routing.test.ts",
+    "test:market-data:d5": "tsx --test --test-timeout=30000 market-data-core/tests/d5-integrated-pg17.test.ts",
     "test:market-data:r3c": "tsx --test market-data-core/tests/coordinator.test.ts market-data-core/tests/r3c-pg17.test.ts",
     "test:market-data:r3d1": "tsx --test --test-timeout=15000 market-data-core/tests/autonomousWorker.test.ts market-data-core/tests/r3c-offline-e2e-pg17.test.ts",
     "test:market-data:r3d2": "tsx --test --test-timeout=15000 market-data-core/tests/supervisor.test.ts market-data-core/tests/r3d2-pg17.test.ts",
