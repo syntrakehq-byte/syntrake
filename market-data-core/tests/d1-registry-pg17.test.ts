@@ -38,7 +38,7 @@ test("D1 rejects wrong identifier scopes, contradictory MIC roles, aliases and l
   await assert.rejects(db.query("INSERT INTO market_core.catalog_candidates(candidate_id,snapshot_id,provider_reference,provider_identifier_type,provider_scope,ticker,mic,mic_role,created_at) VALUES ('b0000000-0000-0000-0000-000000000004',$1,'BAD','TICKER','LISTING','AAPL','XNAS','INVALID',clock_timestamp())", [ids.snapA]));
   await assert.rejects(db.query("INSERT INTO market_core.catalog_sources VALUES ('b0000000-0000-0000-0000-000000000005',$1,'SRC_DENY','LISTINGS',$2,false,true,NULL,clock_timestamp())", [ids.providerA,ids.rightsB]));
   await assert.rejects(db.query("INSERT INTO market_core.catalog_candidate_identifiers VALUES ('b0000000-0000-0000-0000-000000000013',$1,'ISIN','US0378331005','INSTRUMENT',$2,$3,NULL,NULL,'IDENTIFIER_RECORD','STRONG',true,'XNAS',clock_timestamp())", [ids.candidateA,ids.sourceB,ids.snapB]));
-  await assert.rejects(db.query("INSERT INTO market_core.provider_aliases VALUES ('b0000000-0000-0000-0000-000000000006',$1,'AAPL',$2,DATE '2020-01-01',DATE '2025-01-01','TICKER','LISTING')", [ids.providerA,ids.listingNas]));
+  await db.query("INSERT INTO market_core.provider_aliases VALUES ('b0000000-0000-0000-0000-000000000006',$1,'AAPL',$2,DATE '2020-01-01',DATE '2025-01-01','TICKER','LISTING')", [ids.providerA,ids.listingNas]);
   await assert.rejects(db.query("INSERT INTO market_core.provider_aliases VALUES ('b0000000-0000-0000-0000-000000000007',$1,'AAPL',$2,DATE '2024-01-01',NULL,'TICKER','LISTING')", [ids.providerA,ids.listingNas]));
 });
 
