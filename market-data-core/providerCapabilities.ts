@@ -17,8 +17,8 @@ export type ProviderRights = Readonly<{
   valid: TemporalValidity;
 }>;
 
-export type ProviderCost = Readonly<{ currency: string; credits: number | null; knowledge: CapabilityKnowledge }>;
-export type ProviderQuota = Readonly<{ remaining: number | null; knowledge: CapabilityKnowledge }>;
+export type ProviderCost = Readonly<{ nativeUnit: string; nativeAmount: number | null; economic: Readonly<{ currency: string; amount: number }> | null; knowledge: CapabilityKnowledge }>;
+export type ProviderQuota = Readonly<{ nativeUnit: string; remaining: number | null; knowledge: CapabilityKnowledge }>;
 export type ProviderQuality = Readonly<{ coverage: "KNOWN" | "UNKNOWN"; freshness: "KNOWN" | "UNKNOWN"; integrity: "KNOWN" | "UNKNOWN"; score: number | null }>;
 
 export type ProviderCapability = Readonly<{
@@ -39,7 +39,7 @@ export type ProviderCapability = Readonly<{
 }>;
 
 export type RoutingRequest = Readonly<{
-  identity: CanonicalResolution;
+  identity: CanonicalResolution | null;
   service: CapabilityService;
   mic: string;
   micRole: MicRole | null;
@@ -52,7 +52,7 @@ export type RoutingRequest = Readonly<{
   asOf: string;
   rights: Readonly<{ query: boolean; store: boolean; display: boolean; retain: boolean; share: boolean; policyId?: string }>;
   quality: Readonly<{ requireCoverage: boolean; requireFreshness: boolean; requireIntegrity: boolean; minScore: number | null }>;
-  maxCost: Readonly<{ unit: "CREDITS"; amount: number }> | null;
+  maxEconomicCost: Readonly<{ currency: string; amount: number }> | null;
 }>;
 
 export type RoutingStatus = "READY" | "NO_ELIGIBLE_PROVIDER" | "LICENSE_BLOCKED" | "COST_UNKNOWN" | "QUOTA_UNAVAILABLE" | "PROVIDER_UNAVAILABLE" | "IDENTITY_UNRESOLVED";
