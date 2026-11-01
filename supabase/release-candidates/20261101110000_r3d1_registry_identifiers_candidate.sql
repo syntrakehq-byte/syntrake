@@ -82,7 +82,7 @@ CREATE TABLE market_core.catalog_candidate_identifiers (
   mic char(4),
   created_at timestamptz NOT NULL,
   UNIQUE (candidate_id, identifier_type, identifier_value, identifier_scope, snapshot_id),
-  CHECK ((identifier_type='ISIN' AND identifier_scope='INSTRUMENT') OR (identifier_type='FIGI' AND identifier_scope IN ('INSTRUMENT','LISTING')) OR (identifier_type IN ('CIK','LEI') AND identifier_scope='ISSUER') OR (identifier_type IN ('PROVIDER_NATIVE','TICKER') AND identifier_scope IN ('INSTRUMENT','LISTING'))),
+  CHECK ((identifier_type='ISIN' AND identifier_scope='INSTRUMENT') OR (identifier_type='FIGI' AND identifier_scope IN ('INSTRUMENT','LISTING')) OR (identifier_type IN ('CIK','LEI') AND identifier_scope='ISSUER') OR (identifier_type='TICKER' AND identifier_scope='LISTING') OR (identifier_type='PROVIDER_NATIVE' AND identifier_scope IN ('INSTRUMENT','LISTING'))),
   CHECK (valid_to IS NULL OR valid_from IS NULL OR valid_to > valid_from),
   CHECK (mic IS NULL OR mic ~ '^[A-Z0-9]{4}$')
 );
