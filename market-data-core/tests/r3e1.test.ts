@@ -8,6 +8,27 @@ const base = { VERCEL_ENV:"preview", VERCEL_GIT_COMMIT_SHA:"b".repeat(40), SYNTR
 const checkoutSha = "b".repeat(40);
 const instrument = canonicalIdentity({ instrument:{instrumentId:"91000000-0000-0000-0000-000000000001",issuerId:"91000000-0000-0000-0000-000000000002",kind:"EQUITY",denominationCurrency:"USD"}, listing:{listingId:"91000000-0000-0000-0000-000000000003",instrumentId:"91000000-0000-0000-0000-000000000001",mic:"XNAS",tradingCurrency:"USD",ticker:"AAPL",validFrom:"1980-12-12",validTo:null} });
 const alias = resolveProviderAlias("TWELVE_DATA","AAPL","2026-01-01",[{provider:"TWELVE_DATA",providerReference:"AAPL",instrumentId:"91000000-0000-0000-0000-000000000001",listingId:"91000000-0000-0000-0000-000000000003",validFrom:"1980-12-12",validTo:null}]);
+const instrumentXngs = canonicalIdentity({ instrument:{instrumentId:"92000000-0000-0000-0000-000000000001",issuerId:"92000000-0000-0000-0000-000000000002",kind:"EQUITY",denominationCurrency:"USD"}, listing:{listingId:"92000000-0000-0000-0000-000000000003",instrumentId:"92000000-0000-0000-0000-000000000001",mic:"XNGS",tradingCurrency:"USD",ticker:"AAPL",validFrom:"1980-12-12",validTo:null} });
+const aliasXngs = resolveProviderAlias("TWELVE_DATA","AAPL","2026-01-01",[{provider:"TWELVE_DATA",providerReference:"AAPL",instrumentId:"92000000-0000-0000-0000-000000000001",listingId:"92000000-0000-0000-0000-000000000003",validFrom:"1980-12-12",validTo:null}]);
+const legacyReady = {...base,SYNTRAKE_R3E1_REAL_CALL_ENABLED:undefined,VERCEL_GIT_COMMIT_REF:"feat/r3-market-data-core-20261030",SYNTRAKE_R3_PROVIDER_ENABLED:"enabled",SYNTRAKE_R3_PREVIEW_APPROVED_SHA:base.VERCEL_GIT_COMMIT_SHA};
+const xngsResponse = () => new Response(JSON.stringify({status:"ok",meta:{symbol:"AAPL",interval:"1day",currency:"USD",exchange_timezone:"America/New_York",type:"Common Stock",mic_code:"XNGS"},values:[{datetime:"2026-01-01",open:"100",high:"110",low:"90",close:"105.5",volume:"1"}]}),{status:200});
+test("R3-E1 accepts the explicit AAPL/XNGS diagnostic listing", async () => {
+  assert.equal(aliasXngs.status,"EXACT");
+  let requested = "";
+  const result = await fetchDailySeries({env:legacyReady,instrument:instrumentXngs,sourceAlias:aliasXngs,asOf:"2026-01-01",outputSize:1,transport:async url => { requested=url; return xngsResponse(); }});
+  assert.equal(new URL(requested).searchParams.get("mic_code"),"XNGS");
+  assert.equal(result.instrument.mic,"XNGS");
+});
+test("R3-E1 rejects XNGS identity mismatches, invalid aliases and 404 without retry", async () => {
+  let calls = 0;
+  await assert.rejects(fetchDailySeries({env:legacyReady,instrument:instrumentXngs,sourceAlias:aliasXngs,asOf:"2026-01-01",outputSize:1,transport:async () => { calls++; return new Response(JSON.stringify({status:"ok",meta:{symbol:"AAPL",interval:"1day",currency:"USD",exchange_timezone:"America/New_York",type:"Common Stock",mic_code:"XNAS"},values:[{datetime:"2026-01-01",open:"100",high:"110",low:"90",close:"105.5",volume:"1"}]}),{status:200}); }}),/INVALID_PROVIDER_RESPONSE/);
+  assert.equal(calls,1);
+  const badAlias = resolveProviderAlias("TWELVE_DATA","WRONG", "2026-01-01", [{provider:"TWELVE_DATA",providerReference:"WRONG",instrumentId:"92000000-0000-0000-0000-000000000099",listingId:"92000000-0000-0000-0000-000000000003",validFrom:"1980-12-12",validTo:null}]);
+  await assert.rejects(fetchDailySeries({env:legacyReady,instrument:instrumentXngs,sourceAlias:badAlias,asOf:"2026-01-01",outputSize:1,transport:async()=>{throw new Error("must-not-call");}}),/INVALID_REQUEST/);
+  let notRetried = 0;
+  await assert.rejects(fetchDailySeries({env:legacyReady,instrument:instrumentXngs,sourceAlias:aliasXngs,asOf:"2026-01-01",outputSize:1,transport:async()=>{notRetried++; return new Response("not found",{status:404});}}),/INVALID_REQUEST HTTP_404/);
+  assert.equal(notRetried,1);
+});
 test("R3-E1 gate is closed by default and rejects wrong SHA/env/credentials", async () => {
   for (const env of [{}, {...base, VERCEL_ENV:"production"}, {...base, SYNTRAKE_R3E1_APPROVED_SHA:"c".repeat(40)}, {...base, SYNTRAKE_TWELVE_DATA_API_KEY:"short"}]) {
     await assert.rejects(runTwelveDataRealOnce({env,checkoutSha,instrument,sourceAlias:alias,asOf:"2026-01-01"}), /DISABLED/);
