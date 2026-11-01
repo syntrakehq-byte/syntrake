@@ -54,7 +54,8 @@ test("AAPL discovery preserves XNGS, blocks XNAS-only, and resolves/routs indepe
   const capability: ProviderCapability = { providerKey: "TWELVE_DATA", service: "MARKET_DATA", assetClasses: ["EQUITY"], markets: [{ mic: "XNGS", role: "SEGMENT" }], currencies: ["USD"], coverage: { validFrom: "2020-01-01", validTo: null }, granularities: ["1day"], adjustments: ["none"], operational: "AVAILABLE", quality: { coverage: "KNOWN", freshness: "KNOWN", integrity: "KNOWN", score: 90 }, rights: { policyId: ids.rights, query: true, store: true, display: false, retain: true, share: false, valid: { validFrom: "2020-01-01", validTo: null } }, cost: { nativeUnit: "TWELVE_DATA_CREDITS", nativeAmount: 1, economic: null, knowledge: "KNOWN" }, quota: { nativeUnit: "TWELVE_DATA_CREDITS", remaining: 1, knowledge: "KNOWN" }, source: { sourceId: ids.source, snapshotId: ids.snapshot, observedAt: "2025-01-01T00:00:00Z" } };
   const routed = routeProvider({ identity: resolved, service: "MARKET_DATA", mic: "XNGS", micRole: "SEGMENT", assetClass: "EQUITY", currency: "USD", from: "2025-01-02", to: "2025-01-02", granularity: "1day", adjustment: "none", asOf: "2026-01-01T00:00:00Z", rights: { query: true, store: true, display: false, retain: true, share: false, policyId: ids.rights }, quality: { requireCoverage: true, requireFreshness: true, requireIntegrity: true, minScore: 80 }, maxEconomicCost: null }, [capability]);
   assert.equal(routed.status, "READY"); assert.equal(routed.selected?.providerKey, "TWELVE_DATA");
-  await db.query("DELETE FROM market_core.instrument_identifiers WHERE identifier_scope='LISTING' AND listing_id=$1", [ids.xngs]);
-  const afterEvidenceRemoval = await loadIdentity(ids.xngs);
-  assert.notEqual(resolveCanonicalIdentity({ candidate, registry: [afterEvidenceRemoval], asOf: "2026-01-01T00:00:00Z" }).status, "EXACT");
+  await assert.rejects(db.query("DELETE FROM market_core.instrument_identifiers WHERE identifier_scope='LISTING' AND listing_id=$1", [ids.xngs]), /append-only/);
+  const persistedIdentity = await loadIdentity(ids.xngs);
+  const incompleteRegistry = { ...persistedIdentity, identifiers: persistedIdentity.identifiers.filter(e => e.scope !== "LISTING") };
+  assert.notEqual(resolveCanonicalIdentity({ candidate, registry: [incompleteRegistry], asOf: "2026-01-01T00:00:00Z" }).status, "EXACT");
 });
