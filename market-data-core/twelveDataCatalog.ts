@@ -1,4 +1,4 @@
-import { normalizeCatalogCandidate, type CatalogCandidate, type CatalogQuery, type CatalogSource, type MicRole } from "./instrumentDiscovery";
+import { filterCatalogCandidates, normalizeCatalogCandidate, type CatalogCandidate, type CatalogQuery, type CatalogSource, type MicRole } from "./instrumentDiscovery";
 import { CatalogConnectorError, classifyCatalogResponse, requireCatalogLicense, resultForCandidates, type CatalogConnector, type CatalogTransport } from "./catalogConnector";
 
 type JsonRecord = Record<string, unknown>;
@@ -34,7 +34,7 @@ export function createTwelveDataCatalogConnector(input: Readonly<{
     if (!root || root.status !== "ok" || !Array.isArray(root.data)) throw new CatalogConnectorError("INVALID_PROVIDER_RESPONSE");
     const candidates = root.data.map(item => fromTwelveData(item, input.source));
     if (lookupReference && !candidates.some(candidate => candidate.providerReference.providerReference === lookupReference)) throw new CatalogConnectorError("NO_RESULTS");
-    return resultForCandidates(query, candidates);
+    return resultForCandidates(query, filterCatalogCandidates(query, candidates));
   };
   return {
     providerKey: "TWELVE_DATA",
@@ -55,6 +55,7 @@ function fromTwelveData(value: unknown, source: CatalogSource): CatalogCandidate
   const row = record(value);
   if (!row) throw new CatalogConnectorError("INVALID_PROVIDER_RESPONSE");
   const symbol = text(row.symbol, "symbol");
+  if (!/^[A-Z0-9][A-Z0-9._-]{0,31}$/.test(symbol)) throw new CatalogConnectorError("INVALID_PROVIDER_RESPONSE");
   const mic = optionalText(row.mic_code)?.toUpperCase() ?? null;
   const micRole = row.mic_role === null || row.mic_role === undefined ? null : row.mic_role;
   if (micRole !== null && !validMicRole(micRole)) throw new CatalogConnectorError("INVALID_PROVIDER_RESPONSE");
@@ -74,5 +75,6 @@ function fromTwelveData(value: unknown, source: CatalogSource): CatalogCandidate
     descriptiveCurrency: currency,
     source,
   };
-  return normalizeCatalogCandidate(candidate);
+  try { return normalizeCatalogCandidate(candidate); }
+  catch { throw new CatalogConnectorError("INVALID_PROVIDER_RESPONSE"); }
 }

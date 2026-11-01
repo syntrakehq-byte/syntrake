@@ -177,7 +177,7 @@ export function normalizeCatalogCandidate(input: CatalogCandidate): CatalogCandi
       !validSource(input.providerReference.source) || !sameSource(input.source, input.providerReference.source)) throw new Error("DISCOVERY_CANDIDATE_SOURCE_INVALID");
   if (input.listing) {
     if (!REF.test(input.listing.listingRef) || !REF.test(input.listing.ticker) || !MIC.test(input.listing.mic ?? "XXXX") && input.listing.mic !== null ||
-        input.listing.mic === null && input.listing.micRole !== null || !validWindow(input.listing.validity) || !CURRENCY.test(input.listing.tradingCurrency)) throw new Error("DISCOVERY_CANDIDATE_LISTING_INVALID");
+        input.listing.mic === null && input.listing.micRole !== null || input.listing.micRole !== null && input.listing.micRole !== "OPERATING" && input.listing.micRole !== "SEGMENT" || !validWindow(input.listing.validity) || !CURRENCY.test(input.listing.tradingCurrency)) throw new Error("DISCOVERY_CANDIDATE_LISTING_INVALID");
   }
   if (input.instrument && (!REF.test(input.instrument.instrumentRef) || !CURRENCY.test(input.instrument.denominationCurrency))) throw new Error("DISCOVERY_CANDIDATE_INSTRUMENT_INVALID");
   if (input.issuer && (!REF.test(input.issuer.issuerRef) || !clean(input.issuer.legalName))) throw new Error("DISCOVERY_CANDIDATE_ISSUER_INVALID");
@@ -208,6 +208,21 @@ function queryMatchesCandidate(query: CatalogQuery, candidate: CatalogCandidate)
     if (!candidate.identifiers.some(e => e.type === requested.type && e.scope === scope && e.value === requested.value)) return false;
   }
   return true;
+}
+
+export function filterCatalogCandidates(queryInput: CatalogQuery, candidates: readonly CatalogCandidate[]): readonly CatalogCandidate[] {
+  const query = normalizeCatalogQuery(queryInput);
+  return candidates.filter(candidate => {
+    if (query.ticker !== undefined && candidate.listing?.ticker !== query.ticker) return false;
+    if (query.name !== undefined) {
+      const name = (candidate.issuer?.legalName ?? candidate.descriptiveName)?.toUpperCase();
+      if (!name || !name.includes(query.name.toUpperCase())) return false;
+    }
+    if (query.marketMic !== undefined && candidate.listing?.mic !== query.marketMic) return false;
+    if (query.assetClass !== undefined && (candidate.instrument?.assetClass ?? candidate.descriptiveAssetClass) !== query.assetClass) return false;
+    if (query.currency !== undefined && candidate.listing?.tradingCurrency !== query.currency && (candidate.instrument?.denominationCurrency ?? candidate.descriptiveCurrency) !== query.currency) return false;
+    return true;
+  });
 }
 
 /** Conservative D0 classification. It intentionally does not perform D3 matching. */

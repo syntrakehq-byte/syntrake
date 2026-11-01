@@ -18,6 +18,24 @@ test("D2 Twelve Data adapter separates XNAS and XNGS and never returns EXACT", a
   assert.notEqual(result.status, "EXACT");
 });
 
+test("D2 filters candidates before cardinality classification", async () => {
+  const body = { status: "ok", data: [row("AAPL", "XNAS"), row("AAPL", "XNGS"), { ...row("MSFT", "XNAS"), instrument_name: "Microsoft Corporation" }, { ...row("AAPL", "XLON"), currency: "GBP", instrument_type: "ETF", instrument_name: "Apple ETF" }] };
+  const connector = createTwelveDataCatalogConnector({ env: { TWELVE_DATA_API_KEY: "offline-only" }, source: sourceA, transport: async () => response(200, body) });
+  const xngs = await connector.search({ ticker: "AAPL", marketMic: "XNGS" });
+  assert.equal(xngs.status, "REVIEW_REQUIRED");
+  assert.deepEqual(xngs.candidates.map(x => x.listing?.mic), ["XNGS"]);
+  const missingMarket = await connector.search({ ticker: "AAPL", marketMic: "XNYS" });
+  assert.equal(missingMarket.status, "UNRESOLVED");
+  assert.equal(missingMarket.candidates.length, 0);
+  const partialName = await connector.search({ name: "Microsoft", marketMic: "XNAS" });
+  assert.equal(partialName.status, "REVIEW_REQUIRED");
+  assert.equal(partialName.candidates[0].listing?.ticker, "MSFT");
+  const currency = await connector.search({ ticker: "AAPL", currency: "GBP" });
+  assert.equal(currency.candidates.length, 1);
+  const assetClass = await connector.search({ ticker: "AAPL", assetClass: "ETF" });
+  assert.equal(assetClass.candidates.length, 1);
+});
+
 test("D2 supports independent simulated providers with distinct references", async () => {
   const a = createTwelveDataCatalogConnector({ env: { TWELVE_DATA_API_KEY: "offline-only" }, source: sourceA, transport: transportFor(response(200, { status: "ok", data: [row("AAPL", "XNAS")] })) });
   const bCandidate = normalizeCatalogCandidate({ issuer: null, instrument: null, descriptiveName: "Apple Inc.", descriptiveAssetClass: "EQUITY", descriptiveCurrency: "USD", listing: { listingRef: "sim-b-listing", ticker: "APPLE", mic: "XNAS", micRole: null, tradingCurrency: "USD", validity: { validFrom: null, validTo: null } }, providerReference: { providerKey: sourceB.providerKey, providerReference: "APPLE.NASDAQ", identifierType: "PROVIDER_NATIVE", scope: "LISTING", source: sourceB, validity: { validFrom: null, validTo: null } }, identifiers: [{ type: "PROVIDER_NATIVE", value: "APPLE.NASDAQ", scope: "LISTING", source: sourceB, evidenceKind: "PROVIDER_CATALOG", strength: "STRONG", verified: false, validity: { validFrom: null, validTo: null }, marketMic: "XNAS" }], source: sourceB });
@@ -75,4 +93,15 @@ test("D2 maps name, ticker and market filters to documented symbol_search parame
 test("D2 refuses live fallback and preserves provider identity", () => {
   assert.throws(() => createTwelveDataCatalogConnector({ env: { TWELVE_DATA_API_KEY: "present-but-never-used" }, source: sourceA }), (error: unknown) => error instanceof CatalogConnectorError && error.code === "PROVIDER_UNAVAILABLE");
   assert.throws(() => createTwelveDataCatalogConnector({ env: { TWELVE_DATA_API_KEY: "offline-only" }, source: sourceB, transport: transportFor(response(200, { status: "ok", data: [] })) }), (error: unknown) => error instanceof CatalogConnectorError && error.code === "INVALID_REQUEST");
+});
+
+test("D2 maps invalid MIC, currency and symbol payloads to INVALID_PROVIDER_RESPONSE", async () => {
+  for (const invalid of [
+    { ...row("AAPL", "BAD") },
+    { ...row("AAPL", "XNAS"), currency: "US" },
+    { ...row("AAPL$", "XNAS") },
+  ]) {
+    const connector = createTwelveDataCatalogConnector({ env: { TWELVE_DATA_API_KEY: "offline-only" }, source: sourceA, transport: transportFor(response(200, { status: "ok", data: [invalid] })) });
+    await assert.rejects(connector.search({ ticker: "AAPL" }), (error: unknown) => error instanceof CatalogConnectorError && error.code === "INVALID_PROVIDER_RESPONSE");
+  }
 });
