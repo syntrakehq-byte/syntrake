@@ -3,7 +3,7 @@ import { CatalogConnectorError, classifyCatalogResponse, requireCatalogLicense, 
 
 type JsonRecord = Record<string, unknown>;
 function record(value: unknown): JsonRecord | null { return value !== null && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : null; }
-function text(value: unknown, field: string): string { if (typeof value !== "string" || value.trim().length === 0) throw new CatalogConnectorError("INVALID_PROVIDER_RESPONSE"); return value.trim(); }
+function text(value: unknown, field: string): string { void field; if (typeof value !== "string" || value.trim().length === 0) throw new CatalogConnectorError("INVALID_PROVIDER_RESPONSE"); return value.trim(); }
 function optionalText(value: unknown): string | null { return typeof value === "string" && value.trim() ? value.trim() : null; }
 function validMicRole(value: unknown): value is MicRole { return value === "OPERATING" || value === "SEGMENT"; }
 
@@ -32,7 +32,7 @@ export function createTwelveDataCatalogConnector(input: Readonly<{
     try { body = JSON.parse(await response.text()) as unknown; } catch { throw new CatalogConnectorError("INVALID_PROVIDER_RESPONSE"); }
     const root = record(body);
     if (!root || root.status !== "ok" || !Array.isArray(root.data)) throw new CatalogConnectorError("INVALID_PROVIDER_RESPONSE");
-    const candidates = root.data.map(item => fromTwelveData(item, input.source));
+    const candidates = root.data.map(item => fromTwelveData(item, input.source)).filter((candidate): candidate is CatalogCandidate => candidate !== null);
     if (lookupReference && !candidates.some(candidate => candidate.providerReference.providerReference === lookupReference)) throw new CatalogConnectorError("NO_RESULTS");
     return resultForCandidates(query, filterCatalogCandidates(query, candidates));
   };
@@ -51,7 +51,7 @@ export function createTwelveDataCatalogConnector(input: Readonly<{
   };
 }
 
-function fromTwelveData(value: unknown, source: CatalogSource): CatalogCandidate {
+function fromTwelveData(value: unknown, source: CatalogSource): CatalogCandidate | null {
   const row = record(value);
   if (!row) throw new CatalogConnectorError("INVALID_PROVIDER_RESPONSE");
   const symbol = text(row.symbol, "symbol");
@@ -62,7 +62,9 @@ function fromTwelveData(value: unknown, source: CatalogSource): CatalogCandidate
   const currency = text(row.currency, "currency").toUpperCase();
   const type = text(row.instrument_type, "instrument_type");
   const assetClass = type === "ETF" ? "ETF" : type === "Common Stock" ? "EQUITY" : type === "Physical Currency" ? "FX" : null;
-  if (!assetClass) throw new CatalogConnectorError("INVALID_PROVIDER_RESPONSE");
+  // A valid provider row with an unsupported product type is not malformed;
+  // omit it while preserving valid EQUITY/ETF/FX rows from the same response.
+  if (!assetClass) return null;
   const listingRef = `${source.providerKey}:${symbol}:${mic ?? "NO_MIC"}`;
   const candidate: CatalogCandidate = {
     issuer: null,

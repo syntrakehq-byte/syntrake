@@ -20,13 +20,16 @@ const transport = async (url: string, init: RequestInit): Promise<Response> => {
 };
 async function main(): Promise<void> {
 const source = { providerKey: "TWELVE_DATA", snapshotId: `rehearsal-${sha.slice(0, 12)}`, snapshotVersion: "1", observedAt: new Date().toISOString(), licensePolicyId: "operator-confirmed-query-no-display", storageAllowed: true, sharingAllowed: false } as const;
-const connector = createTwelveDataCatalogConnector({ env, source, transport });
+const connector = createTwelveDataCatalogConnector({ env, source, transport, apiKeyEnv: "SYNTRAKE_TWELVE_DATA_API_KEY" });
 const discovery = await connector.search({ ticker: "AAPL" });
-if (discovery.candidates.length !== 1) throw new Error("R3_REHEARSAL_SELECTION_REQUIRED");
-const candidate = discovery.candidates[0];
+const selection = env.SYNTRAKE_R3E1_REHEARSAL_SELECTION?.split("|");
+if (!selection || selection.length !== 3) throw new Error("R3_REHEARSAL_SELECTION_REQUIRED");
+const candidate = discovery.candidates.find(x => x.listing?.ticker === selection[0] && x.listing.mic === selection[1] && x.listing.tradingCurrency === selection[2] && x.descriptiveAssetClass === "EQUITY");
+if (!candidate || discovery.candidates.filter(x => x.listing?.ticker === selection[0] && x.listing.mic === selection[1] && x.listing.tradingCurrency === selection[2] && x.descriptiveAssetClass === "EQUITY").length !== 1) throw new Error("R3_REHEARSAL_SELECTION_NOT_UNIQUE");
 if (!candidate.listing?.mic || candidate.listing.ticker !== "AAPL" || candidate.listing.tradingCurrency !== "USD") throw new Error("R3_REHEARSAL_DISCOVERY_IDENTITY_INVALID");
 const instrument = instrumentIdentity({ kind: candidate.descriptiveAssetClass ?? "EQUITY", symbol: candidate.listing.ticker, mic: candidate.listing.mic, currency: candidate.listing.tradingCurrency });
-const series = await fetchDailySeriesR3E1Once({ env, instrument, outputSize: 1, transport, checkoutSha: sha, rights: { policyId: "operator-confirmed-query-no-display", display: false, retentionUntil: null } });
+let usage: { remaining: string | null; used: string | null } = { remaining: null, used: null };
+const series = await fetchDailySeriesR3E1Once({ env, instrument, outputSize: 1, transport, checkoutSha: sha, rights: { policyId: "operator-confirmed-query-no-display", display: false, retentionUntil: null }, onResponseHeaders: headers => { usage = headers; } });
 if (series.envelope.rights.display) throw new Error("R3_REHEARSAL_DISPLAY_MUST_REMAIN_DISABLED");
 const close = series.candles.at(-1)?.close;
 if (!close) throw new Error("R3_REHEARSAL_CLOSE_MISSING");
@@ -34,6 +37,6 @@ const quantity = quantityToAtoms("0.96");
 const [whole, fraction = ""] = close.split(".");
 const priceAtoms = BigInt(whole) * 1_000_000_000_000n + BigInt(fraction.padEnd(12, "0"));
 const valueAtoms = priceAtoms * quantity / 1_000_000_000_000n;
-console.log(JSON.stringify({ calls, provider: series.provider, symbol: candidate.listing.ticker, mic: candidate.listing.mic, currency: candidate.listing.tradingCurrency, marketDate: series.candles.at(-1)?.marketDate, close, quantity: "0.96", value: `${valueAtoms / 1_000_000_000_000n}.${(valueAtoms % 1_000_000_000_000n).toString().padStart(12, "0").replace(/0+$/, "")}`, display: series.envelope.rights.display }));
+console.log(JSON.stringify({ calls, maxCalls: MAX_CALLS, provider: series.provider, symbol: candidate.listing.ticker, mic: candidate.listing.mic, currency: candidate.listing.tradingCurrency, marketDate: series.candles.at(-1)?.marketDate, close, quantity: "0.96", value: `${valueAtoms / 1_000_000_000_000n}.${(valueAtoms % 1_000_000_000_000n).toString().padStart(12, "0").replace(/0+$/, "")}`, display: series.envelope.rights.display, creditsUsed: usage.used, creditsLeft: usage.remaining, creditsGuarantee: "UNKNOWN" }));
 }
 main().catch(error => { console.error(error instanceof Error ? error.message : "R3_REHEARSAL_FAILED"); process.exitCode = 1; });
