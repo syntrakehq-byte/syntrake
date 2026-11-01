@@ -2,6 +2,29 @@
 -- Disposable PostgreSQL 17 rehearsal target. Never apply remotely.
 -- No role is granted direct write access: authenticated review authority is not
 -- established by this candidate migration, so persistence remains fail-closed.
+
+-- Alias effectiveness (valid_from/valid_to) is not the same as when the
+-- Registry learned the alias. This append-only record is the trusted PIT
+-- source; callers must not synthesize its timestamp.
+CREATE TABLE IF NOT EXISTS market_core.provider_alias_observations (
+  provider_alias_id uuid PRIMARY KEY REFERENCES market_core.provider_aliases(provider_alias_id),
+  known_at timestamptz NOT NULL,
+  recorded_at timestamptz NOT NULL,
+  CHECK (recorded_at >= known_at)
+);
+
+CREATE OR REPLACE FUNCTION market_core.prevent_alias_observation_mutation()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION 'provider alias observations are append-only';
+END;
+$$;
+
+DROP TRIGGER IF EXISTS provider_alias_observation_immutable ON market_core.provider_alias_observations;
+CREATE TRIGGER provider_alias_observation_immutable
+  BEFORE UPDATE OR DELETE ON market_core.provider_alias_observations
+  FOR EACH ROW EXECUTE FUNCTION market_core.prevent_alias_observation_mutation();
+
 CREATE TABLE market_core.canonical_resolution_decisions (
   decision_id uuid PRIMARY KEY,
   candidate_id uuid NOT NULL REFERENCES market_core.catalog_candidates(candidate_id),
