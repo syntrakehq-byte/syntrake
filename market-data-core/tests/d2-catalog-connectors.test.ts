@@ -36,6 +36,29 @@ test("D2 filters candidates before cardinality classification", async () => {
   assert.equal(assetClass.candidates.length, 1);
 });
 
+test("D2 preserves valid candidates in a heterogeneous multi-market response", async () => {
+  const rows = [
+    ...Array.from({ length: 10 }, (_, index) => row(index === 0 ? "AAPL" : `EQ${index}`, index % 2 === 0 ? "XNGS" : "XNAS")),
+    { ...row("SPY", "ARCX"), instrument_type: "ETF", instrument_name: "Apple ETF" },
+    { ...row("EURUSD", "XFX1"), instrument_type: "Physical Currency", instrument_name: "Euro / US Dollar" },
+    { ...row("AAPL", "XNGS"), instrument_type: "Depositary Receipt", instrument_name: "Unsupported product" },
+    ...Array.from({ length: 17 }, (_, index) => row(`ZZ${index}`, index % 2 === 0 ? "XLON" : "XNYS")),
+  ];
+  let requestedAuthorization = "";
+  const connector = createTwelveDataCatalogConnector({
+    env: { OPERATOR_TWELVE_DATA_KEY: "offline-only" }, apiKeyEnv: "OPERATOR_TWELVE_DATA_KEY", source: sourceA,
+    transport: async (_url, init) => { requestedAuthorization = String(new Headers(init?.headers).get("authorization")); return response(200, { status: "ok", data: rows }); },
+  });
+  const result = await connector.search({ name: "Apple" });
+  assert.equal(requestedAuthorization, "apikey offline-only");
+  assert.equal(result.candidates.length, 28);
+  assert.equal(result.candidates.some(candidate => candidate.descriptiveAssetClass === "EQUITY" && candidate.listing?.ticker === "AAPL"), true);
+  assert.equal(result.candidates.some(candidate => candidate.descriptiveAssetClass === "ETF"), true);
+  assert.equal(result.candidates.some(candidate => candidate.descriptiveAssetClass === "FX"), false);
+  assert.equal(result.candidates.some(candidate => candidate.listing?.ticker === "AAPL" && candidate.descriptiveAssetClass === "EQUITY"), true);
+  assert.equal(result.status, "AMBIGUOUS");
+});
+
 test("D2 supports independent simulated providers with distinct references", async () => {
   const a = createTwelveDataCatalogConnector({ env: { TWELVE_DATA_API_KEY: "offline-only" }, source: sourceA, transport: transportFor(response(200, { status: "ok", data: [row("AAPL", "XNAS")] })) });
   const bCandidate = normalizeCatalogCandidate({ issuer: null, instrument: null, descriptiveName: "Apple Inc.", descriptiveAssetClass: "EQUITY", descriptiveCurrency: "USD", listing: { listingRef: "sim-b-listing", ticker: "APPLE", mic: "XNAS", micRole: null, tradingCurrency: "USD", validity: { validFrom: null, validTo: null } }, providerReference: { providerKey: sourceB.providerKey, providerReference: "APPLE.NASDAQ", identifierType: "PROVIDER_NATIVE", scope: "LISTING", source: sourceB, validity: { validFrom: null, validTo: null } }, identifiers: [{ type: "PROVIDER_NATIVE", value: "APPLE.NASDAQ", scope: "LISTING", source: sourceB, evidenceKind: "PROVIDER_CATALOG", strength: "STRONG", verified: false, validity: { validFrom: null, validTo: null }, marketMic: "XNAS" }], source: sourceB });

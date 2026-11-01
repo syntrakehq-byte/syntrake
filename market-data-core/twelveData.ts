@@ -129,6 +129,7 @@ export async function fetchDailySeries(input: Readonly<{
   transport?: Fetcher;
   clock?: Clock;
   onResponseHeaders?: (headers: ProviderUsageHeaders) => void;
+  rights?: Readonly<{ policyId: string; display: boolean; retentionUntil: string | null }>;
   internalAuthorization?: symbol;
   checkoutSha?: string;
 }>): Promise<DailySeries> {
@@ -249,7 +250,7 @@ export async function fetchDailySeries(input: Readonly<{
     marketDate: series.candles[series.candles.length - 1]?.marketDate,
     firstSeenAt: series.observedAtUtc, ingestedAt: series.observedAtUtc, asKnownAt: series.observedAtUtc,
     revisionId, schemaVersion: "1.0",
-    quality: { flags: ["LATENCY_NOT_VERIFIED"], coverage: "FULL" }, rights: { policyId: "provider-contract-pending", display: false, retentionUntil: null },
+    quality: { flags: ["LATENCY_NOT_VERIFIED"], coverage: "FULL" }, rights: input.rights ?? { policyId: "provider-contract-pending", display: false, retentionUntil: null },
   }, (value): value is readonly DailyCandle[] =>
     Array.isArray(value) && value.length > 0 &&
     value.every((c: unknown) => record(c) !== null &&
