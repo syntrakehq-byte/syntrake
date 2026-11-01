@@ -192,10 +192,6 @@ export function normalizeCatalogCandidate(input: CatalogCandidate): CatalogCandi
   });
 }
 
-function hasVerifiableIdentity(candidate: CatalogCandidate): boolean {
-  return candidate.issuer !== null && candidate.instrument !== null && candidate.listing !== null &&
-    candidate.identifiers.some(e => e.verified && e.strength === "STRONG" && (e.type === "ISIN" || e.type === "FIGI" || e.type === "CIK" || e.type === "LEI") && e.evidenceKind !== "PROVIDER_CATALOG");
-}
 function queryMatchesCandidate(query: CatalogQuery, candidate: CatalogCandidate): boolean {
   if (query.ticker !== undefined && candidate.listing?.ticker !== query.ticker) return false;
   if (query.name !== undefined && candidate.issuer?.legalName.toUpperCase() !== query.name.toUpperCase()) return false;
@@ -216,7 +212,7 @@ export function createDiscoveryResult(queryInput: CatalogQuery, rawCandidates: r
   if (candidates.length === 0) return Object.freeze({ status: "UNRESOLVED", query, candidates, reason: "NO_CATALOG_CANDIDATES" });
   if (candidates.length > 1) return Object.freeze({ status: "AMBIGUOUS", query, candidates, reason: "MULTIPLE_CATALOG_CANDIDATES" });
   if (!queryMatchesCandidate(query, candidates[0])) return Object.freeze({ status: "REVIEW_REQUIRED", query, candidates, reason: "QUERY_CANDIDATE_MISMATCH" });
-  if (!hasVerifiableIdentity(candidates[0])) return Object.freeze({ status: "REVIEW_REQUIRED", query, candidates, reason: "VERIFIABLE_IDENTITY_EVIDENCE_REQUIRED" });
-  if (!candidates[0].source.storageAllowed) return Object.freeze({ status: "REVIEW_REQUIRED", query, candidates, reason: "CATALOG_STORAGE_NOT_LICENSED" });
-  return Object.freeze({ status: "EXACT", query, candidates, reason: "ONE_VERIFIED_CANDIDATE" });
+  // D0 normalizes candidates and evidence only. Canonical identity resolution
+  // (issuer -> instrument -> listing) belongs exclusively to D3.
+  return Object.freeze({ status: "REVIEW_REQUIRED", query, candidates, reason: candidates[0].source.storageAllowed ? "CANONICAL_IDENTITY_VERIFICATION_REQUIRED" : "CATALOG_STORAGE_NOT_LICENSED" });
 }

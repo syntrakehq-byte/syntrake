@@ -21,8 +21,8 @@ test("D0 normalizes queries and keeps issuer/instrument/listing/provider identit
 test("D0 uses two independent simulated providers and never equates XNAS with XNGS", () => {
   const a = createDiscoveryResult({ticker:"AAPL",marketMic:"XNAS"},[candidate(sourceA,"XNAS","AAPL-XNAS")]);
   const b = createDiscoveryResult({ticker:"AAPL",marketMic:"XNGS"},[candidate(sourceB,"XNGS","APPLE.NASDAQ")]);
-  assert.equal(a.status,"EXACT");
-  assert.equal(b.status,"EXACT");
+  assert.equal(a.status,"REVIEW_REQUIRED");
+  assert.equal(b.status,"REVIEW_REQUIRED");
   assert.notEqual(a.candidates[0].listing?.mic,b.candidates[0].listing?.mic);
   assert.notEqual(a.candidates[0].providerReference.providerKey,b.candidates[0].providerReference.providerKey);
 });
@@ -35,6 +35,16 @@ test("D0 refuses ambiguity, contradictory identity and insufficient evidence", (
   const insufficient = {...candidate(sourceA,"XNAS","AAPL-XNAS"), identifiers:[{...candidate(sourceA,"XNAS","AAPL-XNAS").identifiers[0],verified:false,strength:"SUPPORTING" as const}]};
   assert.equal(createDiscoveryResult({ticker:"AAPL"},[insufficient]).status,"REVIEW_REQUIRED");
   assert.equal(createDiscoveryResult({ticker:"UNKNOWN"},[]).status,"UNRESOLVED");
+});
+
+test("D0 reserves canonical EXACT for D3, including issuer-only and instrument-only evidence", () => {
+  const base = candidate(sourceA,"XNAS","AAPL-XNAS");
+  for (const [type, scope, value] of [["CIK","ISSUER","0000320193"],["LEI","ISSUER","5493001KJTIIGC8Y1R12"],["ISIN","INSTRUMENT","US0378331005"]] as const) {
+    const onlyEvidence = {...base, identifiers:[{...base.identifiers[0],type,scope,value,verified:true,strength:"STRONG" as const,evidenceKind:"IDENTIFIER_RECORD" as const}]};
+    const result = createDiscoveryResult({ticker:"AAPL",marketMic:"XNAS"},[onlyEvidence]);
+    assert.equal(result.status,"REVIEW_REQUIRED");
+    assert.equal(result.reason,"CANONICAL_IDENTITY_VERIFICATION_REQUIRED");
+  }
 });
 
 test("D0 never promotes a mismatched query or ticker-only evidence to EXACT", () => {
