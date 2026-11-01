@@ -43,11 +43,13 @@ export type MarketDataErrorCode =
 export class MarketDataError extends Error {
   readonly code: MarketDataErrorCode;
   readonly retryAfterSeconds: number | null;
-  constructor(code: MarketDataErrorCode, retryAfterSeconds: number | null = null) {
-    super(code); // No upstream URL, API key, provider body or private details.
+  readonly providerStatus: number | null;
+  constructor(code: MarketDataErrorCode, retryAfterSeconds: number | null = null, providerStatus: number | null = null) {
+    super(providerStatus === null ? code : `${code} HTTP_${providerStatus}`); // Only safe classification; no URL, key, headers or body.
     this.name = "MarketDataError";
     this.code = code;
     this.retryAfterSeconds = retryAfterSeconds;
+    this.providerStatus = providerStatus;
   }
 }
 function object(value: unknown): value is Record<string, unknown> {

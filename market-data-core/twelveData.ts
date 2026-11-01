@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { instrumentIdentity, MarketDataError, record, resolveProviderAlias, validMarketDate, type AliasResolution, type InstrumentIdentity } from "./identity";
-import { requireR3AProviderReady } from "./gate";
+import { isR3E1RealCallReady, requireR3AProviderReady, requireR3E1RealCallReady } from "./gate";
 import { validateEnvelope, type DataEnvelope } from "./contracts";
 
 export type DailyCandle = Readonly<{
@@ -25,6 +25,14 @@ export type DailySeries = Readonly<{
 type Env = Readonly<Record<string, string | undefined>>;
 type Fetcher = (url: string, init: RequestInit) => Promise<Response>;
 type Clock = () => Date;
+export type ProviderUsageHeaders = Readonly<{ remaining: string | null; used: string | null }>;
+const R3E1_INTERNAL = Symbol("r3e1-once");
+let r3e1CallConsumed = false;
+function sanitizeCreditHeader(value: string | null): string | null {
+  if (value === null || !/^\d{1,9}$/.test(value)) return null;
+  const n = Number(value);
+  return Number.isSafeInteger(n) && n <= 1_000_000_000 ? String(n) : null;
+}
 
 function validDate(s: unknown): s is string {
   if (typeof s !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
@@ -120,9 +128,14 @@ export async function fetchDailySeries(input: Readonly<{
   outputSize: number;
   transport?: Fetcher;
   clock?: Clock;
+  onResponseHeaders?: (headers: ProviderUsageHeaders) => void;
+  internalAuthorization?: symbol;
+  checkoutSha?: string;
 }>): Promise<DailySeries> {
   // Fail BEFORE constructing URL or calling transport when not authorized.
-  const apikey = requireR3AProviderReady(input.env);
+  const apikey = input.internalAuthorization === R3E1_INTERNAL
+    ? requireR3E1ProviderReadyOnce(input.env, input.checkoutSha)
+    : requireR3AProviderReady(input.env);
   const hint = instrumentIdentity({
     kind: input.instrument?.kind, symbol: input.instrument?.symbol,
     mic: input.instrument?.mic, currency: input.instrument?.currency,
@@ -177,9 +190,22 @@ export async function fetchDailySeries(input: Readonly<{
   } catch {
     throw new MarketDataError("PROVIDER_UNAVAILABLE");
   }
-  if (response.status === 429) throw new MarketDataError("RATE_LIMITED", retryAfter(response));
-  if (response.status === 401 || response.status === 403) throw new MarketDataError("PROVIDER_REJECTED");
-  if (!response.ok) throw new MarketDataError("PROVIDER_UNAVAILABLE");
+  if (response.status === 429) throw new MarketDataError("RATE_LIMITED", retryAfter(response), 429);
+  if (response.status === 401 || response.status === 403) throw new MarketDataError("PROVIDER_REJECTED", null, response.status);
+  if (response.status === 400 || response.status === 404 || response.status === 422) {
+    throw new MarketDataError("INVALID_REQUEST", null, response.status);
+  }
+  if (response.status >= 500 && response.status <= 599) {
+    throw new MarketDataError("PROVIDER_UNAVAILABLE", null, response.status);
+  }
+  if (!response.ok) throw new MarketDataError("PROVIDER_UNAVAILABLE", null, response.status);
+  input.onResponseHeaders?.({
+    // Twelve Data documents these names as the authoritative usage headers.
+    // Keep the older aliases only as compatibility fallbacks for test doubles
+    // and previously deployed transports; all values remain sanitized.
+    remaining: sanitizeCreditHeader(response.headers.get("api-credits-left") ?? response.headers.get("x-ratelimit-remaining") ?? response.headers.get("x-credits-remaining")),
+    used: sanitizeCreditHeader(response.headers.get("api-credits-used") ?? response.headers.get("x-ratelimit-used") ?? response.headers.get("x-credits-used")),
+  });
   const declaredLength = response.headers.get("content-length");
   if (declaredLength && /^\d+$/.test(declaredLength) && Number(declaredLength) > 512_000) {
     throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
@@ -234,4 +260,15 @@ export async function fetchDailySeries(input: Readonly<{
       typeof (c as DailyCandle).close === "string" &&
       ((c as DailyCandle).volume === null || typeof (c as DailyCandle).volume === "string")));
   return Object.freeze({ ...series, envelope });
+}
+
+function requireR3E1ProviderReadyOnce(env: Env, checkoutSha: string | undefined): string {
+  if (!checkoutSha || !isR3E1RealCallReady(env, checkoutSha)) throw new MarketDataError("DISABLED");
+  if (r3e1CallConsumed) throw new MarketDataError("INVALID_REQUEST");
+  r3e1CallConsumed = true;
+  return requireR3E1RealCallReady(env, checkoutSha);
+}
+
+export async function fetchDailySeriesR3E1Once(input: Readonly<Parameters<typeof fetchDailySeries>[0] & { checkoutSha: string }>): Promise<DailySeries> {
+  return fetchDailySeries({ ...input, internalAuthorization: R3E1_INTERNAL });
 }
