@@ -3,24 +3,35 @@ import assert from "node:assert/strict";
 import { routeProvider } from "../providerRouter";
 import type { ProviderCapability, RoutingRequest } from "../providerCapabilities";
 import type { CanonicalResolution } from "../canonicalIdentityResolver";
+import { resolveCanonicalIdentity } from "../canonicalIdentityResolver";
+import type { CatalogCandidate, CatalogSource } from "../instrumentDiscovery";
 
 const rights = { policyId: "rights-a", query: true, store: true, display: true, retain: true, share: false, valid: { validFrom: "2020-01-01", validTo: null } } as const;
-const base = (providerKey: string, credits: number | null, overrides: Partial<ProviderCapability> = {}): ProviderCapability => ({ providerKey, service: "MARKET_DATA", assetClasses: ["EQUITY"], markets: [{ mic: "XNAS", role: "OPERATING" }], currencies: ["USD"], coverage: { validFrom: "2020-01-01", validTo: null }, granularities: ["1day"], adjustments: ["none"], operational: "AVAILABLE", quality: { coverage: "KNOWN", freshness: "KNOWN", integrity: "KNOWN", score: 90 }, rights, cost: { currency: "USD", credits, knowledge: credits === null ? "UNKNOWN" : "KNOWN" }, quota: { remaining: 10, knowledge: "KNOWN" }, source: { sourceId: `${providerKey}-source`, observedAt: "2026-01-01T00:00:00Z", snapshotId: `${providerKey}-snapshot` }, ...overrides });
+const base = (providerKey: string, credits: number | null, overrides: Partial<ProviderCapability> = {}): ProviderCapability => ({ providerKey, service: "MARKET_DATA", assetClasses: ["EQUITY"], markets: [{ mic: "XNAS", role: "OPERATING" }], currencies: ["USD"], coverage: { validFrom: "2020-01-01", validTo: null }, granularities: ["1day"], adjustments: ["none"], operational: "AVAILABLE", quality: { coverage: "KNOWN", freshness: "KNOWN", integrity: "KNOWN", score: 90 }, rights, cost: { currency: "CREDITS", credits, knowledge: credits === null ? "UNKNOWN" : "KNOWN" }, quota: { remaining: 10, knowledge: "KNOWN" }, source: { sourceId: `${providerKey}-source`, observedAt: "2025-01-01T00:00:00Z", snapshotId: `${providerKey}-snapshot` }, ...overrides });
 const identity = { issuerRef: "issuer-a", instrumentRef: "instrument-a", instrumentIssuerRef: "issuer-a", listingRef: "listing-a", assetClass: "EQUITY", denominationCurrency: "USD", listing: { listingRef: "listing-a", ticker: "AAPL", mic: "XNAS", micRole: "OPERATING", tradingCurrency: "USD", validity: { validFrom: "2020-01-01", validTo: null } }, identifiers: [], aliases: [], validity: { validFrom: "2020-01-01", validTo: null } } as const;
 const exact: CanonicalResolution = { status: "EXACT", reasonCode: "CANONICAL_MATCH", identity, candidate: null, evidence: [] };
-const request = (overrides: Partial<RoutingRequest> = {}): RoutingRequest => ({ identity: exact, service: "MARKET_DATA", mic: "XNAS", micRole: "OPERATING", assetClass: "EQUITY", currency: "USD", from: "2025-01-01", to: "2025-01-02", granularity: "1day", adjustment: "none", asOf: "2026-01-01T00:00:00Z", rights: { query: true, store: true, display: true, retain: true, share: false, policyId: "rights-a" }, maxCredits: 10, ...overrides });
+const request = (overrides: Partial<RoutingRequest> = {}): RoutingRequest => ({ identity: exact, service: "MARKET_DATA", mic: "XNAS", micRole: "OPERATING", assetClass: "EQUITY", currency: "USD", from: "2025-01-01", to: "2025-01-02", granularity: "1day", adjustment: "none", asOf: "2026-01-01T00:00:00Z", rights: { query: true, store: true, display: true, retain: true, share: false, policyId: "rights-a" }, quality: { requireCoverage: true, requireFreshness: true, requireIntegrity: true, minScore: 80 }, maxCost: { unit: "CREDITS", amount: 10 }, ...overrides });
 
 test("D4 chooses the cheapest eligible provider deterministically", () => {
   const result = routeProvider(request(), [base("PROVIDER_A", 5), base("PROVIDER_B", 2)]);
   assert.equal(result.status, "READY");
   assert.equal(result.selected?.providerKey, "PROVIDER_B");
   assert.equal(result.alternatives[0]?.providerKey, "PROVIDER_A");
-  assert.equal(result.demandKey, routeProvider(request(), [base("PROVIDER_B", 2), base("PROVIDER_A", 5)]).demandKey);
+  assert.equal(result.routingDecisionKey, routeProvider(request(), [base("PROVIDER_B", 2), base("PROVIDER_A", 5)]).routingDecisionKey);
+});
+
+test("D4 consumes an EXACT result produced by D3 rather than a hand-made resolution", () => {
+  const source: CatalogSource = { providerKey: "PROVIDER_A", snapshotId: "snap-a", snapshotVersion: "1", observedAt: "2025-01-01T00:00:00Z", licensePolicyId: "rights-a", storageAllowed: true, sharingAllowed: false };
+  const candidate: CatalogCandidate = { issuer: null, instrument: null, listing: { listingRef: "provider-listing", ticker: "AAPL", mic: "XNAS", micRole: "OPERATING", tradingCurrency: "USD", validity: { validFrom: "2020-01-01", validTo: null } }, providerReference: { providerKey: "PROVIDER_A", providerReference: "AAPL", identifierType: "TICKER", scope: "LISTING", source, validity: { validFrom: "2020-01-01", validTo: null } }, identifiers: [{ type: "TICKER", value: "AAPL", scope: "LISTING", source, evidenceKind: "PROVIDER_CATALOG", strength: "SUPPORTING", verified: false, validity: { validFrom: "2020-01-01", validTo: null }, marketMic: "XNAS" }], source };
+  const trusted = (type: "CIK" | "ISIN" | "FIGI", value: string, scope: "ISSUER" | "INSTRUMENT" | "LISTING", evidenceId: string) => ({ evidenceId, type, value, scope, source: "D1_REGISTRY" as const, verified: true, sourceId: "registry-source", snapshotId: "registry-snapshot", rightsPolicyId: "rights-a", observedAt: "2025-01-01T00:00:00Z", issuerRef: scope === "ISSUER" ? "issuer-a" : null, instrumentRef: scope === "ISSUER" ? null : "instrument-a", listingRef: scope === "LISTING" ? "listing-a" : null, validity: { validFrom: "2020-01-01", validTo: null } });
+  const d3 = resolveCanonicalIdentity({ candidate, asOf: "2026-01-01T00:00:00Z", registry: [{ ...identity, aliases: [{ providerKey: "PROVIDER_A", providerReference: "AAPL", listingRef: "listing-a", observedAt: "2025-01-01T00:00:00Z", validity: { validFrom: "2020-01-01", validTo: null } }], identifiers: [trusted("CIK", "0000320193", "ISSUER", "ev-issuer"), trusted("ISIN", "US0378331005", "INSTRUMENT", "ev-instrument"), trusted("FIGI", "BBG000B9XRY4", "LISTING", "ev-listing")] }] });
+  assert.equal(d3.status, "EXACT");
+  assert.equal(routeProvider(request({ identity: d3 }), [base("PROVIDER_A", 2)]).status, "READY");
 });
 
 test("D4 excludes partial coverage, different MICs and unsupported adjustments", () => {
   assert.equal(routeProvider(request(), [base("PARTIAL", 1, { markets: [{ mic: "XNGS", role: "SEGMENT" }] })]).status, "NO_ELIGIBLE_PROVIDER");
-  assert.equal(routeProvider(request({ mic: "XNGS", micRole: "SEGMENT" }), [base("XNAS", 1)]).status, "NO_ELIGIBLE_PROVIDER");
+  assert.equal(routeProvider(request({ mic: "XNGS", micRole: "SEGMENT" }), [base("XNAS", 1)]).status, "IDENTITY_UNRESOLVED");
   assert.equal(routeProvider(request({ adjustment: "dividends" }), [base("NO_ADJUSTMENT", 1)]).status, "NO_ELIGIBLE_PROVIDER");
 });
 
@@ -31,6 +42,11 @@ test("D4 fails closed for unresolved identity and never promotes it", () => {
   assert.equal(result.selected, null);
 });
 
+test("D4 rejects a request for XNGS when D3 resolved AAPL/XNAS", () => {
+  const result = routeProvider(request({ mic: "XNGS", micRole: "SEGMENT" }), [base("XNGS", 1, { markets: [{ mic: "XNGS", role: "SEGMENT" }] })]);
+  assert.equal(result.status, "IDENTITY_UNRESOLVED");
+});
+
 test("D4 blocks rights, unknown cost, quotas and operational backoff", () => {
   assert.equal(routeProvider(request(), [base("NO_STORE", 1, { rights: { ...rights, store: false } })]).status, "LICENSE_BLOCKED");
   assert.equal(routeProvider(request(), [base("UNKNOWN_COST", null)]).status, "COST_UNKNOWN");
@@ -38,10 +54,19 @@ test("D4 blocks rights, unknown cost, quotas and operational backoff", () => {
   assert.equal(routeProvider(request(), [base("BACKOFF", 1, { operational: "BACKOFF" })]).status, "PROVIDER_UNAVAILABLE");
 });
 
+test("D4 blocks unknown quality, future sources, invalid numbers, units and dates", () => {
+  assert.equal(routeProvider(request(), [base("LOW_QUALITY", 1, { quality: { coverage: "UNKNOWN", freshness: "KNOWN", integrity: "KNOWN", score: 20 } })]).status, "NO_ELIGIBLE_PROVIDER");
+  assert.equal(routeProvider(request(), [base("FUTURE", 1, { source: { sourceId: "future-source", snapshotId: "future-snapshot", observedAt: "2027-01-01T00:00:00Z" } })]).status, "NO_ELIGIBLE_PROVIDER");
+  assert.equal(routeProvider(request(), [base("NEGATIVE", -1)]).status, "NO_ELIGIBLE_PROVIDER");
+  assert.equal(routeProvider(request(), [base("NAN", Number.NaN)]).status, "NO_ELIGIBLE_PROVIDER");
+  assert.equal(routeProvider(request({ maxCost: { unit: "CREDITS", amount: 1 } }), [base("OVER_LIMIT", 2)]).status, "NO_ELIGIBLE_PROVIDER");
+  assert.equal(routeProvider(request({ from: "2025-02-30" }), [base("BAD_DATE", 1)]).status, "IDENTITY_UNRESOLVED");
+});
+
 test("D4 does not reserve credits, call HTTP or execute fallback", () => {
   const result = routeProvider(request(), [base("A", 1, { quota: { remaining: 0, knowledge: "UNKNOWN" } }), base("B", null)]);
   assert.notEqual(result.status, "READY");
   assert.equal(result.selected, null);
   assert.equal(result.alternatives.length, 0);
-  assert.notEqual(routeProvider(request({ rights: { ...request().rights, display: false } }), [base("A", 1)]).demandKey, result.demandKey);
+  assert.notEqual(routeProvider(request({ rights: { ...request().rights, display: false } }), [base("A", 1)]).routingDecisionKey, result.routingDecisionKey);
 });

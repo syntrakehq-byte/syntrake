@@ -51,11 +51,12 @@ export type RoutingRequest = Readonly<{
   adjustment: Adjustment;
   asOf: string;
   rights: Readonly<{ query: boolean; store: boolean; display: boolean; retain: boolean; share: boolean; policyId?: string }>;
-  maxCredits: number | null;
+  quality: Readonly<{ requireCoverage: boolean; requireFreshness: boolean; requireIntegrity: boolean; minScore: number | null }>;
+  maxCost: Readonly<{ unit: "CREDITS"; amount: number }> | null;
 }>;
 
 export type RoutingStatus = "READY" | "NO_ELIGIBLE_PROVIDER" | "LICENSE_BLOCKED" | "COST_UNKNOWN" | "QUOTA_UNAVAILABLE" | "PROVIDER_UNAVAILABLE" | "IDENTITY_UNRESOLVED";
-export type ExclusionReason = "SERVICE_UNSUPPORTED" | "MARKET_UNSUPPORTED" | "ASSET_CLASS_UNSUPPORTED" | "CURRENCY_UNSUPPORTED" | "HISTORY_UNSUPPORTED" | "GRANULARITY_UNSUPPORTED" | "ADJUSTMENT_UNSUPPORTED" | "LICENSE_BLOCKED" | "COST_UNKNOWN" | "QUOTA_UNAVAILABLE" | "PROVIDER_UNAVAILABLE" | "IDENTITY_UNRESOLVED";
+export type ExclusionReason = "SERVICE_UNSUPPORTED" | "MARKET_UNSUPPORTED" | "ASSET_CLASS_UNSUPPORTED" | "CURRENCY_UNSUPPORTED" | "HISTORY_UNSUPPORTED" | "GRANULARITY_UNSUPPORTED" | "ADJUSTMENT_UNSUPPORTED" | "QUALITY_UNPROVEN" | "LICENSE_BLOCKED" | "COST_UNKNOWN" | "COST_LIMIT" | "QUOTA_UNAVAILABLE" | "PROVIDER_UNAVAILABLE" | "INVALID_CAPABILITY" | "IDENTITY_UNRESOLVED";
 export type RoutingDecision = Readonly<{
   status: RoutingStatus;
   selected: ProviderCapability | null;
@@ -63,5 +64,6 @@ export type RoutingDecision = Readonly<{
   estimatedCost: ProviderCost | null;
   exclusions: readonly Readonly<{ providerKey: string; reason: ExclusionReason }>[];
   justification: string;
-  demandKey: string;
+  routingDecisionKey: string;
+  coordinatorDemandKey: null;
 }>;
