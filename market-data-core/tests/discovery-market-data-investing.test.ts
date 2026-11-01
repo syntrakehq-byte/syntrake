@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createTwelveDataCatalogConnector } from "../twelveDataCatalog";
-import { discoverMarketDataForInvesting } from "../discoveryMarketDataInvesting";
+import { discoverMarketDataForInvesting, discoverMarketDataPreview } from "../discoveryMarketDataInvesting";
 import type { CatalogSource } from "../instrumentDiscovery";
 import type { CanonicalIdentity } from "../canonicalIdentityResolver";
 import type { ProviderCapability } from "../providerCapabilities";
@@ -27,7 +27,7 @@ const claim = { job_id: "00000000-0000-0000-0000-000000000001", demand_key: "dem
 
 test("R3 composition discovers Apple by name, resolves XNGS, routes and values 0.96 without ledger writes", async () => {
   let calls = 0;
-  const result = await discoverMarketDataForInvesting({ onboarding, capabilities: [capability], routing, claim, selectedProviderId: "provider-id", quantity: "0.96", provider: async () => { calls++; return { status: "AVAILABLE", value: [{ close: "100.50" }] }; } });
+  const result = await discoverMarketDataForInvesting({ onboarding, capabilities: [capability], routing, claim, selectedProviderId: "provider-id", quantity: "0.96", provider: async () => { calls++; return { status: "AVAILABLE", provider: "TWELVE_DATA", instrument: { kind: "EQUITY", symbol: "AAPL", mic: "XNGS", currency: "USD" }, rights: { policyId: "r3-rights", display: true }, marketDate: "2026-01-02", value: [{ close: "100.50" }] }; } });
   assert.equal(result.status, "READY");
   assert.equal(result.candidates[0].listing?.mic, "XNGS");
   assert.equal(result.providerKey, "TWELVE_DATA");
@@ -38,11 +38,41 @@ test("R3 composition discovers Apple by name, resolves XNGS, routes and values 0
 });
 
 test("R3 composition fails closed when discovery is unresolved, and for quota or claim mismatch", async () => {
-  const ambiguousConnector = createTwelveDataCatalogConnector({ env: { TWELVE_DATA_API_KEY: "offline-only" }, source, transport: async () => new Response(JSON.stringify({ status: "ok", data: [{ symbol: "AAPL", instrument_name: "Apple Inc.", exchange: "NASDAQ", mic_code: "XNAS", currency: "USD", instrument_type: "Common Stock" }, { symbol: "AAPL", instrument_name: "Apple Inc.", exchange: "Nasdaq Global Select Market", mic_code: "XNGS", currency: "USD", instrument_type: "Common Stock" }] }), { status: 200 }) });
-  const unresolved = await discoverMarketDataForInvesting({ onboarding: { ...onboarding, connector: ambiguousConnector, query: { ticker: "AAPL" }, loadRegistry: async () => [] }, capabilities: [capability], routing, claim, selectedProviderId: "provider-id", quantity: "0.96", provider: async () => { throw new Error("must-not-call"); } });
+  const ambiguousConnector = createTwelveDataCatalogConnector({ env: { TWELVE_DATA_API_KEY: "offline-only" }, source, transport: async () => new Response(JSON.stringify({ status: "ok", data: [{ symbol: "AAPL", instrument_name: "Apple Inc.", exchange: "NASDAQ", mic_code: "XNAS", exchange_timezone: "America/New_York", country: "United States", currency: "USD", instrument_type: "Common Stock", access: "full" }, { symbol: "AAPL", instrument_name: "Apple Inc.", exchange: "Nasdaq Global Select Market", mic_code: "XNGS", exchange_timezone: "America/New_York", country: "United States", currency: "USD", instrument_type: "Common Stock", access: "full" }] }), { status: 200 }) });
+  const unresolved = await discoverMarketDataForInvesting({ onboarding: { ...onboarding, connector: ambiguousConnector, query: { ticker: "AAPL" }, loadRegistry: async () => [identity] }, capabilities: [capability], routing, claim, selectedProviderId: "provider-id", quantity: "0.96", provider: async () => { throw new Error("must-not-call"); } });
   assert.equal(unresolved.status, "REVIEW_REQUIRED");
+  assert.equal(unresolved.candidates.length, 2);
   const blocked = await discoverMarketDataForInvesting({ onboarding, capabilities: [{ ...capability, quota: { ...capability.quota, remaining: 0 } }], routing, claim, selectedProviderId: "provider-id", quantity: "0.96", provider: async () => { throw new Error("must-not-call"); } });
   assert.equal(blocked.status, "ROUTING_BLOCKED");
   const mismatched = await discoverMarketDataForInvesting({ onboarding, capabilities: [capability], routing, claim: { ...claim, listing_id: "other-listing" }, selectedProviderId: "provider-id", quantity: "0.96", provider: async () => { throw new Error("must-not-call"); } });
   assert.equal(mismatched.status, "ROUTING_BLOCKED");
+});
+
+test("R3 preview discovers AAPL with an empty Registry and uses the selected Twelve Data reference", async () => {
+  let requested = "";
+  const previewConnector = createTwelveDataCatalogConnector({ env: { TWELVE_DATA_API_KEY: "offline-only" }, source, transport: async url => { requested = url; return new Response(JSON.stringify({ status: "ok", data: [{ symbol: "AAPL", instrument_name: "Apple Inc.", exchange: "Nasdaq Global Select Market", mic_code: "XNGS", currency: "USD", instrument_type: "Common Stock" }] }), { status: 200 }); } });
+  const found = await previewConnector.search({ name: "Apple" });
+  const candidate = found.candidates[0];
+  const result = await discoverMarketDataPreview({ connector: previewConnector, query: { name: "Apple" }, claim: { ...claim, listing_id: candidate.listing!.listingRef }, quantity: "0.96", rightsPolicyId: "preview-rights", provider: async () => ({ status: "AVAILABLE", provider: "TWELVE_DATA", instrument: { kind: "EQUITY", symbol: "AAPL", mic: "XNGS", currency: "USD" }, rights: { policyId: "preview-rights", display: true }, marketDate: "2026-01-02", value: [{ close: "100.50" }] }) });
+  assert.equal(result.status, "READY");
+  assert.equal(result.identityVerified, false);
+  assert.equal(result.positionValue, "96.48");
+  assert.match(requested, /symbol=Apple/);
+});
+
+test("R3 preview requires explicit confirmation for multiple provider candidates and validates presentation rights", async () => {
+  const connector = createTwelveDataCatalogConnector({ env: { TWELVE_DATA_API_KEY: "offline-only" }, source, transport: async () => new Response(JSON.stringify({ status: "ok", data: [
+    { symbol: "AAPL", instrument_name: "Apple Inc.", exchange: "NASDAQ", mic_code: "XNAS", currency: "USD", instrument_type: "Common Stock" },
+    { symbol: "AAPL", instrument_name: "Apple Inc.", exchange: "Nasdaq Global Select Market", mic_code: "XNGS", currency: "USD", instrument_type: "Common Stock" },
+  ] }), { status: 200 }) });
+  const ambiguous = await discoverMarketDataPreview({ connector, query: { ticker: "AAPL" }, claim, quantity: "0.96", rightsPolicyId: "preview-rights", provider: async () => { throw new Error("must-not-call"); } });
+  assert.equal(ambiguous.status, "AMBIGUOUS");
+  const selected = (await connector.search({ ticker: "AAPL", marketMic: "XNGS" })).candidates[0];
+  await assert.rejects(() => discoverMarketDataPreview({ connector, query: { ticker: "AAPL", marketMic: "XNGS" }, claim: { ...claim, listing_id: selected.listing!.listingRef }, quantity: "0.96", rightsPolicyId: "preview-rights", provider: async () => ({ status: "AVAILABLE", provider: "TWELVE_DATA", instrument: { kind: "EQUITY", symbol: "AAPL", mic: "XNGS", currency: "USD" }, rights: { policyId: "preview-rights", display: false }, marketDate: "2026-01-02", value: [{ close: "100.50" }] }) }), /INVALID_PROVIDER_RESPONSE/);
+});
+
+test("R3 preview distinguishes ETF candidates and rejects malformed envelopes", async () => {
+  const connector = createTwelveDataCatalogConnector({ env: { TWELVE_DATA_API_KEY: "offline-only" }, source, transport: async () => new Response(JSON.stringify({ status: "ok", data: [{ symbol: "SPY", instrument_name: "SPDR S&P 500 ETF Trust", exchange: "NYSE Arca", mic_code: "ARCX", currency: "USD", instrument_type: "ETF" }] }), { status: 200 }) });
+  const candidate = (await connector.search({ ticker: "SPY", assetClass: "ETF" })).candidates[0];
+  await assert.rejects(() => discoverMarketDataPreview({ connector, query: { ticker: "SPY", assetClass: "ETF" }, claim: { ...claim, listing_id: candidate.listing!.listingRef }, quantity: "0.96", rightsPolicyId: "preview-rights", provider: async () => ({ status: "ERROR", provider: "TWELVE_DATA", instrument: { kind: "ETF", symbol: "SPY", mic: "ARCX", currency: "USD" }, rights: { policyId: "preview-rights", display: true }, marketDate: "2026-01-02", value: [{ close: "100.50" }] }) }), /INVALID_PROVIDER_RESPONSE/);
 });

@@ -42,6 +42,8 @@ export function createTwelveDataOfflineProvider(input: Readonly<{
     if (!candle) throw new Error("OFFLINE_PROVIDER_NOT_AVAILABLE");
     return {
       ...series.envelope,
+      provider: "TWELVE_DATA" as const,
+      instrument: resolved.instrument,
       value: [candle],
       marketDate: candle.marketDate,
       rights: { policyId: claim.rights_policy_id, display: false, retentionUntil: null },
