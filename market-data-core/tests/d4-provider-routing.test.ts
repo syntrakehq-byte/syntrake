@@ -71,7 +71,7 @@ test("D4 blocks unknown quality, future sources, invalid numbers, units and date
   assert.equal(routeProvider(request(), [base("NEGATIVE", -1)]).status, "NO_ELIGIBLE_PROVIDER");
   assert.equal(routeProvider(request(), [base("NAN", Number.NaN)]).status, "NO_ELIGIBLE_PROVIDER");
   assert.equal(routeProvider(request({ maxEconomicCost: { currency: "USD", amount: 1 } }), [base("OVER_LIMIT", 2)]).status, "NO_ELIGIBLE_PROVIDER");
-  assert.equal(routeProvider(request({ from: "2025-02-30" }), [base("BAD_DATE", 1)]).status, "IDENTITY_UNRESOLVED");
+  assert.equal(routeProvider(request({ from: "2025-02-30" }), [base("BAD_DATE", 1)]).status, "NO_ELIGIBLE_PROVIDER");
 });
 
 test("D4 does not compare native provider credits and preserves historical coverage", () => {
@@ -89,4 +89,15 @@ test("D4 does not reserve credits, call HTTP or execute fallback", () => {
   assert.equal(result.selected, null);
   assert.equal(result.alternatives.length, 0);
   assert.notEqual(routeProvider(request({ rights: { ...request().rights, display: false } }), [base("A", 1)]).routingDecisionKey, result.routingDecisionKey);
+});
+
+test("D4 rejects malformed economic limits, quality thresholds and capability windows before READY", () => {
+  const provider = [base("VALID", 1)];
+  assert.equal(routeProvider(request({ maxEconomicCost: { currency: "USD", amount: Number.NaN } }), provider).status, "NO_ELIGIBLE_PROVIDER");
+  assert.equal(routeProvider(request({ maxEconomicCost: { currency: "USD", amount: -1 } }), provider).status, "NO_ELIGIBLE_PROVIDER");
+  assert.equal(routeProvider(request({ maxEconomicCost: { currency: "US", amount: 1 } }), provider).status, "NO_ELIGIBLE_PROVIDER");
+  assert.equal(routeProvider(request({ quality: { ...request().quality, minScore: -1 } }), provider).status, "NO_ELIGIBLE_PROVIDER");
+  assert.equal(routeProvider(request({ quality: { ...request().quality, minScore: Number.POSITIVE_INFINITY } }), provider).status, "NO_ELIGIBLE_PROVIDER");
+  assert.equal(routeProvider(request(), [base("BAD_WINDOW", 1, { coverage: { validFrom: "2010-01-01", validTo: "ZZZZ" } as never })]).status, "NO_ELIGIBLE_PROVIDER");
+  assert.equal(routeProvider(request(), [base("REVERSED_WINDOW", 1, { coverage: { validFrom: "2020-01-01", validTo: "2010-01-01" } })]).status, "NO_ELIGIBLE_PROVIDER");
 });
