@@ -17,6 +17,26 @@ CREATE TABLE market_core.canonical_resolution_decisions (
   CHECK (status <> 'EXACT' OR (issuer_id IS NOT NULL AND instrument_id IS NOT NULL AND listing_id IS NOT NULL))
 );
 
+CREATE OR REPLACE FUNCTION market_core.validate_canonical_resolution_links()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=market_core,pg_catalog AS $$
+DECLARE instrument_issuer uuid; listing_instrument uuid;
+BEGIN
+  IF NEW.status = 'EXACT' THEN
+    RAISE EXCEPTION 'EXACT persistence requires an authenticated resolution writer';
+  END IF;
+  IF NEW.instrument_id IS NOT NULL THEN
+    SELECT issuer_id INTO instrument_issuer FROM market_core.instruments WHERE instrument_id=NEW.instrument_id;
+    IF instrument_issuer IS DISTINCT FROM NEW.issuer_id THEN RAISE EXCEPTION 'canonical instrument issuer mismatch'; END IF;
+  END IF;
+  IF NEW.listing_id IS NOT NULL THEN
+    SELECT instrument_id INTO listing_instrument FROM market_core.listings WHERE listing_id=NEW.listing_id;
+    IF listing_instrument IS DISTINCT FROM NEW.instrument_id THEN RAISE EXCEPTION 'canonical listing instrument mismatch'; END IF;
+  END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER canonical_resolution_links BEFORE INSERT ON market_core.canonical_resolution_decisions
+  FOR EACH ROW EXECUTE FUNCTION market_core.validate_canonical_resolution_links();
+
 CREATE OR REPLACE FUNCTION market_core.prevent_canonical_resolution_mutation()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=market_core,pg_catalog AS $$
 BEGIN RAISE EXCEPTION 'canonical resolution history is append-only'; END $$;
