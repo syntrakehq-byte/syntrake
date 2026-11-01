@@ -92,6 +92,11 @@ test("D5 integrated offline AAPL discovery -> Registry/D3 -> D4 -> R3-C -> worke
   let calls = 0;
   const capabilityToken = (await db.query("SELECT market_core.register_worker_instance($1,$2) AS token", ["d5-worker", "d5-instance"])).rows[0].token as string;
   const workerEvents: unknown[] = [];
+  const probe = new Client({ connectionString: `postgres://${workerRole}:${workerPassword}@localhost:5432/postgres` });
+  await probe.connect();
+  const heartbeatProbe = await probe.query("SELECT market_core.record_worker_heartbeat($1,$2,$3) AS ok", ["d5-worker", "d5-instance", capabilityToken]);
+  assert.equal(heartbeatProbe.rows[0].ok, true);
+  await probe.end();
   const worker = new AutonomousWorker({ workerId: "d5-worker", clientFactory: async () => new Client({ connectionString: `postgres://${workerRole}:${workerPassword}@localhost:5432/postgres` }), provider: offlineProvider, exchangeTimezone: "America/New_York", maxTasks: 1, maxPolls: 1, consumedCredits: "1", heartbeat: { instanceId: "d5-instance", capabilityToken }, onEvent: event => workerEvents.push(event) });
   const stats = await worker.run();
   assert.equal(stats.committed, 1, JSON.stringify({ stats, workerEvents })); assert.equal(simulatedHttpCalls, 1);
