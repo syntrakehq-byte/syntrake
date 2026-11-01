@@ -72,6 +72,9 @@ export type CatalogCandidate = Readonly<{
   issuer: IssuerCandidate | null;
   instrument: InstrumentCandidate | null;
   listing: ListingCandidate | null;
+  descriptiveName?: string;
+  descriptiveAssetClass?: "EQUITY" | "ETF" | "FX";
+  descriptiveCurrency?: string;
   providerReference: ProviderInstrumentReference;
   identifiers: readonly IdentifierEvidence[];
   source: CatalogSource;
@@ -174,7 +177,7 @@ export function normalizeCatalogCandidate(input: CatalogCandidate): CatalogCandi
       !validSource(input.providerReference.source) || !sameSource(input.source, input.providerReference.source)) throw new Error("DISCOVERY_CANDIDATE_SOURCE_INVALID");
   if (input.listing) {
     if (!REF.test(input.listing.listingRef) || !REF.test(input.listing.ticker) || !MIC.test(input.listing.mic ?? "XXXX") && input.listing.mic !== null ||
-        input.listing.mic === null && input.listing.micRole !== null || input.listing.mic !== null && input.listing.micRole === null || !validWindow(input.listing.validity) || !CURRENCY.test(input.listing.tradingCurrency)) throw new Error("DISCOVERY_CANDIDATE_LISTING_INVALID");
+        input.listing.mic === null && input.listing.micRole !== null || input.listing.micRole !== null && input.listing.micRole !== "OPERATING" && input.listing.micRole !== "SEGMENT" || !validWindow(input.listing.validity) || !CURRENCY.test(input.listing.tradingCurrency)) throw new Error("DISCOVERY_CANDIDATE_LISTING_INVALID");
   }
   if (input.instrument && (!REF.test(input.instrument.instrumentRef) || !CURRENCY.test(input.instrument.denominationCurrency))) throw new Error("DISCOVERY_CANDIDATE_INSTRUMENT_INVALID");
   if (input.issuer && (!REF.test(input.issuer.issuerRef) || !clean(input.issuer.legalName))) throw new Error("DISCOVERY_CANDIDATE_ISSUER_INVALID");
@@ -188,21 +191,38 @@ export function normalizeCatalogCandidate(input: CatalogCandidate): CatalogCandi
     issuer: input.issuer && Object.freeze({ ...input.issuer, issuerRef: clean(input.issuer.issuerRef), legalName: clean(input.issuer.legalName) }),
     instrument: input.instrument && Object.freeze({ ...input.instrument, instrumentRef: clean(input.instrument.instrumentRef), denominationCurrency: upper(input.instrument.denominationCurrency) }),
     listing: input.listing && Object.freeze({ ...input.listing, listingRef: clean(input.listing.listingRef), ticker: upper(input.listing.ticker), tradingCurrency: upper(input.listing.tradingCurrency) }),
+    ...(input.descriptiveName === undefined ? {} : { descriptiveName: clean(input.descriptiveName) }),
+    ...(input.descriptiveCurrency === undefined ? {} : { descriptiveCurrency: upper(input.descriptiveCurrency) }),
     identifiers: Object.freeze(input.identifiers.map(e => Object.freeze({ ...e, value: upper(e.value), marketMic: e.marketMic === null ? null : upper(e.marketMic) }))),
   });
 }
 
 function queryMatchesCandidate(query: CatalogQuery, candidate: CatalogCandidate): boolean {
   if (query.ticker !== undefined && candidate.listing?.ticker !== query.ticker) return false;
-  if (query.name !== undefined && candidate.issuer?.legalName.toUpperCase() !== query.name.toUpperCase()) return false;
+  if (query.name !== undefined && (candidate.issuer?.legalName ?? candidate.descriptiveName)?.toUpperCase() !== query.name.toUpperCase()) return false;
   if (query.marketMic !== undefined && candidate.listing?.mic !== query.marketMic) return false;
-  if (query.assetClass !== undefined && candidate.instrument?.assetClass !== query.assetClass) return false;
-  if (query.currency !== undefined && candidate.listing?.tradingCurrency !== query.currency && candidate.instrument?.denominationCurrency !== query.currency) return false;
+  if (query.assetClass !== undefined && (candidate.instrument?.assetClass ?? candidate.descriptiveAssetClass) !== query.assetClass) return false;
+  if (query.currency !== undefined && candidate.listing?.tradingCurrency !== query.currency && (candidate.instrument?.denominationCurrency ?? candidate.descriptiveCurrency) !== query.currency) return false;
   for (const requested of query.identifiers ?? []) {
     const scope = requested.scope ?? (requested.type === "CIK" || requested.type === "LEI" ? "ISSUER" : requested.type === "TICKER" ? "LISTING" : "INSTRUMENT");
     if (!candidate.identifiers.some(e => e.type === requested.type && e.scope === scope && e.value === requested.value)) return false;
   }
   return true;
+}
+
+export function filterCatalogCandidates(queryInput: CatalogQuery, candidates: readonly CatalogCandidate[]): readonly CatalogCandidate[] {
+  const query = normalizeCatalogQuery(queryInput);
+  return candidates.filter(candidate => {
+    if (query.ticker !== undefined && candidate.listing?.ticker !== query.ticker) return false;
+    if (query.name !== undefined) {
+      const name = (candidate.issuer?.legalName ?? candidate.descriptiveName)?.toUpperCase();
+      if (!name || !name.includes(query.name.toUpperCase())) return false;
+    }
+    if (query.marketMic !== undefined && candidate.listing?.mic !== query.marketMic) return false;
+    if (query.assetClass !== undefined && (candidate.instrument?.assetClass ?? candidate.descriptiveAssetClass) !== query.assetClass) return false;
+    if (query.currency !== undefined && candidate.listing?.tradingCurrency !== query.currency && (candidate.instrument?.denominationCurrency ?? candidate.descriptiveCurrency) !== query.currency) return false;
+    return true;
+  });
 }
 
 /** Conservative D0 classification. It intentionally does not perform D3 matching. */

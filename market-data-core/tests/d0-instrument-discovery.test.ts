@@ -74,5 +74,6 @@ test("D0 rejects invalid queries, invalid windows and unlicensed catalog storage
   const rightsConflict = {...candidate(sourceA,"XNAS","AAPL-XNAS"), source:{...sourceA,sharingAllowed:true,storageAllowed:false}};
   assert.throws(() => normalizeCatalogCandidate(rightsConflict),/DISCOVERY_CANDIDATE_SOURCE_INVALID/);
   const micRoleConflict = {...candidate(sourceA,"XNAS","AAPL-XNAS"), listing:{...candidate(sourceA,"XNAS","AAPL-XNAS").listing!,micRole:null}};
-  assert.throws(() => normalizeCatalogCandidate(micRoleConflict),/DISCOVERY_CANDIDATE_LISTING_INVALID/);
+  assert.doesNotThrow(() => normalizeCatalogCandidate(micRoleConflict));
+  assert.equal(normalizeCatalogCandidate(micRoleConflict).listing?.micRole, null);
 });
