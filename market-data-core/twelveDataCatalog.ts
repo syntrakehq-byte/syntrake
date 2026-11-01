@@ -14,8 +14,10 @@ export function createTwelveDataCatalogConnector(input: Readonly<{
   endpoint?: string;
   apiKeyEnv?: string;
 }>): CatalogConnector {
-  const transport = input.transport ?? fetch;
+  if (!input.transport) throw new CatalogConnectorError("PROVIDER_UNAVAILABLE");
+  const transport = input.transport;
   const endpoint = input.endpoint ?? "https://api.twelvedata.com/symbol_search";
+  if (input.source.providerKey !== "TWELVE_DATA" || new URL(endpoint).origin !== "https://api.twelvedata.com") throw new CatalogConnectorError("INVALID_REQUEST");
   requireCatalogLicense(input.source);
   const request = async (params: URLSearchParams, query: CatalogQuery, lookupReference?: string): Promise<ReturnType<typeof resultForCandidates>> => {
     const apiKey = input.env[input.apiKeyEnv ?? "TWELVE_DATA_API_KEY"];
@@ -29,7 +31,7 @@ export function createTwelveDataCatalogConnector(input: Readonly<{
     let body: unknown;
     try { body = JSON.parse(await response.text()) as unknown; } catch { throw new CatalogConnectorError("INVALID_PROVIDER_RESPONSE"); }
     const root = record(body);
-    if (!root || !Array.isArray(root.data)) throw new CatalogConnectorError("INVALID_PROVIDER_RESPONSE");
+    if (!root || root.status !== "ok" || !Array.isArray(root.data)) throw new CatalogConnectorError("INVALID_PROVIDER_RESPONSE");
     const candidates = root.data.map(item => fromTwelveData(item, input.source));
     if (lookupReference && !candidates.some(candidate => candidate.providerReference.providerReference === lookupReference)) throw new CatalogConnectorError("NO_RESULTS");
     return resultForCandidates(query, candidates);
@@ -39,10 +41,10 @@ export function createTwelveDataCatalogConnector(input: Readonly<{
     search: async query => {
       const normalized = { ...query, ...(query.ticker ? { ticker: query.ticker } : {}) };
       const params = new URLSearchParams();
-      if (normalized.ticker) params.set("symbol", normalized.ticker);
-      if (normalized.name) params.set("search", normalized.name);
-      if (normalized.marketMic) params.set("mic_code", normalized.marketMic);
-      if (normalized.currency) params.set("currency", normalized.currency);
+      const searchTerm = normalized.ticker ?? normalized.name ?? normalized.identifiers?.[0]?.value;
+      if (!searchTerm) throw new CatalogConnectorError("INVALID_REQUEST");
+      params.set("symbol", searchTerm);
+      params.set("outputsize", "100");
       return request(params, normalized);
     },
     lookup: async (providerReference, scope = "LISTING") => request(new URLSearchParams({ symbol: providerReference }), { ticker: providerReference, identifiers: [{ type: "PROVIDER_NATIVE", value: providerReference, scope }] }, providerReference),
@@ -55,19 +57,21 @@ function fromTwelveData(value: unknown, source: CatalogSource): CatalogCandidate
   const symbol = text(row.symbol, "symbol");
   const mic = optionalText(row.mic_code)?.toUpperCase() ?? null;
   const micRole = row.mic_role === null || row.mic_role === undefined ? null : row.mic_role;
-  if (mic !== null && !validMicRole(micRole)) throw new CatalogConnectorError("INVALID_PROVIDER_RESPONSE");
-  if (mic === null && micRole !== null) throw new CatalogConnectorError("INVALID_PROVIDER_RESPONSE");
+  if (micRole !== null && !validMicRole(micRole)) throw new CatalogConnectorError("INVALID_PROVIDER_RESPONSE");
   const currency = text(row.currency, "currency").toUpperCase();
   const type = text(row.instrument_type, "instrument_type");
   const assetClass = type === "ETF" ? "ETF" : type === "Common Stock" ? "EQUITY" : type === "Physical Currency" ? "FX" : null;
   if (!assetClass) throw new CatalogConnectorError("INVALID_PROVIDER_RESPONSE");
   const listingRef = `${source.providerKey}:${symbol}:${mic ?? "NO_MIC"}`;
   const candidate: CatalogCandidate = {
-    issuer: { issuerRef: `${source.providerKey}:issuer:${symbol}`, legalName: text(row.instrument_name, "instrument_name") },
-    instrument: { instrumentRef: `${source.providerKey}:instrument:${symbol}`, assetClass, denominationCurrency: currency },
+    issuer: null,
+    instrument: null,
     listing: { listingRef, ticker: symbol, mic, micRole: micRole as MicRole | null, tradingCurrency: currency, validity: { validFrom: null, validTo: null } },
     providerReference: { providerKey: source.providerKey, providerReference: symbol, identifierType: "PROVIDER_NATIVE", scope: "LISTING", source, validity: { validFrom: null, validTo: null } },
     identifiers: [{ type: "PROVIDER_NATIVE", value: symbol, scope: "LISTING", source, evidenceKind: "PROVIDER_CATALOG", strength: "STRONG", verified: false, validity: { validFrom: null, validTo: null }, marketMic: mic }],
+    descriptiveName: text(row.instrument_name, "instrument_name"),
+    descriptiveAssetClass: assetClass,
+    descriptiveCurrency: currency,
     source,
   };
   return normalizeCatalogCandidate(candidate);
