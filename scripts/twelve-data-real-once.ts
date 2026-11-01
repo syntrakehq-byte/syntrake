@@ -2,6 +2,7 @@ import { canonicalIdentity, resolveProviderAlias } from "../market-data-core/ide
 import { runTwelveDataRealOnce } from "../market-data-core/realTwelveDataOnce";
 import { execFileSync } from "node:child_process";
 
+async function main(): Promise<void> {
 if (process.env.PRODUCTION === "true" || process.env.VERCEL_ENV === "production") {
   throw new Error("R3E1_REAL_CALL_FORBIDDEN_IN_PRODUCTION");
 }
@@ -17,3 +18,9 @@ const alias = resolveProviderAlias("TWELVE_DATA", "AAPL", "2026-01-01", [{
 if (alias.status !== "EXACT") throw new Error("R3E1_ALIAS_NOT_EXACT");
 const result = await runTwelveDataRealOnce({ env: process.env, checkoutSha, instrument, sourceAlias: alias, asOf: "2026-01-01" });
 console.log(JSON.stringify({ provider: result.series.provider, symbol: "AAPL", mic: "XNAS", currency: "USD", interval: "1day", marketDate: result.series.candles.at(-1)?.marketDate, usage: result.usage }));
+}
+
+main().catch(error => {
+  console.error(error instanceof Error ? error.message : "R3E1_REAL_CALL_FAILED");
+  process.exitCode = 1;
+});
