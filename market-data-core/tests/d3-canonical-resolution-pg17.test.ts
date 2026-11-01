@@ -1,0 +1,72 @@
+import test, { after, before } from "node:test";
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import pg from "pg";
+import { resolveCanonicalIdentity } from "../canonicalIdentityResolver";
+import { createTwelveDataCatalogConnector } from "../twelveDataCatalog";
+import type { CatalogSource } from "../instrumentDiscovery";
+
+const db = new pg.Client({ connectionString: process.env.DATABASE_URL ?? "postgres://postgres:postgres@localhost:5432/postgres" });
+const base = "supabase/release-candidates/20261031150000_r3b_market_core_candidate.sql";
+const d1 = "supabase/release-candidates/20261101110000_r3d1_registry_identifiers_candidate.sql";
+const d3 = "supabase/release-candidates/20261101130000_r3d3_canonical_resolution_candidate.sql";
+const ids = { provider: "d3000000-0000-0000-0000-000000000001", rights: "d3000000-0000-0000-0000-000000000002", issuer: "d3000000-0000-0000-0000-000000000003", instrument: "d3000000-0000-0000-0000-000000000004", listing: "d3000000-0000-0000-0000-000000000005", source: "d3000000-0000-0000-0000-000000000006", snapshot: "d3000000-0000-0000-0000-000000000007", candidate: "d3000000-0000-0000-0000-000000000008", alias: "d3000000-0000-0000-0000-000000000010" };
+
+before(async () => {
+  await db.connect();
+  assert.match((await db.query("SELECT current_setting('server_version') AS version")).rows[0].version, /^17\./);
+  await db.query(await readFile(resolve(process.cwd(), base), "utf8"));
+  await db.query(await readFile(resolve(process.cwd(), d1), "utf8"));
+  await db.query(await readFile(resolve(process.cwd(), d3), "utf8"));
+  await db.query("INSERT INTO market_core.providers VALUES ($1,'TWELVE_DATA','ACTIVE')", [ids.provider]);
+  await db.query("INSERT INTO market_core.license_policies VALUES ($1,'d3-cache',true,false,NULL)", [ids.rights]);
+  await db.query("INSERT INTO market_core.issuers VALUES ($1,'Apple Inc.')", [ids.issuer]);
+  await db.query("INSERT INTO market_core.instruments VALUES ($1,$2,'EQUITY','USD')", [ids.instrument, ids.issuer]);
+  await db.query("INSERT INTO market_core.listings(listing_id,instrument_id,mic,mic_role,trading_currency,ticker,valid_from) VALUES ($1,$2,'XNAS','OPERATING','USD','AAPL',DATE '1980-12-12')", [ids.listing, ids.instrument]);
+  await db.query("INSERT INTO market_core.provider_aliases(provider_alias_id,provider_id,provider_reference,listing_id,valid_from,valid_to,identifier_type,identifier_scope) VALUES ($1,$2,'AAPL',$3,DATE '1980-12-12',NULL,'TICKER','LISTING')", [ids.alias, ids.provider, ids.listing]);
+  await db.query("INSERT INTO market_core.provider_alias_observations(provider_alias_id,known_at,recorded_at) VALUES ($1,TIMESTAMPTZ '2025-01-01 00:00:00Z',TIMESTAMPTZ '2025-01-01 00:00:00Z')", [ids.alias]);
+  await db.query("INSERT INTO market_core.catalog_sources VALUES ($1,$2,'D3_SOURCE','LISTINGS',$3,true,false,NULL,clock_timestamp())", [ids.source, ids.provider, ids.rights]);
+  await db.query("INSERT INTO market_core.catalog_snapshots VALUES ($1,$2,'d3-1',TIMESTAMPTZ '2025-01-01 00:00:00Z',DATE '1980-12-12',NULL,repeat('a',64),'REVIEW_REQUIRED',TIMESTAMPTZ '2025-01-01 00:00:00Z')", [ids.snapshot, ids.source]);
+  await db.query("INSERT INTO market_core.catalog_candidates(candidate_id,snapshot_id,provider_reference,provider_identifier_type,provider_scope,ticker,mic,mic_role,trading_currency,created_at) VALUES ($1,$2,'AAPL','PROVIDER_NATIVE','LISTING','AAPL','XNAS','OPERATING','USD',clock_timestamp())", [ids.candidate, ids.snapshot]);
+  await db.query("INSERT INTO market_core.instrument_identifiers(identifier_id,identifier_type,identifier_value,identifier_scope,issuer_id,source_id,snapshot_id,evidence_kind,verified,created_at) VALUES ('d3000000-0000-0000-0000-000000000011','CIK','0000320193','ISSUER',$1,$2,$3,'OFFICIAL_REGISTRY',true,clock_timestamp())", [ids.issuer, ids.source, ids.snapshot]);
+  await db.query("INSERT INTO market_core.instrument_identifiers(identifier_id,identifier_type,identifier_value,identifier_scope,instrument_id,source_id,snapshot_id,evidence_kind,verified,created_at) VALUES ('d3000000-0000-0000-0000-000000000012','ISIN','US0378331005','INSTRUMENT',$1,$2,$3,'IDENTIFIER_RECORD',true,clock_timestamp())", [ids.instrument, ids.source, ids.snapshot]);
+  await db.query("INSERT INTO market_core.instrument_identifiers(identifier_id,identifier_type,identifier_value,identifier_scope,listing_id,source_id,snapshot_id,evidence_kind,verified,created_at) VALUES ('d3000000-0000-0000-0000-000000000013','FIGI','BBG000B9XRY4','LISTING',$1,$2,$3,'EXCHANGE_REFERENCE',true,clock_timestamp())", [ids.listing, ids.source, ids.snapshot]);
+});
+
+after(async () => {
+  try { await db.query("RESET ROLE"); await db.query("DROP SCHEMA IF EXISTS market_core CASCADE"); await db.query("DROP EXTENSION IF EXISTS btree_gist"); for (const role of ["market_core_catalog_ingest", "market_core_catalog_reader", "market_core_registry_reviewer", "market_core_reader", "market_core_ingest", "anon", "authenticated"]) await db.query(`DROP ROLE IF EXISTS ${role}`); } finally { await db.end(); }
+});
+
+test("D3 PG17 keeps resolution writes fail-closed and rejects forged EXACT links", async () => {
+  const source: CatalogSource = { providerKey: "TWELVE_DATA", snapshotId: "snap-1", snapshotVersion: "1", observedAt: "2026-11-01T00:00:00Z", licensePolicyId: "d3-cache", storageAllowed: true, sharingAllowed: false };
+  const connector = createTwelveDataCatalogConnector({ env: { TWELVE_DATA_API_KEY: "offline-only" }, source, transport: async () => new Response(JSON.stringify({ status: "ok", data: [{ symbol: "AAPL", instrument_name: "Apple Inc.", exchange: "NASDAQ", mic_code: "XNAS", exchange_timezone: "America/New_York", country: "United States", currency: "USD", instrument_type: "Common Stock", access: "full" }] }), { status: 200 }) });
+  const candidate = (await connector.search({ ticker: "AAPL", marketMic: "XNAS" })).candidates[0];
+  const canonicalRows = (await db.query("SELECT ii.identifier_id,ii.identifier_type AS type,ii.identifier_value AS value,ii.identifier_scope AS scope,ii.verified,ii.source_id,ii.snapshot_id,ii.valid_from,ii.valid_to,cs.rights_policy_id,cs.storage_allowed,to_char(csn.observed_at,'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') AS observed_at,COALESCE(ii.issuer_id,i.issuer_id) AS issuer_id,COALESCE(ii.instrument_id,l.instrument_id) AS instrument_id,ii.listing_id,to_char(csn.valid_from,'YYYY-MM-DD') AS snapshot_valid_from FROM market_core.instrument_identifiers ii JOIN market_core.catalog_sources cs ON cs.source_id=ii.source_id JOIN market_core.catalog_snapshots csn ON csn.snapshot_id=ii.snapshot_id LEFT JOIN market_core.instruments i ON i.instrument_id=ii.instrument_id LEFT JOIN market_core.listings l ON l.listing_id=ii.listing_id ORDER BY ii.identifier_type")).rows;
+  const aliasRows = (await db.query("SELECT p.provider_key,a.provider_reference,a.listing_id,to_char(a.valid_from,'YYYY-MM-DD') AS valid_from,to_char(a.valid_to,'YYYY-MM-DD') AS valid_to,to_char(o.known_at,'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') AS known_at FROM market_core.provider_aliases a JOIN market_core.providers p ON p.provider_id=a.provider_id JOIN market_core.provider_alias_observations o ON o.provider_alias_id=a.provider_alias_id WHERE a.provider_reference=$1", ["AAPL"])).rows;
+  const listingRow = (await db.query("SELECT listing_id,ticker,mic,mic_role,trading_currency,to_char(valid_from,'YYYY-MM-DD') AS valid_from,to_char(valid_to,'YYYY-MM-DD') AS valid_to FROM market_core.listings WHERE listing_id=$1", [ids.listing])).rows[0];
+  const chain = (await db.query("SELECT l.listing_id,l.ticker,l.mic,l.mic_role,l.trading_currency,to_char(l.valid_from,'YYYY-MM-DD') AS valid_from,to_char(l.valid_to,'YYYY-MM-DD') AS valid_to,l.instrument_id,i.issuer_id,i.asset_class,i.denomination_currency FROM market_core.listings l JOIN market_core.instruments i ON i.instrument_id=l.instrument_id JOIN market_core.issuers isr ON isr.issuer_id=i.issuer_id WHERE l.listing_id=$1", [ids.listing])).rows[0];
+  const registry = { issuerRef: chain.issuer_id, instrumentRef: chain.instrument_id, instrumentIssuerRef: chain.issuer_id, listingRef: chain.listing_id, assetClass: chain.asset_class, denominationCurrency: chain.denomination_currency, listing: { listingRef: chain.listing_id, ticker: chain.ticker, mic: chain.mic, micRole: chain.mic_role, tradingCurrency: chain.trading_currency, validity: { validFrom: chain.valid_from, validTo: chain.valid_to ?? null } }, validity: { validFrom: chain.valid_from, validTo: null }, aliases: aliasRows.map(a => ({ providerKey: a.provider_key, providerReference: a.provider_reference, listingRef: a.listing_id, observedAt: a.known_at, validity: { validFrom: a.valid_from, validTo: a.valid_to ?? null } })), identifiers: canonicalRows.map(e => ({ evidenceId: e.identifier_id, type: e.type, value: e.value, scope: e.scope, source: "D1_REGISTRY" as const, verified: e.verified, sourceId: e.source_id, snapshotId: e.snapshot_id, rightsPolicyId: e.rights_policy_id, observedAt: e.observed_at, issuerRef: e.scope === "ISSUER" ? e.issuer_id : null, instrumentRef: e.scope === "ISSUER" ? null : e.instrument_id, listingRef: e.scope === "LISTING" ? e.listing_id : null, validity: { validFrom: e.valid_from ?? e.snapshot_valid_from, validTo: e.valid_to ?? null } })) };
+  const resolved = resolveCanonicalIdentity({ candidate, registry: [registry], asOf: "2026-11-01T00:00:00Z" });
+  assert.equal(resolved.status, "EXACT", `${resolved.reasonCode}:${JSON.stringify(resolved.evidence)}`);
+  assert.notEqual(resolveCanonicalIdentity({ candidate, registry: [{ ...registry, instrumentIssuerRef: "issuer-b" }], asOf: "2026-11-01T00:00:00Z" }).status, "EXACT");
+  const future = { ...registry, aliases: registry.aliases.map(a => ({ ...a, observedAt: "2027-01-01T00:00:00Z" })), identifiers: registry.identifiers.map(e => ({ ...e, observedAt: "2027-01-01T00:00:00Z" })) };
+  assert.notEqual(resolveCanonicalIdentity({ candidate, registry: [future], asOf: "2026-11-01T00:00:00Z" }).status, "EXACT");
+  await db.query("INSERT INTO market_core.provider_aliases(provider_alias_id,provider_id,provider_reference,listing_id,valid_from,identifier_type,identifier_scope) VALUES ('d3000000-0000-0000-0000-000000000014',$1,'AAPL-FUTURE',$2,DATE '1980-12-12','TICKER','LISTING')", [ids.provider, ids.listing]);
+  await db.query("INSERT INTO market_core.provider_alias_observations(provider_alias_id,known_at,recorded_at) VALUES ('d3000000-0000-0000-0000-000000000014',TIMESTAMPTZ '2027-01-01 00:00:00Z',TIMESTAMPTZ '2027-01-01 00:00:00Z')");
+  const futureAliasRow = (await db.query("SELECT p.provider_key,a.provider_reference,a.listing_id,to_char(a.valid_from,'YYYY-MM-DD') AS valid_from,to_char(a.valid_to,'YYYY-MM-DD') AS valid_to,to_char(o.known_at,'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') AS known_at FROM market_core.provider_aliases a JOIN market_core.providers p ON p.provider_id=a.provider_id JOIN market_core.provider_alias_observations o ON o.provider_alias_id=a.provider_alias_id WHERE a.provider_reference='AAPL-FUTURE'")).rows[0];
+  const futureAliasRegistry = { ...registry, aliases: [{ providerKey: futureAliasRow.provider_key, providerReference: futureAliasRow.provider_reference, listingRef: futureAliasRow.listing_id, observedAt: futureAliasRow.known_at, validity: { validFrom: futureAliasRow.valid_from, validTo: futureAliasRow.valid_to ?? null } }] };
+  const futureAliasCandidate = { ...candidate, providerReference: { ...candidate.providerReference, providerReference: "AAPL-FUTURE" } };
+  assert.notEqual(resolveCanonicalIdentity({ candidate: futureAliasCandidate, registry: [futureAliasRegistry], asOf: "2026-11-01T00:00:00Z" }).status, "EXACT");
+  assert.equal(resolveCanonicalIdentity({ candidate, registry: [{ ...registry, identifiers: registry.identifiers.map(e => ({ ...e, verified: false })) }], asOf: "2026-11-01T00:00:00Z" }).status, "REVIEW_REQUIRED");
+  assert.equal(resolveCanonicalIdentity({ candidate: { ...candidate, descriptiveAssetClass: "ETF" }, registry: [registry], asOf: "2026-11-01T00:00:00Z" }).status, "REVIEW_REQUIRED");
+  assert.equal(resolveCanonicalIdentity({ candidate: { ...candidate, providerReference: { ...candidate.providerReference, validity: { validFrom: "1980-12-12", validTo: "2025-01-01" } } }, registry: [registry], asOf: "2026-11-01T00:00:00Z" }).status, "REVIEW_REQUIRED");
+  assert.equal(resolveCanonicalIdentity({ candidate: { ...candidate, identifiers: [{ type: "ISIN", value: "US5949181045", scope: "INSTRUMENT", source, evidenceKind: "PROVIDER_CATALOG", strength: "SUPPORTING", verified: false, validity: { validFrom: "1980-12-12", validTo: null }, marketMic: null }] }, registry: [registry], asOf: "2026-11-01T00:00:00Z" }).status, "REVIEW_REQUIRED");
+  await db.query("INSERT INTO market_core.canonical_resolution_decisions VALUES ($1,$2,'REVIEW_REQUIRED','EVIDENCE_INSUFFICIENT',NULL,NULL,NULL,repeat('a',64),'operator',clock_timestamp())", ["d3000000-0000-0000-0000-000000000009", ids.candidate]);
+  await assert.rejects(db.query("UPDATE market_core.canonical_resolution_decisions SET reason_code='FORGED' WHERE candidate_id=$1", [ids.candidate]));
+  await db.query("SET ROLE market_core_registry_reviewer");
+  assert.equal((await db.query("SELECT status,listing_id FROM market_core.canonical_resolution_decisions WHERE candidate_id=$1", [ids.candidate])).rows[0].status, "REVIEW_REQUIRED");
+  await assert.rejects(db.query("INSERT INTO market_core.canonical_resolution_decisions VALUES ('d3000000-0000-0000-0000-00000000000a',$1,'EXACT','FORGED',$2,$3,$4,repeat('b',64),'arbitrary',clock_timestamp())", [ids.candidate, ids.issuer, ids.instrument, ids.listing]));
+  await db.query("SET ROLE market_core_catalog_ingest");
+  await assert.rejects(db.query("INSERT INTO market_core.canonical_resolution_decisions VALUES ('d3000000-0000-0000-0000-00000000000b',$1,'EXACT','FORGED',$2,$3,$4,repeat('c',64),'ingest',clock_timestamp())", [ids.candidate, ids.issuer, ids.instrument, ids.listing]));
+});
