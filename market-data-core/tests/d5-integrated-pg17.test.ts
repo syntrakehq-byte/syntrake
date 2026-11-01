@@ -92,14 +92,15 @@ test("D5 integrated offline AAPL discovery -> Registry/D3 -> D4 -> R3-C -> worke
   let calls = 0;
   const capabilityToken = (await db.query("SELECT market_core.register_worker_instance($1,$2) AS token", ["d5-worker", "d5-instance"])).rows[0].token as string;
   const workerEvents: unknown[] = [];
+  let workerDbError: string | null = null;
   const probe = new Client({ connectionString: `postgres://${workerRole}:${workerPassword}@localhost:5432/postgres` });
   await probe.connect();
   const heartbeatProbe = await probe.query("SELECT market_core.record_worker_heartbeat($1,$2,$3) AS ok", ["d5-worker", "d5-instance", capabilityToken]);
   assert.equal(heartbeatProbe.rows[0].ok, true);
   await probe.end();
-  const worker = new AutonomousWorker({ workerId: "d5-worker", clientFactory: async () => new Client({ connectionString: `postgres://${workerRole}:${workerPassword}@localhost:5432/postgres` }), provider: offlineProvider, exchangeTimezone: "America/New_York", maxTasks: 1, maxPolls: 1, consumedCredits: "1", heartbeat: { instanceId: "d5-instance", capabilityToken }, onEvent: event => workerEvents.push(event) });
+  const worker = new AutonomousWorker({ workerId: "d5-worker", clientFactory: async () => { const client = new Client({ connectionString: `postgres://${workerRole}:${workerPassword}@localhost:5432/postgres` }); const originalQuery = client.query.bind(client); Object.defineProperty(client, "query", { value: async (...args: Parameters<Client["query"]>) => { try { return await originalQuery(...args); } catch (error) { workerDbError = error instanceof Error ? error.message : String(error); throw error; } } }); return client; }, provider: offlineProvider, exchangeTimezone: "America/New_York", maxTasks: 1, maxPolls: 1, consumedCredits: "1", heartbeat: { instanceId: "d5-instance", capabilityToken }, onEvent: event => workerEvents.push(event) });
   const stats = await worker.run();
-  assert.equal(stats.committed, 1, JSON.stringify({ stats, workerEvents })); assert.equal(simulatedHttpCalls, 1);
+  assert.equal(stats.committed, 1, JSON.stringify({ stats, workerEvents, workerDbError })); assert.equal(simulatedHttpCalls, 1);
   const result = { state: "COMMITTED" as const };
   const saved = await db.query("SELECT o.listing_id,o.provider_id,o.rights_policy_id,o.market_date,r.revision_id,r.close_value::text AS close FROM market_core.market_observations o JOIN market_core.market_observation_revisions r USING(observation_id) WHERE o.listing_id=$1", [ids.listing]);
   assert.equal(saved.rows.length, 1); assert.equal(saved.rows[0].listing_id, ids.listing); assert.equal(saved.rows[0].close, "105.500000000000"); assert.equal((await db.query("SELECT state FROM market_core.ingest_jobs WHERE job_id=$1", [ids.job])).rows[0].state, "COMMITTED");
