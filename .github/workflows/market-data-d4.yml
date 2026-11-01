@@ -1,0 +1,23 @@
+name: market-data-d4
+
+on:
+  push:
+    paths: ["market-data-core/**", "package.json", ".github/workflows/market-data-d4.yml"]
+  pull_request:
+    paths: ["market-data-core/**", "package.json", ".github/workflows/market-data-d4.yml"]
+
+jobs:
+  d4:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck:market-data
+      - run: npm run test:market-data:d4
+      - run: npm run test:market-data:d3
+      - run: npm run test:market-data:d2
+      - run: npm run test:market-data
