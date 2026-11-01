@@ -18,6 +18,7 @@
     "test:market-data": "tsx --test market-data-core/tests/r3a.test.ts market-data-core/tests/d0-instrument-discovery.test.ts",
     "typecheck:market-data": "tsc -p tsconfig.market-data.json --noEmit",
     "test:market-data:r3b": "tsx --test market-data-core/tests/r3b-pg17.test.ts",
+    "test:market-data:d1": "tsx --test --test-timeout=20000 market-data-core/tests/d1-registry-pg17.test.ts",
     "test:market-data:r3c": "tsx --test market-data-core/tests/coordinator.test.ts market-data-core/tests/r3c-pg17.test.ts",
     "test:market-data:r3d1": "tsx --test --test-timeout=15000 market-data-core/tests/autonomousWorker.test.ts market-data-core/tests/r3c-offline-e2e-pg17.test.ts",
     "test:market-data:r3d2": "tsx --test --test-timeout=15000 market-data-core/tests/supervisor.test.ts market-data-core/tests/r3d2-pg17.test.ts",

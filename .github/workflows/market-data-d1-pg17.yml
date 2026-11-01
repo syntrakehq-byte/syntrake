@@ -1,0 +1,38 @@
+name: market-data-d1-pg17
+on:
+  pull_request:
+    paths:
+      - "supabase/release-candidates/20261031150000_r3b_market_core_candidate.sql"
+      - "supabase/release-candidates/20261101110000_r3d1_registry_identifiers_candidate.sql"
+      - "market-data-core/tests/d1-registry-pg17.test.ts"
+      - "package.json"
+      - ".github/workflows/market-data-d1-pg17.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  candidate-pg17:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with: { node-version: "22", cache: npm }
+      - run: npm ci
+      - name: Assert PostgreSQL 17
+        run: psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -tAc "SELECT current_setting('server_version') LIKE '17.%'" | tr -d ' ' | grep -qx t
+        env: { PGPASSWORD: postgres }
+      - run: npm run typecheck:market-data
+      - run: npm run test:market-data:d1
+      - run: npm run test:market-data
+      - run: npm run test:market-data:r3e1
