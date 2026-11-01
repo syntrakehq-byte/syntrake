@@ -41,6 +41,16 @@ test("R3-E1 simulated 401/403/429/timeout are sanitized and never retried", asyn
   assert.equal(calls,1);
 });
 
+test("R3-E1 classifies HTTP 400/404/422 and 500 without exposing response data", async () => {
+  const legacyReady = {...base,SYNTRAKE_R3E1_REAL_CALL_ENABLED:undefined,VERCEL_GIT_COMMIT_REF:"feat/r3-market-data-core-20261030",SYNTRAKE_R3_PROVIDER_ENABLED:"enabled",SYNTRAKE_R3_PREVIEW_APPROVED_SHA:base.VERCEL_GIT_COMMIT_SHA};
+  for (const [status, code] of [[400,"INVALID_REQUEST"],[404,"INVALID_REQUEST"],[422,"INVALID_REQUEST"],[500,"PROVIDER_UNAVAILABLE"]] as const) {
+    await assert.rejects(
+      fetchDailySeries({env:legacyReady,instrument,sourceAlias:alias,asOf:"2026-01-01",outputSize:1,transport:async()=>new Response("private-body-apikey=secret",{status,headers:{"x-private":"secret"}})}),
+      error => error instanceof Error && error.message === `${code} HTTP_${status}` && !error.message.includes("secret"),
+    );
+  }
+});
+
 test("R3-E1 sanitizes adversarial credit headers to null", async () => {
   const legacyReady = {...base,SYNTRAKE_R3E1_REAL_CALL_ENABLED:undefined,VERCEL_GIT_COMMIT_REF:"feat/r3-market-data-core-20261030",SYNTRAKE_R3_PROVIDER_ENABLED:"enabled",SYNTRAKE_R3_PREVIEW_APPROVED_SHA:base.VERCEL_GIT_COMMIT_SHA};
   let usage;

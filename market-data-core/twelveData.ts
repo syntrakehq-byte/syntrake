@@ -190,9 +190,15 @@ export async function fetchDailySeries(input: Readonly<{
   } catch {
     throw new MarketDataError("PROVIDER_UNAVAILABLE");
   }
-  if (response.status === 429) throw new MarketDataError("RATE_LIMITED", retryAfter(response));
-  if (response.status === 401 || response.status === 403) throw new MarketDataError("PROVIDER_REJECTED");
-  if (!response.ok) throw new MarketDataError("PROVIDER_UNAVAILABLE");
+  if (response.status === 429) throw new MarketDataError("RATE_LIMITED", retryAfter(response), 429);
+  if (response.status === 401 || response.status === 403) throw new MarketDataError("PROVIDER_REJECTED", null, response.status);
+  if (response.status === 400 || response.status === 404 || response.status === 422) {
+    throw new MarketDataError("INVALID_REQUEST", null, response.status);
+  }
+  if (response.status >= 500 && response.status <= 599) {
+    throw new MarketDataError("PROVIDER_UNAVAILABLE", null, response.status);
+  }
+  if (!response.ok) throw new MarketDataError("PROVIDER_UNAVAILABLE", null, response.status);
   input.onResponseHeaders?.({
     remaining: sanitizeCreditHeader(response.headers.get("x-ratelimit-remaining") ?? response.headers.get("x-credits-remaining")),
     used: sanitizeCreditHeader(response.headers.get("x-ratelimit-used") ?? response.headers.get("x-credits-used")),
