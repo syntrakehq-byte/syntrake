@@ -7,6 +7,7 @@ import type { CanonicalIdentity } from "../canonicalIdentityResolver";
 import type { ProviderCapability } from "../providerCapabilities";
 
 const source: CatalogSource = { providerKey: "TWELVE_DATA", snapshotId: "r3-int-1", snapshotVersion: "1", observedAt: "2026-01-01T00:00:00Z", licensePolicyId: "r3-rights", storageAllowed: true, sharingAllowed: false };
+const priceEnv = { VERCEL_ENV: "preview", VERCEL_GIT_COMMIT_REF: "feat/r3-market-data-core-20261030", VERCEL_GIT_COMMIT_SHA: "a".repeat(40), SYNTRAKE_R3_PREVIEW_APPROVED_SHA: "a".repeat(40), SYNTRAKE_R3_PROVIDER_ENABLED: "enabled", SYNTRAKE_TWELVE_DATA_API_KEY: "offline-test-key-1234" };
 const ids = { issuer: "issuer-a", instrument: "instrument-a", listing: "listing-a" };
 const identity: CanonicalIdentity = {
   issuerRef: ids.issuer, instrumentRef: ids.instrument, instrumentIssuerRef: ids.issuer, listingRef: ids.listing,
@@ -27,7 +28,7 @@ const claim = { job_id: "00000000-0000-0000-0000-000000000001", demand_key: "dem
 
 test("R3 composition discovers Apple by name, resolves XNGS, routes and values 0.96 without ledger writes", async () => {
   let calls = 0;
-  const result = await discoverMarketDataForInvesting({ onboarding, capabilities: [capability], routing, claim, selectedProviderId: "provider-id", quantity: "0.96", provider: async () => { calls++; return { status: "AVAILABLE", provider: "TWELVE_DATA", instrument: { kind: "EQUITY", symbol: "AAPL", mic: "XNGS", currency: "USD" }, rights: { policyId: "r3-rights", display: true }, marketDate: "2026-01-02", value: [{ close: "100.50" }] }; } });
+  const result = await discoverMarketDataForInvesting({ onboarding, capabilities: [capability], routing, claim, selectedProviderId: "provider-id", quantity: "0.96", provider: async () => { calls++; return { status: "AVAILABLE", provider: "TWELVE_DATA", instrument: { kind: "EQUITY", symbol: "AAPL", mic: "XNGS", currency: "USD" }, sourceRefs: [{ provider: "TWELVE_DATA", originalSourceId: "time_series:EQUITY:XNGS:AAPL:USD:1day:none", requestId: null, sourceDocumentUri: null }], firstSeenAt: "2026-01-02T20:00:00Z", ingestedAt: "2026-01-02T20:00:00Z", asKnownAt: "2026-01-02T20:00:00Z", revisionId: "rev-1", schemaVersion: "1.0", quality: { flags: ["LATENCY_NOT_VERIFIED"], coverage: "FULL" }, rights: { policyId: "r3-rights", display: true, retentionUntil: null }, marketDate: "2026-01-02", value: [{ marketDate: "2026-01-02", open: "100.00", high: "110.00", low: "90.00", close: "100.50", volume: "42" }] }; } });
   assert.equal(result.status, "READY");
   assert.equal(result.candidates[0].listing?.mic, "XNGS");
   assert.equal(result.providerKey, "TWELVE_DATA");
@@ -52,8 +53,8 @@ test("R3 preview discovers AAPL with an empty Registry and uses the selected Twe
   let requested = "";
   const previewConnector = createTwelveDataCatalogConnector({ env: { TWELVE_DATA_API_KEY: "offline-only" }, source, transport: async url => { requested = url; return new Response(JSON.stringify({ status: "ok", data: [{ symbol: "AAPL", instrument_name: "Apple Inc.", exchange: "Nasdaq Global Select Market", mic_code: "XNGS", currency: "USD", instrument_type: "Common Stock" }] }), { status: 200 }); } });
   const found = await previewConnector.search({ name: "Apple" });
-  const candidate = found.candidates[0];
-  const result = await discoverMarketDataPreview({ connector: previewConnector, query: { name: "Apple" }, claim: { ...claim, listing_id: candidate.listing!.listingRef }, quantity: "0.96", rightsPolicyId: "preview-rights", provider: async () => ({ status: "AVAILABLE", provider: "TWELVE_DATA", instrument: { kind: "EQUITY", symbol: "AAPL", mic: "XNGS", currency: "USD" }, rights: { policyId: "preview-rights", display: true }, marketDate: "2026-01-02", value: [{ close: "100.50" }] }) });
+  assert.equal(found.candidates.length, 1);
+  const result = await discoverMarketDataPreview({ connector: previewConnector, query: { name: "Apple" }, quantity: "0.96", price: { env: priceEnv, quotaRemaining: 1, estimatedCredits: 1, rights: { policyId: "preview-rights", query: true, display: true, retentionUntil: null }, transport: async url => { assert.match(url, /time_series/); assert.match(url, /symbol=AAPL/); return new Response(JSON.stringify({ status: "ok", meta: { symbol: "AAPL", interval: "1day", currency: "USD", exchange_timezone: "America/New_York", type: "Common Stock", mic_code: "XNGS" }, values: [{ datetime: "2026-01-02", open: "100.00", high: "110.00", low: "90.00", close: "100.50", volume: "42" }] }), { status: 200 }); } } });
   assert.equal(result.status, "READY");
   assert.equal(result.identityVerified, false);
   assert.equal(result.positionValue, "96.48");
@@ -65,14 +66,18 @@ test("R3 preview requires explicit confirmation for multiple provider candidates
     { symbol: "AAPL", instrument_name: "Apple Inc.", exchange: "NASDAQ", mic_code: "XNAS", currency: "USD", instrument_type: "Common Stock" },
     { symbol: "AAPL", instrument_name: "Apple Inc.", exchange: "Nasdaq Global Select Market", mic_code: "XNGS", currency: "USD", instrument_type: "Common Stock" },
   ] }), { status: 200 }) });
-  const ambiguous = await discoverMarketDataPreview({ connector, query: { ticker: "AAPL" }, claim, quantity: "0.96", rightsPolicyId: "preview-rights", provider: async () => { throw new Error("must-not-call"); } });
+  const ambiguous = await discoverMarketDataPreview({ connector, query: { ticker: "AAPL" }, quantity: "0.96", price: { env: priceEnv, quotaRemaining: 1, estimatedCredits: 1, rights: { policyId: "preview-rights", query: true, display: true, retentionUntil: null }, transport: async () => { throw new Error("must-not-call"); } } });
   assert.equal(ambiguous.status, "AMBIGUOUS");
-  const selected = (await connector.search({ ticker: "AAPL", marketMic: "XNGS" })).candidates[0];
-  await assert.rejects(() => discoverMarketDataPreview({ connector, query: { ticker: "AAPL", marketMic: "XNGS" }, claim: { ...claim, listing_id: selected.listing!.listingRef }, quantity: "0.96", rightsPolicyId: "preview-rights", provider: async () => ({ status: "AVAILABLE", provider: "TWELVE_DATA", instrument: { kind: "EQUITY", symbol: "AAPL", mic: "XNGS", currency: "USD" }, rights: { policyId: "preview-rights", display: false }, marketDate: "2026-01-02", value: [{ close: "100.50" }] }) }), /INVALID_PROVIDER_RESPONSE/);
+  const blocked = await discoverMarketDataPreview({ connector, query: { ticker: "AAPL", marketMic: "XNGS" }, quantity: "0.96", price: { env: priceEnv, quotaRemaining: 1, estimatedCredits: 1, rights: { policyId: "preview-rights", query: true, display: false, retentionUntil: null } }, selectedCandidateIndex: 0 });
+  assert.equal(blocked.status, "ROUTING_BLOCKED");
+  const quotaBlocked = await discoverMarketDataPreview({ connector, query: { ticker: "AAPL", marketMic: "XNGS" }, quantity: "0.96", price: { env: priceEnv, quotaRemaining: 0, estimatedCredits: 1, rights: { policyId: "preview-rights", query: true, display: true, retentionUntil: null } }, selectedCandidateIndex: 0 });
+  assert.equal(quotaBlocked.status, "ROUTING_BLOCKED");
 });
 
 test("R3 preview distinguishes ETF candidates and rejects malformed envelopes", async () => {
   const connector = createTwelveDataCatalogConnector({ env: { TWELVE_DATA_API_KEY: "offline-only" }, source, transport: async () => new Response(JSON.stringify({ status: "ok", data: [{ symbol: "SPY", instrument_name: "SPDR S&P 500 ETF Trust", exchange: "NYSE Arca", mic_code: "ARCX", currency: "USD", instrument_type: "ETF" }] }), { status: 200 }) });
-  const candidate = (await connector.search({ ticker: "SPY", assetClass: "ETF" })).candidates[0];
-  await assert.rejects(() => discoverMarketDataPreview({ connector, query: { ticker: "SPY", assetClass: "ETF" }, claim: { ...claim, listing_id: candidate.listing!.listingRef }, quantity: "0.96", rightsPolicyId: "preview-rights", provider: async () => ({ status: "ERROR", provider: "TWELVE_DATA", instrument: { kind: "ETF", symbol: "SPY", mic: "ARCX", currency: "USD" }, rights: { policyId: "preview-rights", display: true }, marketDate: "2026-01-02", value: [{ close: "100.50" }] }) }), /INVALID_PROVIDER_RESPONSE/);
+  const ready = await discoverMarketDataPreview({ connector, query: { ticker: "SPY", assetClass: "ETF" }, quantity: "0.96", price: { env: priceEnv, quotaRemaining: 1, estimatedCredits: 1, rights: { policyId: "preview-rights", query: true, display: true, retentionUntil: null }, transport: async () => new Response(JSON.stringify({ status: "ok", meta: { symbol: "SPY", interval: "1day", currency: "USD", exchange_timezone: "America/New_York", type: "ETF", mic_code: "ARCX" }, values: [{ datetime: "2026-01-02", open: "100.00", high: "110.00", low: "90.00", close: "100.50", volume: "42" }] }), { status: 200 }) }, selectedCandidateIndex: 0 });
+  assert.equal(ready.status, "READY");
+  assert.equal(ready.identityVerified, false);
+  await assert.rejects(() => discoverMarketDataPreview({ connector, query: { ticker: "SPY", assetClass: "ETF" }, quantity: "0.96", price: { env: priceEnv, quotaRemaining: 1, estimatedCredits: 1, rights: { policyId: "preview-rights", query: true, display: true, retentionUntil: null }, transport: async () => new Response(JSON.stringify({ status: "ok", meta: { symbol: "SPY", interval: "1day", currency: "USD", exchange_timezone: "America/New_York", type: "ETF", mic_code: "ARCX" }, values: [] }), { status: 200 }) }, selectedCandidateIndex: 0 }), /INVALID_PROVIDER_RESPONSE/);
 });
