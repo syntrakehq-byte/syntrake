@@ -35,6 +35,7 @@
     "test:market-data:r3e0": "tsx --test --test-timeout=20000 market-data-core/tests/r3a.test.ts market-data-core/tests/r3c-offline-e2e-pg17.test.ts",
     "test:market-data:r3e1": "tsx --test --test-timeout=10000 market-data-core/tests/r3e1.test.ts market-data-core/tests/r3e1-cli.test.ts",
     "twelve-data:real:once": "tsx scripts/twelve-data-real-once.ts"
+    ,"twelve-data:real:rehearsal": "tsx scripts/twelve-data-real-rehearsal.ts"
   },
   "overrides": {
     "@clerk/shared": "3.47.7",
