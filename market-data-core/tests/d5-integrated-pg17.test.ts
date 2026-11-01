@@ -91,9 +91,10 @@ test("D5 integrated offline AAPL discovery -> Registry/D3 -> D4 -> R3-C -> worke
   await db.query("INSERT INTO market_core.ingest_jobs(job_id,demand_key,listing_id,provider_id,rights_policy_id,budget_period_id,estimated_credits,idempotency_key,state,attempt,max_attempts,next_run_at) VALUES ($1,$2,$3,$4,$5,$6,1,$7,'PENDING',0,3,clock_timestamp())", [ids.job, planned.demandKey, ids.listing, ids.provider, ids.rights, ids.budget, "d5-aapl"]);
   let calls = 0;
   const capabilityToken = (await db.query("SELECT market_core.register_worker_instance($1,$2) AS token", ["d5-worker", "d5-instance"])).rows[0].token as string;
-  const worker = new AutonomousWorker({ workerId: "d5-worker", clientFactory: async () => new Client({ connectionString: `postgres://${workerRole}:${workerPassword}@localhost:5432/postgres` }), provider: offlineProvider, exchangeTimezone: "America/New_York", maxTasks: 1, maxPolls: 1, consumedCredits: "1", heartbeat: { instanceId: "d5-instance", capabilityToken } });
+  const workerEvents: unknown[] = [];
+  const worker = new AutonomousWorker({ workerId: "d5-worker", clientFactory: async () => new Client({ connectionString: `postgres://${workerRole}:${workerPassword}@localhost:5432/postgres` }), provider: offlineProvider, exchangeTimezone: "America/New_York", maxTasks: 1, maxPolls: 1, consumedCredits: "1", heartbeat: { instanceId: "d5-instance", capabilityToken }, onEvent: event => workerEvents.push(event) });
   const stats = await worker.run();
-  assert.equal(stats.committed, 1); assert.equal(simulatedHttpCalls, 1);
+  assert.equal(stats.committed, 1, JSON.stringify({ stats, workerEvents })); assert.equal(simulatedHttpCalls, 1);
   const result = { state: "COMMITTED" as const };
   const saved = await db.query("SELECT o.listing_id,o.provider_id,o.rights_policy_id,o.market_date,r.revision_id,r.close_value::text AS close FROM market_core.market_observations o JOIN market_core.market_observation_revisions r USING(observation_id) WHERE o.listing_id=$1", [ids.listing]);
   assert.equal(saved.rows.length, 1); assert.equal(saved.rows[0].listing_id, ids.listing); assert.equal(saved.rows[0].close, "105.500000000000"); assert.equal((await db.query("SELECT state FROM market_core.ingest_jobs WHERE job_id=$1", [ids.job])).rows[0].state, "COMMITTED");
