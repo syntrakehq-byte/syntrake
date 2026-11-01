@@ -9,7 +9,8 @@ ALTER TABLE market_core.listings ADD CONSTRAINT listings_mic_role_coherent CHECK
 ALTER TABLE market_core.provider_aliases ADD COLUMN IF NOT EXISTS identifier_type text NOT NULL DEFAULT 'PROVIDER_NATIVE';
 ALTER TABLE market_core.provider_aliases ADD COLUMN IF NOT EXISTS identifier_scope text NOT NULL DEFAULT 'LISTING';
 ALTER TABLE market_core.provider_aliases ADD CONSTRAINT provider_aliases_type_scope_valid CHECK (
-  (identifier_type IN ('PROVIDER_NATIVE','TICKER') AND identifier_scope = 'LISTING')
+  (identifier_type = 'TICKER' AND identifier_scope = 'LISTING')
+  OR (identifier_type = 'PROVIDER_NATIVE' AND identifier_scope IN ('INSTRUMENT','LISTING'))
 );
 
 CREATE TABLE market_core.catalog_sources (
@@ -178,7 +179,8 @@ REVOKE ALL ON market_core.catalog_sources, market_core.catalog_snapshots, market
 GRANT USAGE ON SCHEMA market_core TO market_core_catalog_ingest, market_core_catalog_reader, market_core_registry_reviewer;
 GRANT SELECT ON market_core.catalog_sources, market_core.catalog_snapshots, market_core.catalog_candidates, market_core.catalog_candidate_identifiers, market_core.instrument_identifiers TO market_core_catalog_reader, market_core_registry_reviewer;
 GRANT INSERT ON market_core.catalog_sources, market_core.catalog_snapshots, market_core.catalog_candidates, market_core.catalog_candidate_identifiers TO market_core_catalog_ingest;
-GRANT INSERT ON market_core.catalog_review_decisions TO market_core_registry_reviewer;
+GRANT SELECT (rights_policy_id, cache_allowed, display_allowed) ON market_core.license_policies TO market_core_catalog_ingest;
+CREATE POLICY catalog_ingest_rights_lookup ON market_core.license_policies FOR SELECT TO market_core_catalog_ingest USING (current_user='market_core_catalog_ingest');
 CREATE POLICY catalog_reader_sources ON market_core.catalog_sources FOR SELECT TO market_core_catalog_reader, market_core_registry_reviewer USING (current_user IN ('market_core_catalog_reader','market_core_registry_reviewer'));
 CREATE POLICY catalog_reader_snapshots ON market_core.catalog_snapshots FOR SELECT TO market_core_catalog_reader, market_core_registry_reviewer USING (current_user IN ('market_core_catalog_reader','market_core_registry_reviewer'));
 CREATE POLICY catalog_reader_candidates ON market_core.catalog_candidates FOR SELECT TO market_core_catalog_reader, market_core_registry_reviewer USING (current_user IN ('market_core_catalog_reader','market_core_registry_reviewer'));
@@ -187,7 +189,6 @@ CREATE POLICY catalog_ingest_sources ON market_core.catalog_sources FOR INSERT T
 CREATE POLICY catalog_ingest_snapshots ON market_core.catalog_snapshots FOR INSERT TO market_core_catalog_ingest WITH CHECK (current_user='market_core_catalog_ingest');
 CREATE POLICY catalog_ingest_candidates ON market_core.catalog_candidates FOR INSERT TO market_core_catalog_ingest WITH CHECK (current_user='market_core_catalog_ingest');
 CREATE POLICY catalog_ingest_identifiers ON market_core.catalog_candidate_identifiers FOR INSERT TO market_core_catalog_ingest WITH CHECK (current_user='market_core_catalog_ingest');
-CREATE POLICY catalog_review_insert ON market_core.catalog_review_decisions FOR INSERT TO market_core_registry_reviewer WITH CHECK (current_user='market_core_registry_reviewer');
 GRANT SELECT ON market_core.catalog_review_decisions TO market_core_registry_reviewer;
 CREATE POLICY catalog_review_reader ON market_core.catalog_review_decisions FOR SELECT TO market_core_registry_reviewer USING (current_user='market_core_registry_reviewer');
 CREATE POLICY registry_identifier_reader ON market_core.instrument_identifiers FOR SELECT TO market_core_catalog_reader, market_core_registry_reviewer USING (current_user IN ('market_core_catalog_reader','market_core_registry_reviewer'));

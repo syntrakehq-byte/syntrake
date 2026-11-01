@@ -66,10 +66,18 @@ test("D1 restricted catalog roles cannot access financial tables or mutate histo
   await assert.rejects(db.query("INSERT INTO market_core.catalog_candidates(candidate_id,snapshot_id,provider_reference,provider_identifier_type,provider_scope,created_at) VALUES ('b0000000-0000-0000-0000-000000000010',$1,'X','TICKER','LISTING',clock_timestamp())", [ids.snapA]));
   await db.query("RESET ROLE");
   await db.query("SET ROLE market_core_catalog_ingest");
+  await db.query("INSERT INTO market_core.catalog_sources VALUES ('b0000000-0000-0000-0000-000000000020',$1,'SRC_ROLE','LISTINGS',$2,true,false,'https://catalog-role.test/snapshot',clock_timestamp())", [ids.providerA,ids.rightsA]);
+  await db.query("INSERT INTO market_core.catalog_snapshots VALUES ('b0000000-0000-0000-0000-000000000021','b0000000-0000-0000-0000-000000000020','role-1',clock_timestamp(),NULL,NULL,repeat('f',64),'REVIEW_REQUIRED',clock_timestamp())");
+  await db.query("INSERT INTO market_core.catalog_candidates(candidate_id,snapshot_id,provider_reference,provider_identifier_type,provider_scope,ticker,mic,mic_role,created_at) VALUES ('b0000000-0000-0000-0000-000000000022','b0000000-0000-0000-0000-000000000021','ROLE-AAPL','TICKER','LISTING','AAPL','XNAS','OPERATING',clock_timestamp())");
+  await db.query("INSERT INTO market_core.catalog_candidate_identifiers VALUES ('b0000000-0000-0000-0000-000000000023','b0000000-0000-0000-0000-000000000022','TICKER','AAPL','LISTING','b0000000-0000-0000-0000-000000000020','b0000000-0000-0000-0000-000000000021',NULL,NULL,'PROVIDER_CATALOG','SUPPORTING',false,'XNAS',clock_timestamp())");
+  await assert.rejects(db.query("INSERT INTO market_core.catalog_candidate_identifiers VALUES ('b0000000-0000-0000-0000-000000000024','b0000000-0000-0000-0000-000000000022','TICKER','AAPL','INSTRUMENT','b0000000-0000-0000-0000-000000000020','b0000000-0000-0000-0000-000000000021',NULL,NULL,'PROVIDER_CATALOG','SUPPORTING',false,'XNAS',clock_timestamp())"));
+  await db.query("RESET ROLE");
+  await db.query("SET ROLE market_core_catalog_ingest");
   await assert.rejects(db.query("UPDATE market_core.catalog_sources SET source_key='MUTATED' WHERE source_id=$1", [ids.sourceA]));
   await db.query("RESET ROLE");
   await db.query("SET ROLE market_core_registry_reviewer");
   assert.equal((await db.query("SELECT count(*)::int AS n FROM market_core.catalog_review_decisions")).rows[0].n,1);
+  await assert.rejects(db.query("INSERT INTO market_core.catalog_review_decisions VALUES ('b0000000-0000-0000-0000-000000000025',$1,'REVIEW_REQUIRED','FORGED',repeat('e',64),'forged-actor',clock_timestamp())", [ids.candidateA]));
   await db.query("RESET ROLE");
 });
 
