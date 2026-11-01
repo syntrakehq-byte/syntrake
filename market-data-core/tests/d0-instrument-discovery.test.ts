@@ -37,6 +37,21 @@ test("D0 refuses ambiguity, contradictory identity and insufficient evidence", (
   assert.equal(createDiscoveryResult({ticker:"UNKNOWN"},[]).status,"UNRESOLVED");
 });
 
+test("D0 never promotes a mismatched query or ticker-only evidence to EXACT", () => {
+  assert.equal(createDiscoveryResult({ticker:"MSFT"},[candidate(sourceA,"XNAS","AAPL-XNAS")]).status,"REVIEW_REQUIRED");
+  const base = candidate(sourceA,"XNAS","AAPL-XNAS");
+  const tickerOnly = {...base, identifiers:[{...base.identifiers[0],type:"TICKER" as const,scope:"LISTING" as const,value:"AAPL",strength:"STRONG" as const,verified:true}]};
+  assert.equal(createDiscoveryResult({ticker:"AAPL"},[tickerOnly]).status,"REVIEW_REQUIRED");
+});
+
+test("D0 validates identifier type and scope semantics", () => {
+  const base = candidate(sourceA,"XNAS","AAPL-XNAS");
+  for (const [type, scope, value] of [["ISIN","ISSUER","US0378331005"],["CIK","INSTRUMENT","0000320193"],["LEI","INSTRUMENT","5493001KJTIIGC8Y1R12"]] as const) {
+    const invalid = {...base, identifiers:[{...base.identifiers[0],type,scope,value}]};
+    assert.throws(() => normalizeCatalogCandidate(invalid),/DISCOVERY_CANDIDATE_EVIDENCE_INVALID/);
+  }
+});
+
 test("D0 rejects invalid queries, invalid windows and unlicensed catalog storage", () => {
   assert.throws(() => normalizeCatalogQuery({}),/DISCOVERY_QUERY_EMPTY/);
   assert.throws(() => normalizeCatalogQuery({ticker:"AAPL",marketMic:"NASDAQ"}),/DISCOVERY_QUERY_MIC_INVALID/);
@@ -44,4 +59,10 @@ test("D0 rejects invalid queries, invalid windows and unlicensed catalog storage
   assert.throws(() => normalizeCatalogCandidate(invalid),/DISCOVERY_CANDIDATE_LISTING_INVALID/);
   const unlicensed = {...candidate(sourceA,"XNAS","AAPL-XNAS"), source:{...sourceA,storageAllowed:false}, providerReference:{...candidate(sourceA,"XNAS","AAPL-XNAS").providerReference,source:{...sourceA,storageAllowed:false}}, identifiers:[{...candidate(sourceA,"XNAS","AAPL-XNAS").identifiers[0],source:{...sourceA,storageAllowed:false}}]};
   assert.equal(createDiscoveryResult({ticker:"AAPL"},[unlicensed]).status,"REVIEW_REQUIRED");
+  const snapshotConflict = {...candidate(sourceA,"XNAS","AAPL-XNAS"), providerReference:{...candidate(sourceA,"XNAS","AAPL-XNAS").providerReference,source:{...sourceA,snapshotId:"snap-a-2"}}};
+  assert.throws(() => normalizeCatalogCandidate(snapshotConflict),/DISCOVERY_CANDIDATE_SOURCE_INVALID/);
+  const rightsConflict = {...candidate(sourceA,"XNAS","AAPL-XNAS"), source:{...sourceA,sharingAllowed:true,storageAllowed:false}};
+  assert.throws(() => normalizeCatalogCandidate(rightsConflict),/DISCOVERY_CANDIDATE_SOURCE_INVALID/);
+  const micRoleConflict = {...candidate(sourceA,"XNAS","AAPL-XNAS"), listing:{...candidate(sourceA,"XNAS","AAPL-XNAS").listing!,micRole:null}};
+  assert.throws(() => normalizeCatalogCandidate(micRoleConflict),/DISCOVERY_CANDIDATE_LISTING_INVALID/);
 });
