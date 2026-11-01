@@ -111,8 +111,8 @@ test("D5 integrated offline AAPL discovery -> Registry/D3 -> D4 -> R3-C -> worke
   assert.equal(replay.committed, 0); assert.equal(simulatedHttpCalls, 1);
   const reader = new Client({ connectionString: `postgres://${readerRole}:${readerPassword}@localhost:5432/postgres` }); await reader.connect();
   await db.query("UPDATE market_core.license_policies SET display_allowed=true WHERE rights_policy_id=$1", [ids.rights]);
-  assert.equal((await reader.query("SELECT status FROM market_core.read_market_pit($1,TIMESTAMPTZ '2025-01-04')", [ids.listing])).rows[0].status, "AVAILABLE");
+  assert.equal((await reader.query("SELECT status FROM market_core.read_market_pit($1,TIMESTAMPTZ '2027-01-04')", [ids.listing])).rows[0].status, "AVAILABLE");
   await db.query("UPDATE market_core.license_policies SET display_allowed=false WHERE rights_policy_id=$1", [ids.rights]);
-  assert.equal((await reader.query("SELECT status FROM market_core.read_market_pit($1,TIMESTAMPTZ '2025-01-04')", [ids.listing])).rows[0].status, "LICENSE_BLOCKED");
+  assert.equal((await reader.query("SELECT status FROM market_core.read_market_pit($1,TIMESTAMPTZ '2027-01-04')", [ids.listing])).rows[0].status, "LICENSE_BLOCKED");
   assert.equal((await reader.query("SELECT count(*)::int AS n FROM market_core.read_market_pit($1,TIMESTAMPTZ '2025-01-01') WHERE status='AVAILABLE'", [ids.listing])).rows[0].n, 0); await reader.end();
 });
