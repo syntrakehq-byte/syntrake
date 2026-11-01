@@ -10,6 +10,10 @@ export type RegistryEvidence = Readonly<{
   value: string;
   scope: IdentifierScope;
   source: "D1_REGISTRY";
+  verified: boolean;
+  sourceId: string;
+  snapshotId: string;
+  rightsPolicyId: string;
   issuerRef: string | null;
   instrumentRef: string | null;
   listingRef: string | null;
@@ -24,9 +28,9 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 function validDay(value: string): boolean { if (!ISO_DATE.test(value)) return false; const d = new Date(`${value}T00:00:00.000Z`); return !Number.isNaN(d.valueOf()) && d.toISOString().slice(0, 10) === value; }
 function validAsOf(value: string): boolean { if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(value)) return false; const d = new Date(value); return !Number.isNaN(d.valueOf()) && d.toISOString().slice(0, 19) === value.replace(/\.\d{1,3}Z$/, "Z").slice(0, 19); }
 function inWindow(asOf: string, validity: TemporalValidity): boolean { if (!validDay(validity.validFrom ?? "2000-01-01") || (validity.validTo !== null && !validDay(validity.validTo))) return false; const day = asOf.slice(0, 10); return (validity.validFrom === null || day >= validity.validFrom) && (validity.validTo === null || day < validity.validTo); }
-function sourceEvidence(identity: CanonicalIdentity, asOf: string): RegistryEvidence[] { return identity.identifiers.filter(e => e.source === "D1_REGISTRY" && inWindow(asOf, e.validity)); }
+function sourceEvidence(identity: CanonicalIdentity, asOf: string): RegistryEvidence[] { return identity.identifiers.filter(e => e.source === "D1_REGISTRY" && e.verified && e.sourceId.length > 0 && e.snapshotId.length > 0 && e.rightsPolicyId.length > 0 && inWindow(asOf, e.validity)); }
 function aliasFor(candidate: CatalogCandidate, identity: CanonicalIdentity, asOf: string): RegistryAlias | null { const ref = candidate.providerReference; return identity.aliases.find(a => a.providerKey === ref.providerKey && a.providerReference === ref.providerReference && a.listingRef === identity.listingRef && inWindow(asOf, a.validity)) ?? null; }
-function candidateEvidenceContradicts(candidate: CatalogCandidate, trusted: readonly RegistryEvidence[], asOf: string): boolean { return candidate.identifiers.some(e => e.verified && inWindow(asOf, e.validity) && trusted.some(t => t.type === e.type && t.scope === e.scope && t.value !== e.value)); }
+function candidateEvidenceContradicts(candidate: CatalogCandidate, trusted: readonly RegistryEvidence[], asOf: string): boolean { return candidate.identifiers.some(e => inWindow(asOf, e.validity) && trusted.some(t => t.type === e.type && t.scope === e.scope && t.value !== e.value)); }
 function completeTrustedEvidence(identity: CanonicalIdentity, trusted: readonly RegistryEvidence[]): boolean {
   const issuer = trusted.some(e => e.scope === "ISSUER" && ["CIK", "LEI"].includes(e.type) && e.issuerRef === identity.issuerRef && e.instrumentRef === null && e.listingRef === null);
   const instrument = trusted.some(e => e.scope === "INSTRUMENT" && ["ISIN", "FIGI"].includes(e.type) && e.issuerRef === null && e.instrumentRef === identity.instrumentRef && e.listingRef === null);
@@ -35,10 +39,12 @@ function completeTrustedEvidence(identity: CanonicalIdentity, trusted: readonly 
 }
 function compatible(candidate: CatalogCandidate, identity: CanonicalIdentity, asOf: string): boolean {
   const l = candidate.listing;
-  if (!l || !validAsOf(asOf) || !inWindow(asOf, l.validity) || !inWindow(asOf, identity.validity) || !inWindow(asOf, identity.listing.validity)) return false;
+  if (!l || !validAsOf(asOf) || !inWindow(asOf, l.validity) || !inWindow(asOf, candidate.providerReference.validity) || !inWindow(asOf, identity.validity) || !inWindow(asOf, identity.listing.validity)) return false;
   if (l.ticker !== identity.listing.ticker || l.tradingCurrency !== identity.listing.tradingCurrency || l.mic !== identity.listing.mic) return false;
   if (l.micRole !== null && identity.listing.micRole !== null && l.micRole !== identity.listing.micRole) return false;
   if (candidate.instrument && (candidate.instrument.assetClass !== identity.assetClass || candidate.instrument.denominationCurrency !== identity.denominationCurrency)) return false;
+  if (candidate.descriptiveAssetClass !== undefined && candidate.descriptiveAssetClass !== identity.assetClass) return false;
+  if (candidate.descriptiveCurrency !== undefined && candidate.descriptiveCurrency !== identity.denominationCurrency) return false;
   return true;
 }
 export function resolveCanonicalIdentity(input: Readonly<{ candidate: CatalogCandidate; registry: readonly CanonicalIdentity[]; asOf: string }>): CanonicalResolution {

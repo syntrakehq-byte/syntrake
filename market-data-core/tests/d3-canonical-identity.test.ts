@@ -9,9 +9,9 @@ const identity: CanonicalIdentity = {
   issuerRef: "issuer-apple", instrumentRef: "instrument-apple", listingRef: "listing-xnas", assetClass: "EQUITY", denominationCurrency: "USD", listing, validity: listing.validity,
   aliases: [{ providerKey: "TWELVE_DATA", providerReference: "AAPL", listingRef: "listing-xnas", validity: listing.validity }],
   identifiers: [
-    { evidenceId: "ev-cik", type: "CIK", value: "0000320193", scope: "ISSUER", source: "D1_REGISTRY", issuerRef: "issuer-apple", instrumentRef: null, listingRef: null, validity: listing.validity },
-    { evidenceId: "ev-isin", type: "ISIN", value: "US0378331005", scope: "INSTRUMENT", source: "D1_REGISTRY", issuerRef: null, instrumentRef: "instrument-apple", listingRef: null, validity: listing.validity },
-    { evidenceId: "ev-figi", type: "FIGI", value: "BBG000B9XRY4", scope: "LISTING", source: "D1_REGISTRY", issuerRef: null, instrumentRef: "instrument-apple", listingRef: "listing-xnas", validity: listing.validity },
+    { evidenceId: "ev-cik", type: "CIK", value: "0000320193", scope: "ISSUER", source: "D1_REGISTRY", verified: true, sourceId: "source-1", snapshotId: "snapshot-1", rightsPolicyId: "rights-1", issuerRef: "issuer-apple", instrumentRef: null, listingRef: null, validity: listing.validity },
+    { evidenceId: "ev-isin", type: "ISIN", value: "US0378331005", scope: "INSTRUMENT", source: "D1_REGISTRY", verified: true, sourceId: "source-1", snapshotId: "snapshot-1", rightsPolicyId: "rights-1", issuerRef: null, instrumentRef: "instrument-apple", listingRef: null, validity: listing.validity },
+    { evidenceId: "ev-figi", type: "FIGI", value: "BBG000B9XRY4", scope: "LISTING", source: "D1_REGISTRY", verified: true, sourceId: "source-1", snapshotId: "snapshot-1", rightsPolicyId: "rights-1", issuerRef: null, instrumentRef: "instrument-apple", listingRef: "listing-xnas", validity: listing.validity },
   ],
 };
 function d2Candidate(overrides: Partial<CatalogCandidate> = {}): CatalogCandidate { return { issuer: null, instrument: null, listing, providerReference: { providerKey: "TWELVE_DATA", providerReference: "AAPL", identifierType: "PROVIDER_NATIVE", scope: "LISTING", source, validity: listing.validity }, identifiers: [{ type: "PROVIDER_NATIVE", value: "AAPL", scope: "LISTING", source, evidenceKind: "PROVIDER_CATALOG", strength: "STRONG", verified: false, validity: listing.validity, marketMic: "XNAS" }], source, ...overrides }; }
@@ -30,6 +30,15 @@ test("D3 requires all three trusted scopes and never treats issuer evidence as l
   const incomplete = { ...identity, identifiers: identity.identifiers.slice(0, 2) };
   const result = resolveCanonicalIdentity({ candidate: d2Candidate(), registry: [incomplete], asOf: "2026-11-01T00:00:00Z" });
   assert.equal(result.status, "REVIEW_REQUIRED");
+});
+
+test("D3 rejects unverified Registry evidence, provider contradictions and asset-class conflicts", () => {
+  const unverified = { ...identity, identifiers: identity.identifiers.map(e => ({ ...e, verified: false })) };
+  assert.equal(resolveCanonicalIdentity({ candidate: d2Candidate(), registry: [unverified], asOf: "2026-11-01T00:00:00Z" }).status, "REVIEW_REQUIRED");
+  const contradictory = d2Candidate({ identifiers: [{ type: "ISIN", value: "US5949181045", scope: "INSTRUMENT", source, evidenceKind: "PROVIDER_CATALOG", strength: "SUPPORTING", verified: false, validity: listing.validity, marketMic: null }] });
+  assert.equal(resolveCanonicalIdentity({ candidate: contradictory, registry: [identity], asOf: "2026-11-01T00:00:00Z" }).status, "REVIEW_REQUIRED");
+  const etf = d2Candidate({ descriptiveAssetClass: "ETF" });
+  assert.equal(resolveCanonicalIdentity({ candidate: etf, registry: [identity], asOf: "2026-11-01T00:00:00Z" }).status, "REVIEW_REQUIRED");
 });
 
 test("D3 separates AAPL XNAS from XNGS and unknown MIC roles", () => {
