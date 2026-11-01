@@ -7,13 +7,11 @@ import { createTwelveDataCatalogConnector } from "../twelveDataCatalog";
 import { resolveCanonicalIdentity } from "../canonicalIdentityResolver";
 import { routeProvider } from "../providerRouter";
 import { planDemand } from "../coordinator";
-import { runOfflineIngestOnce } from "../offlinePipeline";
 import { AutonomousWorker } from "../autonomousWorker";
 import { createTwelveDataOfflineProvider } from "../twelveDataProvider";
 import { canonicalIdentity, resolveProviderAlias } from "../identity";
 import type { CatalogSource } from "../instrumentDiscovery";
 import type { ProviderCapability } from "../providerCapabilities";
-import type { DailyCandle } from "../twelveData";
 
 const db = new Client({ connectionString: process.env.DATABASE_URL ?? "postgres://postgres:postgres@localhost:5432/postgres" });
 const workerRole = "d5_worker_login";
@@ -22,9 +20,12 @@ const workerPassword = "d5-worker-password";
 const readerPassword = "d5-reader-password";
 const ids = { provider: "d5000000-0000-0000-0000-000000000001", rights: "d5000000-0000-0000-0000-000000000002", issuer: "d5000000-0000-0000-0000-000000000003", instrument: "d5000000-0000-0000-0000-000000000004", listing: "d5000000-0000-0000-0000-000000000005", budget: "d5000000-0000-0000-0000-000000000006", source: "d5000000-0000-0000-0000-000000000007", snapshot: "d5000000-0000-0000-0000-000000000008", candidate: "d5000000-0000-0000-0000-000000000009", alias: "d5000000-0000-0000-0000-000000000010", job: "d5000000-0000-0000-0000-000000000011" };
 const source: CatalogSource = { providerKey: "TWELVE_DATA", snapshotId: "d5-snapshot", snapshotVersion: "1", observedAt: "2025-01-01T00:00:00Z", licensePolicyId: "d5-rights", storageAllowed: true, sharingAllowed: false };
-const candle: DailyCandle = { marketDate: "2025-01-02", open: "100.00", high: "110.00", low: "90.00", close: "105.50", volume: "23" };
-function envelope() { const now = "2025-01-03T00:00:00.000Z"; return { status: "AVAILABLE" as const, value: [candle], marketDate: candle.marketDate, sourceRefs: [{ provider: "TWELVE_DATA", originalSourceId: "offline-d5-fixture", requestId: null, sourceDocumentUri: null }], firstSeenAt: now, ingestedAt: now, asKnownAt: now, revisionId: "d5-offline-synthetic", schemaVersion: "1.0", quality: { flags: ["OFFLINE_SYNTHETIC"], coverage: "FULL" as const }, rights: { policyId: ids.rights, display: false, retentionUntil: null } }; }
 async function sql(file: string): Promise<void> { await db.query(await readFile(resolve(process.cwd(), file), "utf8")); }
+function transferDemand(input: Readonly<{ identityStatus: string; routed: ReturnType<typeof routeProvider>; providerKey: string; listingId: string; providerId: string; rightsPolicyId: string; estimatedCredits: number }>): ReturnType<typeof planDemand> | null {
+  const selected = input.routed.selected;
+  if (input.identityStatus !== "EXACT" || input.routed.status !== "READY" || !selected || selected.providerKey !== input.providerKey || selected.rights.policyId !== input.rightsPolicyId || !Number.isFinite(input.estimatedCredits) || input.estimatedCredits < 0 || selected.cost.knowledge !== "KNOWN" || selected.cost.nativeAmount !== input.estimatedCredits || selected.quota.knowledge !== "KNOWN" || selected.quota.remaining === null || selected.quota.remaining < input.estimatedCredits) return null;
+  return planDemand({ listingId: input.listingId, providerId: input.providerId, rightsPolicyId: input.rightsPolicyId, interval: "1day", adjustment: "none", from: "2025-01-02", to: "2025-01-02", freshness: "AVAILABLE", costClass: "KNOWN" });
+}
 
 before(async () => {
   await db.connect();
@@ -88,10 +89,9 @@ test("D5 integrated offline AAPL discovery -> Registry/D3 -> D4 -> R3-C -> worke
   });
   let providerError: string | null = null;
   const workerProvider = async (claim: Parameters<typeof offlineProvider>[0]) => { try { return await offlineProvider(claim); } catch (error) { providerError = error instanceof Error ? error.message : String(error); throw error; } };
-  const planned = planDemand({ listingId: ids.listing, providerId: ids.provider, rightsPolicyId: ids.rights, interval: "1day", adjustment: "none", from: "2025-01-02", to: "2025-01-02", freshness: "AVAILABLE", costClass: "KNOWN" });
-  assert.equal(planned.state, "READY");
+  const planned = transferDemand({ identityStatus: resolved.status, routed, providerKey: "TWELVE_DATA", listingId: ids.listing, providerId: ids.provider, rightsPolicyId: ids.rights, estimatedCredits: 1 });
+  assert.ok(planned); assert.equal(planned.state, "READY");
   await db.query("INSERT INTO market_core.ingest_jobs(job_id,demand_key,listing_id,provider_id,rights_policy_id,budget_period_id,estimated_credits,idempotency_key,state,attempt,max_attempts,next_run_at) VALUES ($1,$2,$3,$4,$5,$6,1,$7,'PENDING',0,3,clock_timestamp())", [ids.job, planned.demandKey, ids.listing, ids.provider, ids.rights, ids.budget, "d5-aapl"]);
-  let calls = 0;
   const capabilityToken = (await db.query("SELECT market_core.register_worker_instance($1,$2) AS token", ["d5-worker", "d5-instance"])).rows[0].token as string;
   const workerEvents: unknown[] = [];
   let workerDbError: string | null = null;
@@ -103,7 +103,6 @@ test("D5 integrated offline AAPL discovery -> Registry/D3 -> D4 -> R3-C -> worke
   const worker = new AutonomousWorker({ workerId: "d5-worker", clientFactory: async () => { const client = new Client({ connectionString: `postgres://${workerRole}:${workerPassword}@localhost:5432/postgres` }); const originalQuery = client.query.bind(client); Object.defineProperty(client, "query", { value: async (...args: Parameters<Client["query"]>) => { try { return await originalQuery(...args); } catch (error) { workerDbError = error instanceof Error ? error.message : String(error); throw error; } } }); return client; }, provider: workerProvider, exchangeTimezone: "America/New_York", maxTasks: 1, maxPolls: 1, consumedCredits: "1", heartbeat: { instanceId: "d5-instance", capabilityToken }, onEvent: event => workerEvents.push(event) });
   const stats = await worker.run();
   assert.equal(stats.committed, 1, JSON.stringify({ stats, workerEvents, workerDbError, providerError })); assert.equal(simulatedHttpCalls, 1);
-  const result = { state: "COMMITTED" as const };
   const saved = await db.query("SELECT o.listing_id,o.provider_id,o.rights_policy_id,o.market_date,r.revision_id,r.close_value::text AS close FROM market_core.market_observations o JOIN market_core.market_observation_revisions r USING(observation_id) WHERE o.listing_id=$1", [ids.listing]);
   assert.equal(saved.rows.length, 1); assert.equal(saved.rows[0].listing_id, ids.listing); assert.equal(saved.rows[0].close, "105.500000000000"); assert.equal((await db.query("SELECT state FROM market_core.ingest_jobs WHERE job_id=$1", [ids.job])).rows[0].state, "COMMITTED");
   assert.equal((await db.query("SELECT consumed_credits::text FROM market_core.provider_budget_periods WHERE budget_period_id=$1", [ids.budget])).rows[0].consumed_credits, "1.000000");
@@ -113,6 +112,17 @@ test("D5 integrated offline AAPL discovery -> Registry/D3 -> D4 -> R3-C -> worke
   await db.query("UPDATE market_core.license_policies SET display_allowed=true WHERE rights_policy_id=$1", [ids.rights]);
   assert.equal((await reader.query("SELECT status FROM market_core.read_market_pit($1,TIMESTAMPTZ '2027-01-04')", [ids.listing])).rows[0].status, "AVAILABLE");
   await db.query("UPDATE market_core.license_policies SET display_allowed=false WHERE rights_policy_id=$1", [ids.rights]);
-  assert.equal((await reader.query("SELECT status FROM market_core.read_market_pit($1,TIMESTAMPTZ '2027-01-04')", [ids.listing])).rows[0].status, "LICENSE_BLOCKED");
+  const blockedRead = (await reader.query("SELECT status,close_value FROM market_core.read_market_pit($1,TIMESTAMPTZ '2027-01-04')", [ids.listing])).rows[0];
+  assert.equal(blockedRead.status, "LICENSE_BLOCKED"); assert.equal(blockedRead.close_value, null);
   assert.equal((await reader.query("SELECT count(*)::int AS n FROM market_core.read_market_pit($1,TIMESTAMPTZ '2025-01-01') WHERE status='AVAILABLE'", [ids.listing])).rows[0].n, 0); await reader.end();
+
+  const beforeJobs = Number((await db.query("SELECT count(*)::int AS n FROM market_core.ingest_jobs")).rows[0].n);
+  const beforeReservations = Number((await db.query("SELECT count(*)::int AS n FROM market_core.credit_reservations")).rows[0].n);
+  const deniedD3 = transferDemand({ identityStatus: "REVIEW_REQUIRED", routed, providerKey: "TWELVE_DATA", listingId: ids.listing, providerId: ids.provider, rightsPolicyId: ids.rights, estimatedCredits: 1 });
+  const deniedRights = transferDemand({ identityStatus: "EXACT", routed: routeProvider({ identity: resolved, service: "MARKET_DATA", mic: "XNAS", micRole: "OPERATING", assetClass: "EQUITY", currency: "USD", from: "2025-01-02", to: "2025-01-02", granularity: "1day", adjustment: "none", asOf: "2026-01-01T00:00:00Z", rights: { query: false, store: false, display: false, retain: false, share: false, policyId: ids.rights }, quality: { requireCoverage: true, requireFreshness: true, requireIntegrity: true, minScore: 80 }, maxEconomicCost: null }, [cap("TWELVE_DATA", 1)]), providerKey: "TWELVE_DATA", listingId: ids.listing, providerId: ids.provider, rightsPolicyId: ids.rights, estimatedCredits: 1 });
+  const deniedQuota = transferDemand({ identityStatus: "EXACT", routed: routeProvider({ identity: resolved, service: "MARKET_DATA", mic: "XNAS", micRole: "OPERATING", assetClass: "EQUITY", currency: "USD", from: "2025-01-02", to: "2025-01-02", granularity: "1day", adjustment: "none", asOf: "2026-01-01T00:00:00Z", rights: { query: true, store: true, display: false, retain: true, share: false, policyId: ids.rights }, quality: { requireCoverage: true, requireFreshness: true, requireIntegrity: true, minScore: 80 }, maxEconomicCost: null }, [ { ...cap("TWELVE_DATA", 1), quota: { nativeUnit: "TWELVE_DATA_CREDITS", remaining: 0, knowledge: "KNOWN" } } ]), providerKey: "TWELVE_DATA", listingId: ids.listing, providerId: ids.provider, rightsPolicyId: ids.rights, estimatedCredits: 1 });
+  const deniedProvider = transferDemand({ identityStatus: "EXACT", routed, providerKey: "OTHER_PROVIDER", listingId: ids.listing, providerId: ids.provider, rightsPolicyId: ids.rights, estimatedCredits: 1 });
+  assert.equal(deniedD3, null); assert.equal(deniedRights, null); assert.equal(deniedQuota, null); assert.equal(deniedProvider, null);
+  assert.equal(Number((await db.query("SELECT count(*)::int AS n FROM market_core.ingest_jobs")).rows[0].n), beforeJobs);
+  assert.equal(Number((await db.query("SELECT count(*)::int AS n FROM market_core.credit_reservations")).rows[0].n), beforeReservations);
 });
