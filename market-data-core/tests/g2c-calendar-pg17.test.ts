@@ -105,7 +105,7 @@ test("G2-C calendar PIT proves coverage without implying realtime",async()=>{
  assert.equal(cal.sessions[2].state,"CLOSED");
 });
 test("G2-C absent calendar day is UNKNOWN, not presumed weekend closure",async()=>{
- const result=await assess(cutoff,"2026-01-01","2026-01-05");
+ const result=await assess("2026-01-06T23:00:00Z","2026-01-01","2026-01-05");
  assert.equal(result.state,"CALENDAR_UNVERIFIED");
  assert.equal(result.coverage,"UNKNOWN");
  assert.equal(result.dueSessions,null);
