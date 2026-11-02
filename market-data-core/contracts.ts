@@ -17,6 +17,23 @@ export type MarketDataResult = Readonly<{
   adjustment: "none";
 }>;
 
+export function createMarketDataResult(input: Readonly<{
+  instrument: InstrumentIdentity;
+  listingRef: string | null;
+  sourceRefs: readonly SourceRef[];
+  revisionId: string;
+  price: string;
+  currency: string;
+  marketDate: string;
+  asOf: string;
+  quality: Readonly<{ coverage: "FULL" | "PARTIAL" | "NONE"; freshness: "KNOWN" | "UNKNOWN" }>;
+  rights: Readonly<{ policyId: string; display: boolean; retentionUntil: string | null }>;
+  interval: "1day";
+  adjustment: "none";
+}>): MarketDataResult {
+  return Object.freeze({ ...input, sourceRefs: Object.freeze([...input.sourceRefs]) });
+}
+
 export type DataStatus = "AVAILABLE" | "STALE" | "PARTIAL" | "UNAVAILABLE" | "LICENSE_BLOCKED" | "AMBIGUOUS";
 export type SourceRef = Readonly<{
   provider: string;
