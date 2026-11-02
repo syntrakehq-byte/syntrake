@@ -1,0 +1,31 @@
+name: market-data-g2a-pg17
+on:
+  pull_request:
+    paths:
+      - "market-data-core/contracts.ts"
+      - "market-data-core/tests/g2a-historical-pg17.test.ts"
+      - "supabase/release-candidates/20261102090000_g2a_universal_historical_api.sql"
+      - ".github/workflows/market-data-g2a-pg17.yml"
+      - "package.json"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  candidate-pg17:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env: { POSTGRES_PASSWORD: postgres, POSTGRES_DB: postgres }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with: { node-version: "22", cache: npm }
+      - run: npm ci
+      - run: npm run typecheck:market-data
+      - run: npm run test:market-data:g2a

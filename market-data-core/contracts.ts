@@ -17,6 +17,221 @@ export type MarketDataResult = Readonly<{
   adjustment: "none";
 }>;
 
+/** Consumer-neutral historical request. The market interval and PIT cutoff are independent. */
+export type HistoricalMarketDataRequest = Readonly<{
+  listingId: string;
+  startDate: string;
+  endDate: string;
+  asOf: string;
+  interval: "1day";
+  adjustment: "none";
+}>;
+
+export type HistoricalMarketDataPoint = Readonly<{
+  marketDate: string;
+  close: string | null;
+  revisionId: string | null;
+  asKnownAt: string | null;
+  sourceRevision: string | null;
+  qualityFlags: readonly string[];
+}>;
+
+export type HistoricalMarketDataResult = Readonly<{
+  request: HistoricalMarketDataRequest;
+  status: "AVAILABLE" | "PARTIAL" | "LICENSE_BLOCKED" | "UNAVAILABLE";
+  instrumentId: string | null;
+  listingId: string;
+  providerId: string | null;
+  rightsPolicyId: string | null;
+  currency: string | null;
+  interval: "1day";
+  adjustment: "none";
+  points: readonly HistoricalMarketDataPoint[];
+}>;
+
+export type HistoricalMarketDataRow = Readonly<{
+  listing_id: string;
+  instrument_id: string;
+  provider_id: string;
+  rights_policy_id: string;
+  currency: string;
+  bar_interval: string;
+  adjustment: string;
+  market_date: string | Date;
+  status: "AVAILABLE" | "LICENSE_BLOCKED";
+  revision_id: string | null;
+  close_value: string | null;
+  as_known_at: string | Date | null;
+  source_revision: string | null;
+  quality_flags: readonly string[] | null;
+}>;
+
+function isoUtc(value: unknown): value is string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(value)) return false;
+  const date = new Date(value);
+  return !Number.isNaN(date.valueOf()) && date.toISOString().slice(0, 19) === value.slice(0, 19);
+}
+
+/** PostgreSQL UUID accepts all 128-bit hexadecimal values, not only RFC4122 v1-v5. */
+function uuid(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(value);
+}
+function positiveDecimal(value: unknown): value is string {
+  return typeof value === "string" && value.length <= 80 &&
+    /^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(value) && /[1-9]/.test(value);
+}
+/** pg decodes DATE as local midnight; UTC slicing shifts the day in positive timezones. */
+function rowDate(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (!(value instanceof Date) || Number.isNaN(value.getTime())) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+  const year = String(value.getFullYear()).padStart(4, "0");
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return year + "-" + month + "-" + day;
+}
+function rowUtc(value: unknown): string | null {
+  if (value === null) return null;
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+    return value.toISOString();
+  }
+  if (typeof value === "string") return value;
+  throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+}
+function validHistoricalRequest(value: unknown): value is HistoricalMarketDataRequest {
+  return object(value) && uuid(value.listingId) && marketDay(value.startDate) &&
+    marketDay(value.endDate) && value.startDate <= value.endDate && isoUtc(value.asOf) &&
+    value.interval === "1day" && value.adjustment === "none";
+}
+function validFlags(flags: unknown): flags is string[] {
+  return Array.isArray(flags) && flags.every(nonEmpty);
+}
+
+/** Converts untrusted SQL rows into a consumer-neutral, fail-closed historical result. */
+export function historicalRowsToResult(request: HistoricalMarketDataRequest, rows: readonly unknown[]): HistoricalMarketDataResult {
+  if (!validHistoricalRequest(request) || !Array.isArray(rows) || !rows.every(object)) {
+    throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+  }
+  if (rows.length === 0) return createHistoricalMarketDataResult({
+    request, status: "UNAVAILABLE", instrumentId: null, listingId: request.listingId,
+    providerId: null, rightsPolicyId: null, currency: null,
+    interval: request.interval, adjustment: request.adjustment, points: [],
+  });
+
+  const typed = rows as unknown as readonly HistoricalMarketDataRow[];
+  const first = typed[0];
+  if (!uuid(first.listing_id) || !uuid(first.instrument_id) || !uuid(first.provider_id) ||
+      !uuid(first.rights_policy_id) || first.listing_id !== request.listingId ||
+      first.bar_interval !== request.interval || first.adjustment !== request.adjustment ||
+      !/^[A-Z]{3}$/.test(first.currency)) {
+    throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+  }
+
+  const cutoff = Date.parse(request.asOf);
+  const seenDates = new Set<string>();
+  const points = typed.map(row => {
+    const marketDate = rowDate(row.market_date);
+    const asKnownAt = rowUtc(row.as_known_at);
+    if (!uuid(row.listing_id) || !uuid(row.instrument_id) || !uuid(row.provider_id) ||
+        !uuid(row.rights_policy_id) || row.listing_id !== first.listing_id ||
+        row.instrument_id !== first.instrument_id || row.provider_id !== first.provider_id ||
+        row.rights_policy_id !== first.rights_policy_id || row.currency !== first.currency ||
+        row.bar_interval !== request.interval || row.adjustment !== request.adjustment ||
+        (row.status !== "AVAILABLE" && row.status !== "LICENSE_BLOCKED") ||
+        !marketDay(marketDate) || marketDate < request.startDate ||
+        marketDate > request.endDate || marketDate > request.asOf.slice(0, 10) ||
+        seenDates.has(marketDate) || !validFlags(row.quality_flags) ||
+        (asKnownAt !== null && (!isoUtc(asKnownAt) || Date.parse(asKnownAt) > cutoff))) {
+      throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+    }
+    seenDates.add(marketDate);
+    if (row.status === "AVAILABLE") {
+      if (!uuid(row.revision_id) || !positiveDecimal(row.close_value) ||
+          asKnownAt === null || typeof row.source_revision !== "string" ||
+          !/^[a-f0-9]{64}$/.test(row.source_revision)) {
+        throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+      }
+    } else if (row.revision_id !== null || row.close_value !== null ||
+               asKnownAt !== null || row.source_revision !== null ||
+               row.quality_flags.length !== 0) {
+      throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+    }
+    return {
+      marketDate, close: row.close_value, revisionId: row.revision_id,
+      asKnownAt, sourceRevision: row.source_revision, qualityFlags: row.quality_flags,
+    };
+  });
+
+  const blocked = points.filter(point => point.close === null).length;
+  const status = blocked === points.length ? "LICENSE_BLOCKED" :
+    blocked > 0 ? "PARTIAL" : "AVAILABLE";
+  return createHistoricalMarketDataResult({
+    request, status, instrumentId: first.instrument_id, listingId: first.listing_id,
+    providerId: first.provider_id, rightsPolicyId: first.rights_policy_id,
+    currency: first.currency, interval: request.interval, adjustment: request.adjustment, points,
+  });
+}
+
+export function createHistoricalMarketDataResult(input: HistoricalMarketDataResult): HistoricalMarketDataResult {
+  if (!object(input) || !validHistoricalRequest(input.request) ||
+      input.listingId !== input.request.listingId ||
+      input.interval !== input.request.interval ||
+      input.adjustment !== input.request.adjustment || !Array.isArray(input.points) ||
+      !["AVAILABLE", "PARTIAL", "LICENSE_BLOCKED", "UNAVAILABLE"].includes(input.status)) {
+    throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+  }
+  if (input.status === "UNAVAILABLE") {
+    if (input.points.length !== 0 || input.instrumentId !== null ||
+        input.providerId !== null || input.rightsPolicyId !== null ||
+        input.currency !== null) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+  } else if (!uuid(input.instrumentId) || !uuid(input.providerId) ||
+             !uuid(input.rightsPolicyId) || typeof input.currency !== "string" ||
+             !/^[A-Z]{3}$/.test(input.currency) || input.points.length === 0) {
+    throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+  }
+
+  const cutoff = Date.parse(input.request.asOf);
+  let available = 0;
+  let blocked = 0;
+  const dates = new Set<string>();
+  for (const point of input.points) {
+    if (!object(point) || !marketDay(point.marketDate) ||
+        point.marketDate < input.request.startDate ||
+        point.marketDate > input.request.endDate ||
+        point.marketDate > input.request.asOf.slice(0, 10) ||
+        dates.has(point.marketDate) || !validFlags(point.qualityFlags) ||
+        (point.asKnownAt !== null &&
+          (!isoUtc(point.asKnownAt) || Date.parse(point.asKnownAt) > cutoff))) {
+      throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+    }
+    dates.add(point.marketDate);
+    if (point.close === null) {
+      blocked++;
+      if (point.revisionId !== null || point.asKnownAt !== null ||
+          point.sourceRevision !== null || point.qualityFlags.length !== 0) {
+        throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+      }
+    } else {
+      available++;
+      if (!positiveDecimal(point.close) || !uuid(point.revisionId) ||
+          !isoUtc(point.asKnownAt) || typeof point.sourceRevision !== "string" ||
+          !/^[a-f0-9]{64}$/.test(point.sourceRevision)) {
+        throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+      }
+    }
+  }
+  if ((input.status === "AVAILABLE" && (available === 0 || blocked !== 0)) ||
+      (input.status === "LICENSE_BLOCKED" && (blocked === 0 || available !== 0)) ||
+      (input.status === "PARTIAL" && (blocked === 0 || available === 0))) {
+    throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+  }
+  return Object.freeze({
+    ...input,
+    points: Object.freeze(input.points.map(point =>
+      Object.freeze({ ...point, qualityFlags: Object.freeze([...point.qualityFlags]) }))),
+  });
+}
+
 export function readMarketDataForConsumer(
   result: MarketDataResult,
   requirement: Readonly<{ rightsPolicyId: string; requiresDisplay: boolean; interval?: "1day" | "1hour" | "1min" }>,
