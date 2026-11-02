@@ -57,11 +57,11 @@ export type HistoricalMarketDataRow = Readonly<{
   currency: string;
   bar_interval: string;
   adjustment: string;
-  market_date: string;
+  market_date: string | Date;
   status: "AVAILABLE" | "LICENSE_BLOCKED";
   revision_id: string | null;
   close_value: string | null;
-  as_known_at: string | null;
+  as_known_at: string | Date | null;
   source_revision: string | null;
   quality_flags: readonly string[] | null;
 }>;
@@ -71,6 +71,9 @@ function isoUtc(value: unknown): value is string {
   const date = new Date(value);
   return !Number.isNaN(date.valueOf()) && date.toISOString().slice(0, 19) === value.slice(0, 19);
 }
+
+function rowDate(value: string | Date): string { return value instanceof Date ? value.toISOString().slice(0, 10) : value; }
+function rowUtc(value: string | Date | null): string | null { return value === null ? null : value instanceof Date ? value.toISOString() : value; }
 
 /** Converts rows returned by read_market_history; SQL rows are untrusted input at this boundary. */
 export function historicalRowsToResult(request: HistoricalMarketDataRequest, rows: readonly unknown[]): HistoricalMarketDataResult {
@@ -85,10 +88,11 @@ export function historicalRowsToResult(request: HistoricalMarketDataRequest, row
   if (providers.size !== 1 || policies.size !== 1 || currencies.size !== 1 || typed.some(row => row.listing_id !== first.listing_id || row.instrument_id !== first.instrument_id || row.bar_interval !== request.interval || row.adjustment !== request.adjustment)) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
   const cutoff = Date.parse(request.asOf);
   const points = typed.map(row => {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(row.market_date) || row.market_date < request.startDate || row.market_date > request.endDate || row.market_date > request.asOf.slice(0, 10) || (row.as_known_at !== null && (!isoUtc(row.as_known_at) || Date.parse(row.as_known_at) > cutoff)) || (row.source_revision !== null && !/^[a-f0-9]{64}$/.test(row.source_revision)) || !Array.isArray(row.quality_flags ?? [])) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+    const marketDate = rowDate(row.market_date); const asKnownAt = rowUtc(row.as_known_at);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(marketDate) || marketDate < request.startDate || marketDate > request.endDate || marketDate > request.asOf.slice(0, 10) || (asKnownAt !== null && (!isoUtc(asKnownAt) || Date.parse(asKnownAt) > cutoff)) || (row.source_revision !== null && !/^[a-f0-9]{64}$/.test(row.source_revision)) || !Array.isArray(row.quality_flags ?? [])) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
     if (row.status === "AVAILABLE" && (row.close_value === null || row.revision_id === null)) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
     if (row.status === "LICENSE_BLOCKED" && row.close_value !== null) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
-    return { marketDate: row.market_date, close: row.close_value, revisionId: row.revision_id, asKnownAt: row.as_known_at, sourceRevision: row.source_revision, qualityFlags: row.quality_flags ?? [] };
+    return { marketDate, close: row.close_value, revisionId: row.revision_id, asKnownAt, sourceRevision: row.source_revision, qualityFlags: row.quality_flags ?? [] };
   });
   const blocked = points.filter(point => point.close === null).length;
   const status = blocked === points.length ? "LICENSE_BLOCKED" : blocked > 0 ? "PARTIAL" : "AVAILABLE";
