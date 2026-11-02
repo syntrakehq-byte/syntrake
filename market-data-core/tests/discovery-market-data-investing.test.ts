@@ -28,7 +28,7 @@ const claim = { job_id: "00000000-0000-0000-0000-000000000001", demand_key: "dem
 
 test("R3 composition discovers Apple by name, resolves XNGS, routes and values 0.96 without ledger writes", async () => {
   let calls = 0;
-  const result = await discoverMarketDataForInvesting({ onboarding, capabilities: [capability], routing, claim, selectedProviderId: "provider-id", provider: async () => { calls++; return { status: "AVAILABLE", provider: "TWELVE_DATA", instrument: { kind: "EQUITY", symbol: "AAPL", mic: "XNGS", currency: "USD" }, sourceRefs: [{ provider: "TWELVE_DATA", originalSourceId: "time_series:EQUITY:XNGS:AAPL:USD:1day:none", requestId: null, sourceDocumentUri: null }], firstSeenAt: "2026-01-02T20:00:00Z", ingestedAt: "2026-01-02T20:00:00Z", asKnownAt: "2026-01-02T20:00:00Z", revisionId: "rev-1", schemaVersion: "1.0", quality: { flags: ["LATENCY_NOT_VERIFIED"], coverage: "FULL" }, rights: { policyId: "r3-rights", display: true, retentionUntil: null }, marketDate: "2026-01-02", value: [{ marketDate: "2026-01-02", open: "100.00", high: "110.00", low: "90.00", close: "100.50", volume: "42" }] }; } });
+  const result = await discoverMarketDataForInvesting({ onboarding, capabilities: [capability], routing, claim, selectedProviderId: "provider-id", provider: async () => { calls++; return { status: "AVAILABLE", provider: "TWELVE_DATA", instrument: { kind: "EQUITY", symbol: "AAPL", mic: "XNGS", currency: "USD", instrumentId: ids.instrument, listingId: ids.listing }, sourceRefs: [{ provider: "TWELVE_DATA", originalSourceId: "time_series:EQUITY:XNGS:AAPL:USD:1day:none", requestId: null, sourceDocumentUri: null }], firstSeenAt: "2026-01-02T20:00:00Z", ingestedAt: "2026-01-02T20:00:00Z", asKnownAt: "2026-01-02T20:00:00Z", revisionId: "rev-1", schemaVersion: "1.0", quality: { flags: ["LATENCY_NOT_VERIFIED"], coverage: "FULL" }, rights: { policyId: "r3-rights", display: true, retentionUntil: null }, marketDate: "2026-01-02", value: [{ marketDate: "2026-01-02", open: "100.00", high: "110.00", low: "90.00", close: "100.50", volume: "42" }] }; } });
   assert.equal(result.status, "READY");
   assert.equal(result.candidates[0].listing?.mic, "XNGS");
   assert.equal(result.providerKey, "TWELVE_DATA");
@@ -82,4 +82,25 @@ test("R3 preview distinguishes ETF candidates and rejects malformed envelopes", 
 test("R3 rejects a price response whose identity differs from the requested listing", async () => {
   const connector = createTwelveDataCatalogConnector({ env: { TWELVE_DATA_API_KEY: "offline-only" }, source, transport: async () => new Response(JSON.stringify({ status: "ok", data: [{ symbol: "AAPL", instrument_name: "Apple Inc.", exchange: "Nasdaq Global Select Market", mic_code: "XNGS", currency: "USD", instrument_type: "Common Stock" }] }), { status: 200 }) });
   await assert.rejects(() => discoverMarketDataPreview({ connector, query: { ticker: "AAPL", marketMic: "XNGS" }, price: { env: priceEnv, quotaRemaining: 1, estimatedCredits: 1, rights: { policyId: "preview-rights", query: true, display: true, retentionUntil: null }, transport: async () => new Response(JSON.stringify({ status: "ok", meta: { symbol: "MSFT", interval: "1day", currency: "USD", exchange_timezone: "America/New_York", type: "Common Stock", mic_code: "XNAS" }, values: [{ datetime: "2026-01-02", open: "100.00", high: "110.00", low: "90.00", close: "100.50", volume: "42" }] }), { status: 200 }) }, selectedCandidateIndex: 0 }), /INVALID_PROVIDER_RESPONSE/);
+});
+
+test("R3 refuses an offline response with the wrong canonical instrument or listing", async () => {
+  const sample = {
+    status: "AVAILABLE", provider: "TWELVE_DATA",
+    sourceRefs: [{ provider: "TWELVE_DATA", originalSourceId: "time_series:EQUITY:XNGS:AAPL:USD:1day:none", requestId: null, sourceDocumentUri: null }],
+    firstSeenAt: "2026-01-02T20:00:00Z", ingestedAt: "2026-01-02T20:00:00Z", asKnownAt: "2026-01-02T20:00:00Z",
+    revisionId: "rev-test", schemaVersion: "1.0", quality: { flags: ["LATENCY_NOT_VERIFIED"], coverage: "FULL" },
+    rights: { policyId: "r3-rights", display: true, retentionUntil: null }, marketDate: "2026-01-02",
+    value: [{ marketDate: "2026-01-02", open: "100.00", high: "110.00", low: "90.00", close: "100.50", volume: "42" }],
+  };
+  for (const instrument of [
+    { kind: "EQUITY", symbol: "MSFT", mic: "XNGS", currency: "USD", instrumentId: ids.instrument, listingId: ids.listing },
+    { kind: "EQUITY", symbol: "AAPL", mic: "XNGS", currency: "USD", instrumentId: ids.instrument, listingId: "wrong-listing" },
+    { kind: "EQUITY", symbol: "AAPL", mic: "XNGS", currency: "USD" },
+  ]) {
+    await assert.rejects(() => discoverMarketDataForInvesting({
+      onboarding, capabilities: [capability], routing, claim, selectedProviderId: "provider-id",
+      provider: async () => ({ ...sample, instrument }),
+    }), /INVALID_PROVIDER_RESPONSE/);
+  }
 });
