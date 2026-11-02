@@ -148,7 +148,16 @@ export function convertWithFx(input: Readonly<{
         point.marketDate > input.asOf.slice(0, 10)) fail();
     amountParts(point.close, true);
   }
-  if (status !== "AVAILABLE" && point?.close !== null && point !== undefined) fail();
+  // Reject impossible or fabricated history states. A caller's differing rights
+  // policy is a normal LICENSE_BLOCKED outcome, not tampering of the SQL row.
+  const countVisible = input.history.points.filter(p => p.close !== null).length;
+  const countMasked = input.history.points.length - countVisible;
+  if ((input.history.status === "UNAVAILABLE" && input.history.points.length !== 0) ||
+      (input.history.status === "LICENSE_BLOCKED" && (countVisible !== 0 || countMasked === 0)) ||
+      (input.history.status === "AVAILABLE" && (countVisible === 0 || countMasked !== 0)) ||
+      (input.history.status === "PARTIAL" && (countVisible === 0 || countMasked === 0)) ||
+      (point?.close === null && (point.revisionId !== null || point.asKnownAt !== null ||
+         point.sourceRevision !== null || point.qualityFlags.length !== 0))) fail();
   return Object.freeze({
     status, fromCurrency: input.fromCurrency, toCurrency: input.toCurrency,
     inputAmount: input.amount,
