@@ -34,6 +34,14 @@ export function createMarketDataResult(input: Readonly<{
   return Object.freeze({ ...input, sourceRefs: Object.freeze([...input.sourceRefs]) });
 }
 
+export function readMarketDataForConsumer(
+  result: MarketDataResult,
+  requirement: Readonly<{ rightsPolicyId: string; requiresDisplay: boolean }>,
+): MarketDataResult | null {
+  if (result.rights.policyId !== requirement.rightsPolicyId || requirement.requiresDisplay && !result.rights.display) return null;
+  return result;
+}
+
 export type DataStatus = "AVAILABLE" | "STALE" | "PARTIAL" | "UNAVAILABLE" | "LICENSE_BLOCKED" | "AMBIGUOUS";
 export type SourceRef = Readonly<{
   provider: string;
