@@ -72,45 +72,164 @@ function isoUtc(value: unknown): value is string {
   return !Number.isNaN(date.valueOf()) && date.toISOString().slice(0, 19) === value.slice(0, 19);
 }
 
-function rowDate(value: string | Date): string { return value instanceof Date ? value.toISOString().slice(0, 10) : value; }
-function rowUtc(value: string | Date | null): string | null { return value === null ? null : value instanceof Date ? value.toISOString() : value; }
-function uuid(value: unknown): value is string { return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value); }
-function positiveDecimal(value: unknown): value is string { return typeof value === "string" && /^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(value) && /[1-9]/.test(value); }
+/** PostgreSQL UUID accepts all 128-bit hexadecimal values, not only RFC4122 v1-v5. */
+function uuid(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(value);
+}
+function positiveDecimal(value: unknown): value is string {
+  return typeof value === "string" && value.length <= 80 &&
+    /^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(value) && /[1-9]/.test(value);
+}
+/** pg decodes DATE as local midnight; UTC slicing shifts the day in positive timezones. */
+function rowDate(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (!(value instanceof Date) || Number.isNaN(value.getTime())) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+  const year = String(value.getFullYear()).padStart(4, "0");
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return year + "-" + month + "-" + day;
+}
+function rowUtc(value: unknown): string | null {
+  if (value === null) return null;
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+    return value.toISOString();
+  }
+  if (typeof value === "string") return value;
+  throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+}
+function validHistoricalRequest(value: unknown): value is HistoricalMarketDataRequest {
+  return object(value) && uuid(value.listingId) && marketDay(value.startDate) &&
+    marketDay(value.endDate) && value.startDate <= value.endDate && isoUtc(value.asOf) &&
+    value.interval === "1day" && value.adjustment === "none";
+}
+function validFlags(flags: unknown): flags is string[] {
+  return Array.isArray(flags) && flags.every(nonEmpty);
+}
 
-/** Converts rows returned by read_market_history; SQL rows are untrusted input at this boundary. */
+/** Converts untrusted SQL rows into a consumer-neutral, fail-closed historical result. */
 export function historicalRowsToResult(request: HistoricalMarketDataRequest, rows: readonly unknown[]): HistoricalMarketDataResult {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(request.startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(request.endDate) || request.startDate > request.endDate || !isoUtc(request.asOf)) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
-  if (rows.length === 0) return createHistoricalMarketDataResult({ request, status: "UNAVAILABLE", instrumentId: null, listingId: request.listingId, providerId: null, rightsPolicyId: null, currency: null, interval: request.interval, adjustment: request.adjustment, points: [] });
+  if (!validHistoricalRequest(request) || !Array.isArray(rows) || !rows.every(object)) {
+    throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+  }
+  if (rows.length === 0) return createHistoricalMarketDataResult({
+    request, status: "UNAVAILABLE", instrumentId: null, listingId: request.listingId,
+    providerId: null, rightsPolicyId: null, currency: null,
+    interval: request.interval, adjustment: request.adjustment, points: [],
+  });
+
   const typed = rows as readonly HistoricalMarketDataRow[];
   const first = typed[0];
-  if (!first || !uuid(first.listing_id) || !uuid(first.instrument_id) || !uuid(first.provider_id) || !uuid(first.rights_policy_id) || first.listing_id !== request.listingId || first.bar_interval !== request.interval || first.adjustment !== request.adjustment || !/^[A-Z]{3}$/.test(first.currency)) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
-  const providers = new Set(typed.map(row => row.provider_id));
-  const policies = new Set(typed.map(row => row.rights_policy_id));
-  const currencies = new Set(typed.map(row => row.currency));
-  if (providers.size !== 1 || policies.size !== 1 || currencies.size !== 1 || typed.some(row => row.listing_id !== first.listing_id || row.instrument_id !== first.instrument_id || row.bar_interval !== request.interval || row.adjustment !== request.adjustment)) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+  if (!uuid(first.listing_id) || !uuid(first.instrument_id) || !uuid(first.provider_id) ||
+      !uuid(first.rights_policy_id) || first.listing_id !== request.listingId ||
+      first.bar_interval !== request.interval || first.adjustment !== request.adjustment ||
+      !/^[A-Z]{3}$/.test(first.currency)) {
+    throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+  }
+
   const cutoff = Date.parse(request.asOf);
+  const seenDates = new Set<string>();
   const points = typed.map(row => {
-    const marketDate = rowDate(row.market_date); const asKnownAt = rowUtc(row.as_known_at);
-    if (!uuid(row.listing_id) || !uuid(row.instrument_id) || !uuid(row.provider_id) || !uuid(row.rights_policy_id) || !["AVAILABLE", "LICENSE_BLOCKED"].includes(row.status) || !/^\d{4}-\d{2}-\d{2}$/.test(marketDate) || marketDate < request.startDate || marketDate > request.endDate || marketDate > request.asOf.slice(0, 10) || (asKnownAt !== null && (!isoUtc(asKnownAt) || Date.parse(asKnownAt) > cutoff)) || (row.source_revision !== null && !/^[a-f0-9]{64}$/.test(row.source_revision)) || !Array.isArray(row.quality_flags ?? []) || !(row.quality_flags ?? []).every(flag => typeof flag === "string" && flag.length > 0)) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
-    if (row.status === "AVAILABLE" && (row.close_value === null || !uuid(row.revision_id) || !positiveDecimal(row.close_value))) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
-    if (row.status === "LICENSE_BLOCKED" && row.close_value !== null) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
-    return { marketDate, close: row.close_value, revisionId: row.revision_id, asKnownAt, sourceRevision: row.source_revision, qualityFlags: row.quality_flags ?? [] };
+    const marketDate = rowDate(row.market_date);
+    const asKnownAt = rowUtc(row.as_known_at);
+    if (!uuid(row.listing_id) || !uuid(row.instrument_id) || !uuid(row.provider_id) ||
+        !uuid(row.rights_policy_id) || row.listing_id !== first.listing_id ||
+        row.instrument_id !== first.instrument_id || row.provider_id !== first.provider_id ||
+        row.rights_policy_id !== first.rights_policy_id || row.currency !== first.currency ||
+        row.bar_interval !== request.interval || row.adjustment !== request.adjustment ||
+        (row.status !== "AVAILABLE" && row.status !== "LICENSE_BLOCKED") ||
+        !marketDay(marketDate) || marketDate < request.startDate ||
+        marketDate > request.endDate || marketDate > request.asOf.slice(0, 10) ||
+        seenDates.has(marketDate) || !validFlags(row.quality_flags) ||
+        (asKnownAt !== null && (!isoUtc(asKnownAt) || Date.parse(asKnownAt) > cutoff))) {
+      throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+    }
+    seenDates.add(marketDate);
+    if (row.status === "AVAILABLE") {
+      if (!uuid(row.revision_id) || !positiveDecimal(row.close_value) ||
+          asKnownAt === null || typeof row.source_revision !== "string" ||
+          !/^[a-f0-9]{64}$/.test(row.source_revision)) {
+        throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+      }
+    } else if (row.revision_id !== null || row.close_value !== null ||
+               asKnownAt !== null || row.source_revision !== null ||
+               row.quality_flags.length !== 0) {
+      throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+    }
+    return {
+      marketDate, close: row.close_value, revisionId: row.revision_id,
+      asKnownAt, sourceRevision: row.source_revision, qualityFlags: row.quality_flags,
+    };
   });
+
   const blocked = points.filter(point => point.close === null).length;
-  const status = blocked === points.length ? "LICENSE_BLOCKED" : blocked > 0 ? "PARTIAL" : "AVAILABLE";
-  return createHistoricalMarketDataResult({ request, status, instrumentId: first.instrument_id, listingId: first.listing_id, providerId: first.provider_id, rightsPolicyId: first.rights_policy_id, currency: first.currency, interval: request.interval, adjustment: request.adjustment, points });
+  const status = blocked === points.length ? "LICENSE_BLOCKED" :
+    blocked > 0 ? "PARTIAL" : "AVAILABLE";
+  return createHistoricalMarketDataResult({
+    request, status, instrumentId: first.instrument_id, listingId: first.listing_id,
+    providerId: first.provider_id, rightsPolicyId: first.rights_policy_id,
+    currency: first.currency, interval: request.interval, adjustment: request.adjustment, points,
+  });
 }
 
 export function createHistoricalMarketDataResult(input: HistoricalMarketDataResult): HistoricalMarketDataResult {
-  if (!/^[0-9a-f-]{36}$/.test(input.listingId) || input.request.listingId !== input.listingId) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.request.startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(input.request.endDate) || input.request.startDate > input.request.endDate) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
-  if (!isoUtc(input.request.asOf) || input.interval !== input.request.interval || input.adjustment !== input.request.adjustment) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
-  const cutoff = Date.parse(input.request.asOf);
-  if (input.status === "AVAILABLE" && input.points.length === 0 || input.status === "LICENSE_BLOCKED" && input.points.some(point => point.close !== null) || input.status === "UNAVAILABLE" && input.points.length !== 0) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
-  for (const point of input.points) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(point.marketDate) || point.marketDate < input.request.startDate || point.marketDate > input.request.endDate || point.marketDate > input.request.asOf.slice(0, 10) || (point.asKnownAt !== null && (!isoUtc(point.asKnownAt) || Date.parse(point.asKnownAt) > cutoff))) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+  if (!object(input) || !validHistoricalRequest(input.request) ||
+      input.listingId !== input.request.listingId ||
+      input.interval !== input.request.interval ||
+      input.adjustment !== input.request.adjustment || !Array.isArray(input.points) ||
+      !["AVAILABLE", "PARTIAL", "LICENSE_BLOCKED", "UNAVAILABLE"].includes(input.status)) {
+    throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
   }
-  return Object.freeze({ ...input, points: Object.freeze(input.points.map(point => Object.freeze({ ...point, qualityFlags: Object.freeze([...point.qualityFlags]) }))) });
+  if (input.status === "UNAVAILABLE") {
+    if (input.points.length !== 0 || input.instrumentId !== null ||
+        input.providerId !== null || input.rightsPolicyId !== null ||
+        input.currency !== null) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+  } else if (!uuid(input.instrumentId) || !uuid(input.providerId) ||
+             !uuid(input.rightsPolicyId) || typeof input.currency !== "string" ||
+             !/^[A-Z]{3}$/.test(input.currency) || input.points.length === 0) {
+    throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+  }
+
+  const cutoff = Date.parse(input.request.asOf);
+  let available = 0;
+  let blocked = 0;
+  const dates = new Set<string>();
+  for (const point of input.points) {
+    if (!object(point) || !marketDay(point.marketDate) ||
+        point.marketDate < input.request.startDate ||
+        point.marketDate > input.request.endDate ||
+        point.marketDate > input.request.asOf.slice(0, 10) ||
+        dates.has(point.marketDate) || !validFlags(point.qualityFlags) ||
+        (point.asKnownAt !== null &&
+          (!isoUtc(point.asKnownAt) || Date.parse(point.asKnownAt) > cutoff))) {
+      throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+    }
+    dates.add(point.marketDate);
+    if (point.close === null) {
+      blocked++;
+      if (point.revisionId !== null || point.asKnownAt !== null ||
+          point.sourceRevision !== null || point.qualityFlags.length !== 0) {
+        throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+      }
+    } else {
+      available++;
+      if (!positiveDecimal(point.close) || !uuid(point.revisionId) ||
+          !isoUtc(point.asKnownAt) || typeof point.sourceRevision !== "string" ||
+          !/^[a-f0-9]{64}$/.test(point.sourceRevision)) {
+        throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+      }
+    }
+  }
+  if ((input.status === "AVAILABLE" && (available === 0 || blocked !== 0)) ||
+      (input.status === "LICENSE_BLOCKED" && (blocked === 0 || available !== 0)) ||
+      (input.status === "PARTIAL" && (blocked === 0 || available === 0))) {
+    throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+  }
+  return Object.freeze({
+    ...input,
+    points: Object.freeze(input.points.map(point =>
+      Object.freeze({ ...point, qualityFlags: Object.freeze([...point.qualityFlags]) }))),
+  });
 }
 
 export function readMarketDataForConsumer(

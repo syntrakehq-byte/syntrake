@@ -41,12 +41,18 @@ LANGUAGE sql STABLE AS $$
   )
   SELECT x.listing_id, x.instrument_id, x.provider_id, x.rights_policy_id, x.currency, x.interval, x.adjustment,
          x.market_date,
-         CASE WHEN lp.display_allowed AND lp.cache_allowed AND (lp.retention_until IS NULL OR lp.retention_until > CURRENT_TIMESTAMP) THEN 'AVAILABLE' ELSE 'LICENSE_BLOCKED' END,
-         CASE WHEN lp.display_allowed AND lp.cache_allowed AND (lp.retention_until IS NULL OR lp.retention_until > CURRENT_TIMESTAMP) THEN x.revision_id ELSE NULL END,
-         CASE WHEN lp.display_allowed AND lp.cache_allowed AND (lp.retention_until IS NULL OR lp.retention_until > CURRENT_TIMESTAMP) THEN x.close_value ELSE NULL END,
-         x.as_known_at, x.source_revision, x.quality_flags
+         CASE WHEN ent.allowed THEN 'AVAILABLE' ELSE 'LICENSE_BLOCKED' END,
+         CASE WHEN ent.allowed THEN x.revision_id ELSE NULL END,
+         CASE WHEN ent.allowed THEN x.close_value ELSE NULL END,
+         CASE WHEN ent.allowed THEN x.as_known_at ELSE NULL END,
+         CASE WHEN ent.allowed THEN x.source_revision ELSE NULL END,
+         CASE WHEN ent.allowed THEN x.quality_flags ELSE ARRAY[]::text[] END
   FROM ranked x
   JOIN market_core.license_policies lp ON lp.rights_policy_id = x.rights_policy_id
+  CROSS JOIN LATERAL (
+    SELECT (lp.display_allowed AND lp.cache_allowed AND
+      (lp.retention_until IS NULL OR lp.retention_until > statement_timestamp())) AS allowed
+  ) ent
   WHERE x.rn = 1;
 $$;
 REVOKE ALL ON FUNCTION market_core.read_market_history(uuid,date,date,timestamptz,text,text) FROM PUBLIC;
