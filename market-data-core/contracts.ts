@@ -1,4 +1,29 @@
 import { MarketDataError } from "./identity";
+import type { InstrumentIdentity } from "./identity";
+
+/** Consumer-neutral market result. Consumer quantity/valuation is deliberately absent. */
+export type MarketDataResult = Readonly<{
+  instrument: InstrumentIdentity;
+  listingRef: string | null;
+  sourceRefs: readonly SourceRef[];
+  revisionId: string;
+  price: string;
+  currency: string;
+  marketDate: string;
+  asOf: string;
+  quality: Readonly<{ coverage: "FULL" | "PARTIAL" | "NONE"; freshness: "KNOWN" | "UNKNOWN" }>;
+  rights: Readonly<{ policyId: string; display: boolean; retentionUntil: string | null }>;
+  interval: "1day";
+  adjustment: "none";
+}>;
+
+export function readMarketDataForConsumer(
+  result: MarketDataResult,
+  requirement: Readonly<{ rightsPolicyId: string; requiresDisplay: boolean; interval?: "1day" | "1hour" | "1min" }>,
+): MarketDataResult | null {
+  if (result.rights.policyId !== requirement.rightsPolicyId || (requirement.requiresDisplay && !result.rights.display) || (requirement.interval !== undefined && result.interval !== requirement.interval)) return null;
+  return result;
+}
 
 export type DataStatus = "AVAILABLE" | "STALE" | "PARTIAL" | "UNAVAILABLE" | "LICENSE_BLOCKED" | "AMBIGUOUS";
 export type SourceRef = Readonly<{
