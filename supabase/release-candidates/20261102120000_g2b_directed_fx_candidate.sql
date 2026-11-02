@@ -28,6 +28,9 @@ END;
 $$;
 CREATE TRIGGER fx_pair_validate BEFORE INSERT OR UPDATE ON market_core.fx_pairs
   FOR EACH ROW EXECUTE FUNCTION market_core.check_fx_pair_binding();
+-- The directed currency mapping is immutable once registered, like PIT revisions.
+CREATE TRIGGER fx_pair_append_only BEFORE UPDATE OR DELETE ON market_core.fx_pairs
+  FOR EACH ROW EXECUTE FUNCTION market_core.prevent_revision_mutation();
 ALTER TABLE market_core.fx_pairs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE market_core.fx_pairs FORCE ROW LEVEL SECURITY;
 REVOKE ALL ON market_core.fx_pairs FROM PUBLIC;

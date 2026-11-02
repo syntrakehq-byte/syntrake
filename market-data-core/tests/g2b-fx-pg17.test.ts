@@ -68,17 +68,22 @@ test("G2-B directs EUR/USD explicitly, PIT chooses known revision, no inverse im
   const inverse=(await client.query(reverse,["2026-01-06T00:00:00Z"])).rows;
   assert.equal(inverse.length,0);
   assert.equal(fxHistoryFromRows({...request(),baseCurrency:"USD",quoteCurrency:"EUR"},inverse).status,"UNAVAILABLE");
-  assert.throws(()=>convertWithFx({history:newer,amount:"2",fromCurrency:"USD",toCurrency:"EUR",marketDate:"2026-01-02",asOf:newer.request.asOf}),/INVALID_PROVIDER_RESPONSE/);
+  assert.throws(()=>convertWithFx({history:newer,amount:"2",fromCurrency:"USD",toCurrency:"EUR",marketDate:"2026-01-02",asOf:newer.request.asOf,requiredRightsPolicyId:ids.rights}),/INVALID_PROVIDER_RESPONSE/);
 });
 
 test("G2-B exact decimal multiplication without rounding, no future rates or holiday fallback",async()=>{
   const history=fxHistoryFromRows(request(),(await client.query(query,["2026-01-04T23:00:00Z"])).rows);
-  const input={history,amount:"0.96",fromCurrency:"EUR",toCurrency:"USD",marketDate:"2026-01-02",asOf:history.request.asOf};
+  const input={history,amount:"0.96",fromCurrency:"EUR",toCurrency:"USD",marketDate:"2026-01-02",asOf:history.request.asOf,requiredRightsPolicyId:ids.rights};
   const result=convertWithFx(input);
   assert.equal(result.status,"AVAILABLE");
   assert.equal(result.convertedAmount,"1.0752");
   assert.equal(result.rate,"1.120000000000");
   assert.equal(result.revisionId,ids.revisionOld);
+  const deniedConsumer=convertWithFx({...input,requiredRightsPolicyId:"00000000-0000-0000-0000-000000000299"});
+  assert.equal(deniedConsumer.status,"LICENSE_BLOCKED");
+  assert.equal(deniedConsumer.convertedAmount,null);
+  assert.equal(deniedConsumer.revisionId,null);
+  assert.throws(()=>convertWithFx({...input,requiredRightsPolicyId:""}),/INVALID_PROVIDER_RESPONSE/);
   assert.equal(convertWithFx({...input,amount:"-1000000000000000000.01"}).convertedAmount,"-1120000000000000000.0112");
   const noDay=convertWithFx({...input,marketDate:"2026-01-03"});
   assert.equal(noDay.status,"UNAVAILABLE");
@@ -91,6 +96,8 @@ test("G2-B exact decimal multiplication without rounding, no future rates or hol
 
 test("G2-B immutable pair binding and provenance checks",async()=>{
   await assert.rejects(client.query("INSERT INTO market_core.fx_pairs (listing_id,base_currency,quote_currency) VALUES ($1,'USD','EUR')",[ids.fxListing]));
+  await assert.rejects(client.query("UPDATE market_core.fx_pairs SET base_currency='USD' WHERE listing_id=$1",[ids.fxListing]));
+  await assert.rejects(client.query("DELETE FROM market_core.fx_pairs WHERE listing_id=$1",[ids.fxListing]));
   const rows=(await client.query(query,["2026-01-04T23:00:00Z"])).rows;
   assert.throws(()=>fxHistoryFromRows(request(),[{...rows[0],fx_base_currency:"USD"}]),/INVALID_PROVIDER_RESPONSE/);
   assert.throws(()=>fxHistoryFromRows(request(),[{...rows[0],currency:"EUR"}]),/INVALID_PROVIDER_RESPONSE/);
@@ -106,7 +113,7 @@ test("G2-B license is checked at read time, source metadata masked; no client ro
   assert.equal(rows[0].source_revision,null);
   assert.equal(rows[0].status,"LICENSE_BLOCKED");
   const history=fxHistoryFromRows(request(),rows);
-  assert.equal(convertWithFx({history,amount:"10",fromCurrency:"EUR",toCurrency:"USD",marketDate:"2026-01-02",asOf:history.request.asOf}).convertedAmount,null);
+  assert.equal(convertWithFx({history,amount:"10",fromCurrency:"EUR",toCurrency:"USD",marketDate:"2026-01-02",asOf:history.request.asOf,requiredRightsPolicyId:ids.rights}).convertedAmount,null);
   await client.query("UPDATE market_core.license_policies SET display_allowed=true,retention_until=CURRENT_TIMESTAMP - INTERVAL '1 day' WHERE rights_policy_id=$1",[ids.rights]);
   rows=(await client.query(query,["2026-01-04T23:00:00Z"])).rows;
   assert.equal(rows[0].status,"LICENSE_BLOCKED");

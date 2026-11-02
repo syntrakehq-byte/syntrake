@@ -119,6 +119,8 @@ export function convertWithFx(input: Readonly<{
   toCurrency: string;
   marketDate: string;
   asOf: string;
+  /** Policy authorized by the internal consuming service; mismatches must not receive FX. */
+  requiredRightsPolicyId: string;
 }>): FxConversionResult {
   if (!object(input) || !validRequest(input.history?.request) ||
       input.fromCurrency !== input.history.request.baseCurrency ||
@@ -126,6 +128,8 @@ export function convertWithFx(input: Readonly<{
       input.marketDate < input.history.request.startDate ||
       input.marketDate > input.history.request.endDate ||
       !validMarketDate(input.marketDate) || !utc(input.asOf) ||
+      typeof input.requiredRightsPolicyId !== "string" ||
+      input.requiredRightsPolicyId.length === 0 ||
       input.asOf !== input.history.request.asOf ||
       !Array.isArray(input.history.points) ||
       !["AVAILABLE", "PARTIAL", "LICENSE_BLOCKED", "UNAVAILABLE"].includes(input.history.status)) fail();
@@ -134,7 +138,9 @@ export function convertWithFx(input: Readonly<{
   if (selected.length > 1) fail();
   const point = selected[0];
   const status: FxConversionResult["status"] =
-    !point ? "UNAVAILABLE" : point.close === null ? "LICENSE_BLOCKED" : "AVAILABLE";
+    !point ? "UNAVAILABLE" :
+    point.close === null || input.history.rightsPolicyId !== input.requiredRightsPolicyId
+      ? "LICENSE_BLOCKED" : "AVAILABLE";
   if (status === "AVAILABLE") {
     if (!input.history.providerId || !input.history.rightsPolicyId || !point.revisionId ||
         !point.asKnownAt || !utc(point.asKnownAt) ||
