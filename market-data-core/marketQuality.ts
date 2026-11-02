@@ -133,7 +133,7 @@ export function tradingCalendarFromRows(
   });
   const typed=rows as readonly Record<string,unknown>[];
   const rights=typed[0].rights_policy_id;
-  if(!uuid(rights))bad();
+  if(!uuid(rights))return bad();
   const sessions:CalendarSession[]=typed.map(row=>{
     if(row.listing_id!==request.listingId||row.provider_id!==request.providerId||
        row.rights_policy_id!==rights||
