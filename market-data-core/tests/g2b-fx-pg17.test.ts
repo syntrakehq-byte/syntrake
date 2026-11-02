@@ -26,8 +26,10 @@ const request = (asOf = "2026-01-04T23:00:00Z") => ({
 const query = "SELECT * FROM market_core.read_fx_history('EUR','USD',DATE '2026-01-01',DATE '2026-01-31',$1)";
 const reverse = "SELECT * FROM market_core.read_fx_history('USD','EUR',DATE '2026-01-01',DATE '2026-01-31',$1)";
 
+let connected = false;
 before(async () => {
   await client.connect();
+  connected = true;
   assert.match((await client.query("SELECT current_setting('server_version') version")).rows[0].version,/^17\./);
   for (const file of [
     "supabase/release-candidates/20261031150000_r3b_market_core_candidate.sql",
@@ -44,7 +46,7 @@ before(async () => {
   await client.query("INSERT INTO market_core.market_observation_revisions (revision_id,observation_id,listing_id,source_revision,open_value,high_value,low_value,close_value,first_seen_at,ingested_at,as_known_at,quality_flags) VALUES ($1,$2,$3,repeat('a',64),1.1,1.3,1.0,1.12,'2026-01-03Z','2026-01-03Z','2026-01-03Z',ARRAY['FX_VERIFIED']),($4,$2,$3,repeat('b',64),1.1,1.3,1.0,1.20,'2026-01-05Z','2026-01-05Z','2026-01-05Z',ARRAY['FX_CORRECTED'])",[ids.revisionOld,ids.observation,ids.fxListing,ids.revisionNew]);
 });
 after(async () => {
-  if (client._connected) {
+  if (connected) {
     await client.query("DROP SCHEMA IF EXISTS market_core CASCADE");
     for(const r of ["market_core_reader","market_core_ingest","market_core_catalog_ingest","market_core_catalog_reader","market_core_registry_reviewer","anon","authenticated"]){
       await client.query("DROP ROLE IF EXISTS "+r);
