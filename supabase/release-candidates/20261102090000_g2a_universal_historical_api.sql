@@ -13,7 +13,7 @@ RETURNS TABLE (
   provider_id uuid,
   rights_policy_id uuid,
   currency text,
-  interval text,
+  bar_interval text,
   adjustment text,
   market_date date,
   status text,
@@ -25,7 +25,7 @@ RETURNS TABLE (
 )
 LANGUAGE sql STABLE AS $$
   WITH ranked AS (
-    SELECT o.listing_id, l.instrument_id, o.provider_id, o.rights_policy_id, l.currency, o.interval, o.adjustment,
+    SELECT o.listing_id, l.instrument_id, o.provider_id, o.rights_policy_id, l.trading_currency::text, o.interval, o.adjustment,
            o.market_date, r.revision_id, r.close_value, r.as_known_at, r.source_revision, r.quality_flags,
            row_number() OVER (PARTITION BY o.observation_id ORDER BY r.as_known_at DESC, r.ingested_at DESC, r.revision_id DESC) AS rn
     FROM market_core.market_observations o
