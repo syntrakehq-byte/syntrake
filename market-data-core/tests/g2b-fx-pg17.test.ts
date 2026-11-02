@@ -105,7 +105,7 @@ test("G2-B license is checked at read time, source metadata masked; no client ro
   assert.equal(rows[0].close_value,null);
   assert.equal(rows[0].source_revision,null);
   assert.equal(rows[0].status,"LICENSE_BLOCKED");
-  let history=fxHistoryFromRows(request(),rows);
+  const history=fxHistoryFromRows(request(),rows);
   assert.equal(convertWithFx({history,amount:"10",fromCurrency:"EUR",toCurrency:"USD",marketDate:"2026-01-02",asOf:history.request.asOf}).convertedAmount,null);
   await client.query("UPDATE market_core.license_policies SET display_allowed=true,retention_until=CURRENT_TIMESTAMP - INTERVAL '1 day' WHERE rights_policy_id=$1",[ids.rights]);
   rows=(await client.query(query,["2026-01-04T23:00:00Z"])).rows;
