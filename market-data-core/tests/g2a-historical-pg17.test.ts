@@ -82,7 +82,7 @@ test("G2-A rejects tampered SQL rows and impossible result states", async () => 
     { revision_id: "invalid" }, { as_known_at: new Date("2026-01-05T00:00:00Z") },
     { source_revision: "invalid" }, { source_revision: null },
     { quality_flags: [""] }, { quality_flags: "VERIFIED" },
-    { market_date: "2026-02-30" }, { currency: "EUR" },
+    { market_date: "2026-02-30" }, { currency: "US1" },
   ] as const;
   for (const fields of invalid) {
     assert.throws(() => historicalRowsToResult(request(ids.listing, "2026-01-04T00:00:00Z"), [{ ...row, ...fields }]), { code: "INVALID_PROVIDER_RESPONSE" });

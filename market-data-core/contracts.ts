@@ -118,7 +118,7 @@ export function historicalRowsToResult(request: HistoricalMarketDataRequest, row
     interval: request.interval, adjustment: request.adjustment, points: [],
   });
 
-  const typed = rows as readonly HistoricalMarketDataRow[];
+  const typed = rows as unknown as readonly HistoricalMarketDataRow[];
   const first = typed[0];
   if (!uuid(first.listing_id) || !uuid(first.instrument_id) || !uuid(first.provider_id) ||
       !uuid(first.rights_policy_id) || first.listing_id !== request.listingId ||
