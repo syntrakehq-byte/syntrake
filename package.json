@@ -19,6 +19,7 @@
     "typecheck:market-data": "tsc -p tsconfig.market-data.json --noEmit",
     "test:market-data:r3b": "tsx --test market-data-core/tests/r3b-pg17.test.ts",
     "test:market-data:g2a": "tsx --test --test-timeout=20000 market-data-core/tests/g2a-historical-pg17.test.ts",
+    "test:market-data:g2b": "tsx --test --test-timeout=20000 market-data-core/tests/g2b-fx-pg17.test.ts",
     "test:market-data:d1": "tsx --test --test-timeout=20000 market-data-core/tests/d1-registry-pg17.test.ts",
     "test:market-data:d2": "tsx --test --test-timeout=10000 market-data-core/tests/d2-catalog-connectors.test.ts",
     "test:market-data:d3": "tsx --test --test-timeout=10000 market-data-core/tests/d3-canonical-identity.test.ts",
