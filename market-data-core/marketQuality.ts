@@ -52,14 +52,14 @@ function utc(x: unknown): x is string {
 }
 function dayFromPg(x: unknown): string {
   if (typeof x === "string") return x;
-  if (!(x instanceof Date) || Number.isNaN(x.getTime())) bad();
+  if (!(x instanceof Date) || Number.isNaN(x.getTime())) return bad();
   return [String(x.getFullYear()).padStart(4,"0"),String(x.getMonth()+1).padStart(2,"0"),
     String(x.getDate()).padStart(2,"0")].join("-");
 }
 function utcFromPg(x: unknown): string | null {
   if (x === null) return null;
   if (typeof x === "string") return x;
-  if (!(x instanceof Date) || Number.isNaN(x.getTime())) bad();
+  if (!(x instanceof Date) || Number.isNaN(x.getTime())) return bad();
   return x.toISOString();
 }
 function validTimezone(x: unknown): x is string {
@@ -131,9 +131,10 @@ export function tradingCalendarFromRows(
   if(rows.length===0)return Object.freeze({
     request,status:"UNAVAILABLE" as const,rightsPolicyId:null,sessions:Object.freeze([]),
   });
-  const rights=rows[0].rights_policy_id;
+  const typed=rows as readonly Record<string,unknown>[];
+  const rights=typed[0].rights_policy_id;
   if(!uuid(rights))bad();
-  const sessions:CalendarSession[]=rows.map(row=>{
+  const sessions:CalendarSession[]=typed.map(row=>{
     if(row.listing_id!==request.listingId||row.provider_id!==request.providerId||
        row.rights_policy_id!==rights||
        !["AVAILABLE","LICENSE_BLOCKED"].includes(String(row.status)))bad();
