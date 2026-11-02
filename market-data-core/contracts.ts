@@ -74,6 +74,8 @@ function isoUtc(value: unknown): value is string {
 
 function rowDate(value: string | Date): string { return value instanceof Date ? value.toISOString().slice(0, 10) : value; }
 function rowUtc(value: string | Date | null): string | null { return value === null ? null : value instanceof Date ? value.toISOString() : value; }
+function uuid(value: unknown): value is string { return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value); }
+function positiveDecimal(value: unknown): value is string { return typeof value === "string" && /^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(value) && /[1-9]/.test(value); }
 
 /** Converts rows returned by read_market_history; SQL rows are untrusted input at this boundary. */
 export function historicalRowsToResult(request: HistoricalMarketDataRequest, rows: readonly unknown[]): HistoricalMarketDataResult {
@@ -81,7 +83,7 @@ export function historicalRowsToResult(request: HistoricalMarketDataRequest, row
   if (rows.length === 0) return createHistoricalMarketDataResult({ request, status: "UNAVAILABLE", instrumentId: null, listingId: request.listingId, providerId: null, rightsPolicyId: null, currency: null, interval: request.interval, adjustment: request.adjustment, points: [] });
   const typed = rows as readonly HistoricalMarketDataRow[];
   const first = typed[0];
-  if (!first || first.listing_id !== request.listingId || first.bar_interval !== request.interval || first.adjustment !== request.adjustment || !/^[A-Z]{3}$/.test(first.currency)) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+  if (!first || !uuid(first.listing_id) || !uuid(first.instrument_id) || !uuid(first.provider_id) || !uuid(first.rights_policy_id) || first.listing_id !== request.listingId || first.bar_interval !== request.interval || first.adjustment !== request.adjustment || !/^[A-Z]{3}$/.test(first.currency)) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
   const providers = new Set(typed.map(row => row.provider_id));
   const policies = new Set(typed.map(row => row.rights_policy_id));
   const currencies = new Set(typed.map(row => row.currency));
@@ -89,8 +91,8 @@ export function historicalRowsToResult(request: HistoricalMarketDataRequest, row
   const cutoff = Date.parse(request.asOf);
   const points = typed.map(row => {
     const marketDate = rowDate(row.market_date); const asKnownAt = rowUtc(row.as_known_at);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(marketDate) || marketDate < request.startDate || marketDate > request.endDate || marketDate > request.asOf.slice(0, 10) || (asKnownAt !== null && (!isoUtc(asKnownAt) || Date.parse(asKnownAt) > cutoff)) || (row.source_revision !== null && !/^[a-f0-9]{64}$/.test(row.source_revision)) || !Array.isArray(row.quality_flags ?? [])) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
-    if (row.status === "AVAILABLE" && (row.close_value === null || row.revision_id === null)) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+    if (!uuid(row.listing_id) || !uuid(row.instrument_id) || !uuid(row.provider_id) || !uuid(row.rights_policy_id) || !["AVAILABLE", "LICENSE_BLOCKED"].includes(row.status) || !/^\d{4}-\d{2}-\d{2}$/.test(marketDate) || marketDate < request.startDate || marketDate > request.endDate || marketDate > request.asOf.slice(0, 10) || (asKnownAt !== null && (!isoUtc(asKnownAt) || Date.parse(asKnownAt) > cutoff)) || (row.source_revision !== null && !/^[a-f0-9]{64}$/.test(row.source_revision)) || !Array.isArray(row.quality_flags ?? []) || !(row.quality_flags ?? []).every(flag => typeof flag === "string" && flag.length > 0)) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+    if (row.status === "AVAILABLE" && (row.close_value === null || !uuid(row.revision_id) || !positiveDecimal(row.close_value))) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
     if (row.status === "LICENSE_BLOCKED" && row.close_value !== null) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
     return { marketDate, close: row.close_value, revisionId: row.revision_id, asKnownAt, sourceRevision: row.source_revision, qualityFlags: row.quality_flags ?? [] };
   });

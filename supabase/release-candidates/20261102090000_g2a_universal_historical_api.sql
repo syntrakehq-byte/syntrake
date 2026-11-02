@@ -41,9 +41,9 @@ LANGUAGE sql STABLE AS $$
   )
   SELECT x.listing_id, x.instrument_id, x.provider_id, x.rights_policy_id, x.currency, x.interval, x.adjustment,
          x.market_date,
-         CASE WHEN lp.display_allowed AND lp.cache_allowed AND (lp.retention_until IS NULL OR lp.retention_until > p_cutoff) THEN 'AVAILABLE' ELSE 'LICENSE_BLOCKED' END,
-         CASE WHEN lp.display_allowed AND lp.cache_allowed AND (lp.retention_until IS NULL OR lp.retention_until > p_cutoff) THEN x.revision_id ELSE NULL END,
-         CASE WHEN lp.display_allowed AND lp.cache_allowed AND (lp.retention_until IS NULL OR lp.retention_until > p_cutoff) THEN x.close_value ELSE NULL END,
+         CASE WHEN lp.display_allowed AND lp.cache_allowed AND (lp.retention_until IS NULL OR lp.retention_until > CURRENT_TIMESTAMP) THEN 'AVAILABLE' ELSE 'LICENSE_BLOCKED' END,
+         CASE WHEN lp.display_allowed AND lp.cache_allowed AND (lp.retention_until IS NULL OR lp.retention_until > CURRENT_TIMESTAMP) THEN x.revision_id ELSE NULL END,
+         CASE WHEN lp.display_allowed AND lp.cache_allowed AND (lp.retention_until IS NULL OR lp.retention_until > CURRENT_TIMESTAMP) THEN x.close_value ELSE NULL END,
          x.as_known_at, x.source_revision, x.quality_flags
   FROM ranked x
   JOIN market_core.license_policies lp ON lp.rights_policy_id = x.rights_policy_id
