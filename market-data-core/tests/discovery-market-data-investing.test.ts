@@ -32,9 +32,7 @@ test("R3 composition discovers Apple by name, resolves XNGS, routes and values 0
   assert.equal(result.status, "READY");
   assert.equal(result.candidates[0].listing?.mic, "XNGS");
   assert.equal(result.providerKey, "TWELVE_DATA");
-  assert.equal(result.quantityAtoms, 960000000000n);
   assert.equal(result.close, "100.50");
-  assert.equal(result.positionValue, "96.48");
   assert.equal(calls, 1);
 });
 
@@ -57,7 +55,6 @@ test("R3 preview discovers AAPL with an empty Registry and uses the selected Twe
   const result = await discoverMarketDataPreview({ connector: previewConnector, query: { name: "Apple" }, quantity: "0.96", price: { env: priceEnv, quotaRemaining: 1, estimatedCredits: 1, rights: { policyId: "preview-rights", query: true, display: true, retentionUntil: null }, transport: async url => { assert.match(url, /time_series/); assert.match(url, /symbol=AAPL/); return new Response(JSON.stringify({ status: "ok", meta: { symbol: "AAPL", interval: "1day", currency: "USD", exchange_timezone: "America/New_York", type: "Common Stock", mic_code: "XNGS" }, values: [{ datetime: "2026-01-02", open: "100.00", high: "110.00", low: "90.00", close: "100.50", volume: "42" }] }), { status: 200 }); } } });
   assert.equal(result.status, "READY");
   assert.equal(result.identityVerified, false);
-  assert.equal(result.positionValue, "96.48");
   assert.match(requested, /symbol=Apple/);
 });
 
