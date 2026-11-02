@@ -11,6 +11,8 @@ export type CorporateActionRevision = Readonly<{
 export type CorporateActionRow = Readonly<Record<string, unknown>>;
 export type AdjustedCandle = Readonly<{ marketDate: string; open: string; high: string; low: string; close: string; volume: string | null }>;
 export type CorporateActionAdjustmentResult = Readonly<{ status: "AVAILABLE" | "UNAVAILABLE"; candles: readonly AdjustedCandle[]; appliedRevisionIds: readonly string[]; reason: string | null }>;
+// ratioFrom: source units, ratioTo: resulting units. A 2:1 split halves historical prices and doubles volume.
+// All adjusted prices use fixed 12-decimal scale and round half-up; volume must remain an integer.
 
 const UUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -24,7 +26,8 @@ function utc(value: unknown): string { if (value instanceof Date) { if (Number.i
 function uuid(value: unknown): string { if (typeof value !== "string" || !UUID.test(value)) return bad(); return value; }
 function fixed(value: string): bigint { const [whole, fraction = ""] = value.split("."); return BigInt(whole) * SCALE + BigInt(fraction.padEnd(12, "0")); }
 function format(value: bigint): string { const sign = value < 0n ? "-" : ""; const abs = value < 0n ? -value : value; const whole = abs / SCALE; const fraction = (abs % SCALE).toString().padStart(12, "0").replace(/0+$/, ""); return `${sign}${whole}${fraction ? `.${fraction}` : ""}`; }
-function multiplyRatio(value: string, numerator: bigint, denominator: bigint): string { if (denominator <= 0n || numerator <= 0n) return bad(); return format((fixed(value) * numerator) / denominator); }
+function multiplyRatio(value: string, numerator: bigint, denominator: bigint): string { if (denominator <= 0n || numerator <= 0n) return bad(); const product = fixed(value) * numerator; const quotient = product / denominator; const remainder = product % denominator; return format(quotient + (remainder * 2n >= denominator ? 1n : 0n)); }
+function multiplyVolume(value: string, numerator: bigint, denominator: bigint): string { const result = multiplyRatio(value, numerator, denominator); if (fixed(result) % SCALE !== 0n) return bad(); return result; }
 function validCandle(candle: AdjustedCandle): void { date(candle.marketDate); decimal(candle.open); decimal(candle.high); decimal(candle.low); decimal(candle.close); if (candle.volume !== null) decimal(candle.volume, false); }
 
 export function corporateActionFromRow(row: CorporateActionRow): CorporateActionRevision {
@@ -43,10 +46,10 @@ export function selectCorporateActionsPIT(rows: readonly CorporateActionRow[], l
   return Object.freeze([...selected.values()].sort((a, b) => a.exDate.localeCompare(b.exDate) || a.revisionId.localeCompare(b.revisionId)));
 }
 
-export function adjustHistoricalSeries(input: Readonly<{ candles: readonly AdjustedCandle[]; actions: readonly CorporateActionRevision[]; adjustment: CorporateActionAdjustment; quoteCurrency: string; sourceAdjustment?: "none" | "splits" | "dividends" | "all" }>): CorporateActionAdjustmentResult {
-  if (!Array.isArray(input.candles) || !["none", "splits", "dividends", "all"].includes(input.adjustment) || !/^[A-Z]{3}$/.test(input.quoteCurrency) || input.sourceAdjustment !== undefined && input.sourceAdjustment !== "none") return { status: "UNAVAILABLE", candles: [], appliedRevisionIds: [], reason: "INSUFFICIENT_ADJUSTMENT_PROVENANCE" };
+export function adjustHistoricalSeries(input: Readonly<{ candles: readonly AdjustedCandle[]; actions: readonly CorporateActionRevision[]; adjustment: CorporateActionAdjustment; quoteCurrency: string; listingId: string; providerId: string; rightsPolicyId: string; asOf: string; sourceAdjustment?: "none" | "splits" | "dividends" | "all" }>): CorporateActionAdjustmentResult {
+  if (!Array.isArray(input.candles) || !["none", "splits", "dividends", "all"].includes(input.adjustment) || !/^[A-Z]{3}$/.test(input.quoteCurrency) || !UUID.test(input.listingId) || !UUID.test(input.providerId) || !UUID.test(input.rightsPolicyId) || !UTC.test(input.asOf) || input.sourceAdjustment !== undefined && input.sourceAdjustment !== "none") return { status: "UNAVAILABLE", candles: [], appliedRevisionIds: [], reason: "INSUFFICIENT_ADJUSTMENT_PROVENANCE" };
   const candles = [...input.candles].sort((a, b) => a.marketDate.localeCompare(b.marketDate)); candles.forEach(validCandle); if (input.adjustment === "none") return { status: "AVAILABLE", candles, appliedRevisionIds: [], reason: null };
-  const actions = [...input.actions]; const seen = new Set<string>(); for (const action of actions) { if (seen.has(action.revisionId)) return { status: "UNAVAILABLE", candles: [], appliedRevisionIds: [], reason: "DUPLICATE_ACTION_REVISION" }; seen.add(action.revisionId); }
+  const actions = [...input.actions]; const seen = new Set<string>(); const actionIds = new Set<string>(); for (const action of actions) { if (seen.has(action.revisionId) || actionIds.has(action.actionId) || action.listingId !== input.listingId || action.providerId !== input.providerId || action.rightsPolicyId !== input.rightsPolicyId || Date.parse(action.asKnownAt) > Date.parse(input.asOf)) return { status: "UNAVAILABLE", candles: [], appliedRevisionIds: [], reason: "INVALID_ACTION_CONTEXT" }; seen.add(action.revisionId); actionIds.add(action.actionId); }
   let result = candles.map(c => ({ ...c })); const applied: string[] = [];
   for (const action of actions) {
     const applySplit = action.type === "SPLIT" && (input.adjustment === "splits" || input.adjustment === "all"); const applyDividend = action.type === "DIVIDEND" && (input.adjustment === "dividends" || input.adjustment === "all"); if (!applySplit && !applyDividend) continue;
