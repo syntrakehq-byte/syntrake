@@ -17,6 +17,46 @@ export type MarketDataResult = Readonly<{
   adjustment: "none";
 }>;
 
+/** Consumer-neutral historical request. The market interval and PIT cutoff are independent. */
+export type HistoricalMarketDataRequest = Readonly<{
+  listingId: string;
+  startDate: string;
+  endDate: string;
+  asOf: string;
+  interval: "1day";
+  adjustment: "none";
+}>;
+
+export type HistoricalMarketDataPoint = Readonly<{
+  marketDate: string;
+  close: string | null;
+  revisionId: string | null;
+  asKnownAt: string | null;
+  sourceRevision: string | null;
+  qualityFlags: readonly string[];
+}>;
+
+export type HistoricalMarketDataResult = Readonly<{
+  request: HistoricalMarketDataRequest;
+  status: "AVAILABLE" | "PARTIAL" | "LICENSE_BLOCKED" | "UNAVAILABLE";
+  instrumentId: string | null;
+  listingId: string;
+  providerId: string | null;
+  rightsPolicyId: string | null;
+  currency: string | null;
+  interval: "1day";
+  adjustment: "none";
+  points: readonly HistoricalMarketDataPoint[];
+}>;
+
+export function createHistoricalMarketDataResult(input: HistoricalMarketDataResult): HistoricalMarketDataResult {
+  if (!/^[0-9a-f-]{36}$/.test(input.listingId) || input.request.listingId !== input.listingId) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.request.startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(input.request.endDate) || input.request.startDate > input.request.endDate) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+  if (!/^\d{4}-\d{2}-\d{2}T/.test(input.request.asOf) || input.interval !== input.request.interval || input.adjustment !== input.request.adjustment) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+  if ((input.status === "UNAVAILABLE" && input.points.length !== 0) || (input.status === "LICENSE_BLOCKED" && input.points.some(point => point.close !== null))) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+  return Object.freeze({ ...input, points: Object.freeze(input.points.map(point => Object.freeze({ ...point, qualityFlags: Object.freeze([...point.qualityFlags]) }))) });
+}
+
 export function readMarketDataForConsumer(
   result: MarketDataResult,
   requirement: Readonly<{ rightsPolicyId: string; requiresDisplay: boolean; interval?: "1day" | "1hour" | "1min" }>,
