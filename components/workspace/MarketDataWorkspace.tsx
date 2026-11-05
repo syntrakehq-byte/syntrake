@@ -40,6 +40,7 @@ export function MarketDataWorkspace({ lang }: { lang: SiteLang }) {
     setter(value);
     setResult(null);
     setError(null);
+    setLoading(false);
   }
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {

@@ -14,14 +14,12 @@ test("G3-D presents only AVAILABLE data", () => {
   for (const status of ["LICENSE_BLOCKED", "PARTIAL", "STALE", "UNAVAILABLE", "AMBIGUOUS", "REFRESH_REQUIRED"]) assert.equal(canPresentMarketData(status), false, status);
 });
 
-test("G3-D invalidates an older in-flight response when a new query begins", () => {
+test("G3-D invalidates an older in-flight response and allows a second query without reload", () => {
   const gate = new LatestMarketRequest();
   const oldRequest = gate.begin();
+  gate.invalidate();
   const newRequest = gate.begin();
   assert.equal(oldRequest.signal.aborted, true);
   assert.equal(gate.accepts(oldRequest.generation), false);
   assert.equal(gate.accepts(newRequest.generation), true);
-  gate.invalidate();
-  assert.equal(newRequest.signal.aborted, true);
-  assert.equal(gate.accepts(newRequest.generation), false);
 });

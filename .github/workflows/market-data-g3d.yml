@@ -47,5 +47,10 @@ jobs:
       - run: npm run test:market-data:g3b:pg17
       - name: Next.js build with non-production Clerk test configuration
         env:
-          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_bXktdGVzdC1jbGVyay1wdWJsaXNoYWJsZS1rZXk
-        run: npm run build
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+        run: |
+          if [ -z "$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" ]; then
+            echo "::error::BLOCKED: NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY GitHub Actions secret is not configured"
+            exit 1
+          fi
+          npm run build
