@@ -1,7 +1,7 @@
-name: market-data-g3a-pg17
+name: market-data-g3b-pg17
 on:
   pull_request:
-    paths: ["market-data-core/investingOperationalService.ts", "market-data-core/tests/g3a-operational.test.ts", "package.json", ".github/workflows/market-data-g3a-pg17.yml"]
+    paths: ["market-data-core/investingOperationalService.ts", "market-data-core/tests/g3a-operational.test.ts", "market-data-core/tests/g3b-autonomous-pg17.test.ts", "market-data-core/tests/r3c-offline-e2e-pg17.test.ts", "market-data-core/tests/r3d2-pg17.test.ts", "market-data-core/tests/d5-integrated-pg17.test.ts", "package.json", ".github/workflows/market-data-g3a-pg17.yml"]
   workflow_dispatch:
 permissions: { contents: read }
 jobs:
@@ -22,4 +22,4 @@ jobs:
         with: { node-version: "22", cache: npm }
       - run: npm ci
       - run: npm run typecheck:market-data
-      - run: npm run test:market-data:g3a:pg17
+      - run: npm run test:market-data:g3b:pg17

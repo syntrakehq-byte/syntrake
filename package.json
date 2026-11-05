@@ -40,6 +40,7 @@
     "test:market-data:r3e1": "tsx --test --test-timeout=10000 market-data-core/tests/r3e1.test.ts market-data-core/tests/r3e1-cli.test.ts",
     "test:market-data:g3a": "tsx --test --test-timeout=10000 market-data-core/tests/g3a-operational.test.ts",
     "test:market-data:g3a:pg17": "tsx --test --test-timeout=30000 market-data-core/tests/g3a-operational.test.ts market-data-core/tests/d5-integrated-pg17.test.ts",
+    "test:market-data:g3b:pg17": "tsx --test --test-timeout=30000 market-data-core/tests/g3b-autonomous-pg17.test.ts && tsx --test --test-timeout=30000 market-data-core/tests/r3c-offline-e2e-pg17.test.ts && tsx --test --test-timeout=30000 market-data-core/tests/r3d2-pg17.test.ts && tsx --test --test-timeout=30000 market-data-core/tests/d5-integrated-pg17.test.ts && tsx --test --test-timeout=10000 market-data-core/tests/g3a-operational.test.ts",
     "twelve-data:real:once": "tsx scripts/twelve-data-real-once.ts"
     ,"twelve-data:real:rehearsal": "tsx scripts/twelve-data-real-rehearsal.ts"
   },
