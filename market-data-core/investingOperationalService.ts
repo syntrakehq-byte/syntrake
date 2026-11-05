@@ -35,6 +35,7 @@ function statusFor(history: HistoricalMarketDataResult | null, current: MarketDa
 function matchesDiscovery(current: MarketDataResult, discovery: InvestingDiscoveryQuote): boolean {
   const expected = discovery.marketData;
   return expected !== null && current.listingRef === discovery.listingRef &&
+    current.sourceRefs.length > 0 && expected.sourceRefs.length > 0 && current.sourceRefs[0].provider === expected.sourceRefs[0].provider &&
     current.instrument.kind === expected.instrument.kind && current.instrument.symbol === expected.instrument.symbol &&
     current.instrument.mic === expected.instrument.mic && current.instrument.currency === expected.instrument.currency &&
     current.currency === expected.currency && current.interval === expected.interval && current.adjustment === expected.adjustment;
