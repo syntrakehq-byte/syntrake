@@ -38,6 +38,7 @@
     "test:market-data:r3d4": "tsx --test --test-timeout=20000 market-data-core/tests/r3c-offline-e2e-pg17.test.ts",
     "test:market-data:r3e0": "tsx --test --test-timeout=20000 market-data-core/tests/r3a.test.ts market-data-core/tests/r3c-offline-e2e-pg17.test.ts",
     "test:market-data:r3e1": "tsx --test --test-timeout=10000 market-data-core/tests/r3e1.test.ts market-data-core/tests/r3e1-cli.test.ts",
+    "test:market-data:g3a": "tsx --test --test-timeout=10000 market-data-core/tests/g3a-operational.test.ts",
     "twelve-data:real:once": "tsx scripts/twelve-data-real-once.ts"
     ,"twelve-data:real:rehearsal": "tsx scripts/twelve-data-real-rehearsal.ts"
   },
