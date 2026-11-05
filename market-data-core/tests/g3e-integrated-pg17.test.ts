@@ -75,7 +75,7 @@ test("G3-E proves Coordinator -> LOGIN worker -> PG17 -> authenticated API using
   const stats = await service.start();
   assert.equal(stats.committed, 1);
   assert.equal(providerCalls, 1);
-  const persisted = (await db.query("SELECT j.state, j.ingestion_run_id, r.revision_id, r.source_revision, o.observation_id FROM market_core.ingest_jobs j JOIN market_core.market_observations o ON o.listing_id=j.listing_id JOIN market_core.market_observation_revisions r ON r.observation_id=o.observation_id WHERE j.job_id=$1", [ids.job])).rows[0];
+  const persisted = (await db.query("SELECT j.job_id, j.state, r.revision_id, r.source_revision, o.observation_id FROM market_core.ingest_jobs j JOIN market_core.market_observations o ON o.listing_id=j.listing_id AND o.provider_id=j.provider_id JOIN market_core.market_observation_revisions r ON r.observation_id=o.observation_id WHERE j.job_id=$1", [ids.job])).rows[0];
   assert.equal(persisted.state, "COMMITTED");
   assert.ok(persisted.revision_id);
   const readerUrl = new URL(adminUrl); readerUrl.username = readerRole; readerUrl.password = readerPassword;
