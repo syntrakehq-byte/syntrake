@@ -12,11 +12,14 @@ const db = new Client({ connectionString: process.env.DATABASE_URL ?? "postgres:
 const role = "g3b_worker_login";
 const password = "g3b-worker-password";
 const ids = { provider: "b3000000-0000-0000-0000-000000000001", rights: "b3000000-0000-0000-0000-000000000002", issuer: "b3000000-0000-0000-0000-000000000003", instrument: "b3000000-0000-0000-0000-000000000004", listing: "b3000000-0000-0000-0000-000000000005", budget: "b3000000-0000-0000-0000-000000000006", job: "b3000000-0000-0000-0000-000000000007" };
+let dbConnected = false;
+let roleCreated = false;
 
 async function sql(file: string) { await db.query(await readFile(resolve(process.cwd(), file), "utf8")); }
 
 before(async () => {
   await db.connect();
+  dbConnected = true;
   assert.match((await db.query("SELECT current_setting('server_version') v")).rows[0].v, /^17\./);
   for (const file of [
     "supabase/release-candidates/20261031150000_r3b_market_core_candidate.sql",
@@ -24,10 +27,11 @@ before(async () => {
     "supabase/release-candidates/20261102090000_g2a_universal_historical_api.sql",
     "supabase/release-candidates/20261031170000_r3c_coordinator_candidate.sql",
     "supabase/release-candidates/20261031183000_r3c3_sql_recovery_candidate.sql",
-    "supabase/release-candidates/20261101190000_r3d2_supervision_candidate.sql",
-    "supabase/release-candidates/20261101193000_r3d4_worker_runtime_permissions.sql",
+    "supabase/release-candidates/20261031190000_r3d2_supervision_candidate.sql",
+    "supabase/release-candidates/20261031193000_r3d4_worker_runtime_permissions.sql",
   ]) await sql(file);
   await db.query(`CREATE ROLE ${role} LOGIN PASSWORD '${password}'`);
+  roleCreated = true;
   await db.query(`GRANT market_core_ingest TO ${role} WITH INHERIT TRUE, SET FALSE`);
   await db.query("INSERT INTO market_core.worker_identity_bindings VALUES ($1,$2)", [role, "g3b-worker"]);
   await db.query("INSERT INTO market_core.providers VALUES ($1,'G3B_PROVIDER','ACTIVE')", [ids.provider]);
@@ -42,9 +46,12 @@ before(async () => {
 });
 
 after(async () => {
+  if (!dbConnected) return;
   try {
-    await db.query(`REVOKE market_core_ingest FROM ${role}`);
-    await db.query(`DROP ROLE IF EXISTS ${role}`);
+    if (roleCreated) {
+      await db.query(`REVOKE market_core_ingest FROM ${role}`);
+      await db.query(`DROP ROLE IF EXISTS ${role}`);
+    }
     await db.query("DROP SCHEMA IF EXISTS market_core CASCADE");
     await db.query("DROP EXTENSION IF EXISTS btree_gist");
   } finally { await db.end(); }
