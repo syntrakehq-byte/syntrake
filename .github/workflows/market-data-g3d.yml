@@ -1,0 +1,56 @@
+name: market-data-g3d
+
+on:
+  pull_request:
+    paths:
+      - "app/markets/**"
+      - "components/workspace/MarketDataWorkspace.tsx"
+      - "components/workspace/marketDataWorkspaceLogic.ts"
+      - "components/workspace/marketDataWorkspaceLogic.test.ts"
+      - "market-data-core/**"
+      - "app/api/investing/market-data/**"
+      - "investing-core/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/market-data-g3d.yml"
+
+jobs:
+  g3d:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm run lint -- --no-fix
+      - run: npm run test:market-data:g3d
+      - run: npm run test:investing
+      - run: npm run test:market-data:g3a
+      - run: npm run test:market-data:g3c:pg17
+      - run: npm run test:market-data:g3b:pg17
+      - name: Next.js build with non-production Clerk test configuration
+        env:
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+        run: |
+          if [ -z "$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" ]; then
+            echo "::error::BLOCKED: NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY GitHub Actions secret is not configured"
+            exit 1
+          fi
+          npm run build
