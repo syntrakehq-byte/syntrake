@@ -36,6 +36,8 @@ function matchesDiscovery(current: MarketDataResult, discovery: InvestingDiscove
   const expected = discovery.marketData;
   return expected !== null && current.listingRef === discovery.listingRef &&
     current.sourceRefs.length > 0 && expected.sourceRefs.length > 0 && current.sourceRefs[0].provider === expected.sourceRefs[0].provider &&
+    (current.instrument.instrumentId === null || expected.instrument.instrumentId === null || current.instrument.instrumentId === expected.instrument.instrumentId) &&
+    (current.instrument.listingId === null || expected.instrument.listingId === null || current.instrument.listingId === expected.instrument.listingId) &&
     current.instrument.kind === expected.instrument.kind && current.instrument.symbol === expected.instrument.symbol &&
     current.instrument.mic === expected.instrument.mic && current.instrument.currency === expected.instrument.currency &&
     current.currency === expected.currency && current.interval === expected.interval && current.adjustment === expected.adjustment;
@@ -55,13 +57,20 @@ export async function serveInvestingMarketData(input: InvestingMarketDataRequest
   }
   const current = await input.readCurrent();
   const history = input.readHistory === null ? null : await input.readHistory();
-  if (history?.status === "LICENSE_BLOCKED" || current?.rights.policyId !== input.rightsPolicyId && current !== null) {
+  const rightsBlocked = current !== null && (current.rights.policyId !== input.rightsPolicyId || !current.rights.display ||
+    current.rights.retentionUntil !== null && Date.parse(current.rights.retentionUntil) <= Date.now());
+  if (history?.status === "LICENSE_BLOCKED" || rightsBlocked) {
     return Object.freeze({ status: "LICENSE_BLOCKED", discovery: input.discovery, current: null, history, refreshed: false, source: "CACHE", reason: "The requested consumer rights do not authorize presentation." });
   }
   if (current !== null && !matchesDiscovery(current, input.discovery)) {
     return Object.freeze({ status: "UNAVAILABLE", discovery: input.discovery, current: null, history, refreshed: false, source: "CACHE", reason: "Persisted result does not match the canonical instrument, listing or provider request." });
   }
-  if (history !== null && history.request.listingId !== input.discovery.listingRef) {
+  if (history !== null && (input.historical === null || history.request.listingId !== input.discovery.listingRef ||
+      history.request.listingId !== input.historical.listingId || history.request.startDate !== input.historical.startDate ||
+      history.request.endDate !== input.historical.endDate || history.request.asOf !== input.historical.asOf ||
+      history.request.interval !== input.historical.interval || history.request.adjustment !== input.historical.adjustment ||
+      history.rightsPolicyId !== null && history.rightsPolicyId !== input.rightsPolicyId ||
+      history.currency !== null && current !== null && history.currency !== current.currency)) {
     return Object.freeze({ status: "UNAVAILABLE", discovery: input.discovery, current: null, history, refreshed: false, source: "CACHE", reason: "Historical result belongs to another listing." });
   }
   if (current !== null && current.quality.coverage !== "FULL") {

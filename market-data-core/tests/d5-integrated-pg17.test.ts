@@ -12,6 +12,7 @@ import { createTwelveDataOfflineProvider } from "../twelveDataProvider";
 import { canonicalIdentity, resolveProviderAlias } from "../identity";
 import type { CatalogSource } from "../instrumentDiscovery";
 import type { ProviderCapability } from "../providerCapabilities";
+import { serveInvestingMarketData } from "../investingOperationalService";
 
 const db = new Client({ connectionString: process.env.DATABASE_URL ?? "postgres://postgres:postgres@localhost:5432/postgres" });
 const workerRole = "d5_worker_login";
@@ -57,6 +58,7 @@ before(async () => {
   await db.query("INSERT INTO market_core.instrument_identifiers(identifier_id,identifier_type,identifier_value,identifier_scope,listing_id,source_id,snapshot_id,evidence_kind,verified,created_at) VALUES ('d5000000-0000-0000-0000-000000000014','FIGI','BBG000B9XRY4','LISTING',$1,$2,$3,'EXCHANGE_REFERENCE',true,TIMESTAMPTZ '2025-01-01')", [ids.listing, ids.source, ids.snapshot]);
   await db.query("INSERT INTO market_core.provider_budget_periods VALUES ($1,$2,DATE '2025-01-01',DATE '2027-01-01',1,0,0)", [ids.budget, ids.provider]);
 });
+
 after(async () => { await db.query("DROP SCHEMA IF EXISTS market_core CASCADE"); await db.query("DROP EXTENSION IF EXISTS btree_gist"); for (const role of [workerRole, readerRole, "market_core_reader", "market_core_ingest", "market_core_coordinator_owner", "market_core_catalog_ingest", "market_core_catalog_reader", "market_core_registry_reviewer", "market_core_supervisor"]) await db.query(`DROP ROLE IF EXISTS ${role}`); await db.end(); });
 
 test("D5 integrated offline AAPL discovery -> Registry/D3 -> D4 -> R3-C -> worker -> R3-B read", async () => {
@@ -130,4 +132,12 @@ test("D5 integrated offline AAPL discovery -> Registry/D3 -> D4 -> R3-C -> worke
   assert.equal(deniedD3, null, "D3 non-EXACT gate"); assert.equal(deniedRights, null, "D4 rights gate"); assert.equal(deniedQuota, null, "D4 quota gate"); assert.equal(deniedProviderId, null, "provider ID gate"); assert.equal(deniedListingId, null, "listing ID gate");
   assert.equal(Number((await db.query("SELECT count(*)::int AS n FROM market_core.ingest_jobs")).rows[0].n), beforeJobs);
   assert.equal(Number((await db.query("SELECT count(*)::int AS n FROM market_core.credit_reservations")).rows[0].n), beforeReservations);
+  await db.query("UPDATE market_core.license_policies SET display_allowed=true WHERE rights_policy_id=$1", [ids.rights]);
+  const reader = new Client({ connectionString: `postgres://${readerRole}:${readerPassword}@localhost:5432/postgres` }); await reader.connect();
+  const row = (await reader.query("SELECT status,revision_id,close_value::text AS close_value,as_known_at FROM market_core.read_market_pit($1,TIMESTAMPTZ '2027-01-04')", [ids.listing])).rows[0];
+  assert.equal(row.status, "AVAILABLE");
+  const current = { instrument: { kind: "EQUITY" as const, symbol: "AAPL", mic: "XNAS", currency: "USD", key: "EQUITY:XNAS:AAPL:USD", instrumentId: ids.instrument, listingId: ids.listing }, listingRef: ids.listing, sourceRefs: [{ provider: "TWELVE_DATA", originalSourceId: "d5-reader", requestId: null, sourceDocumentUri: null }], revisionId: row.revision_id as string, price: row.close_value as string, currency: "USD", marketDate: "2025-01-02", asOf: new Date(row.as_known_at).toISOString(), quality: { coverage: "FULL" as const, freshness: "KNOWN" as const }, rights: { policyId: ids.rights, display: true, retentionUntil: null }, interval: "1day" as const, adjustment: "none" as const };
+  const discovery = { status: "READY" as const, candidates: [], resolutions: [], routing: null, providerKey: "TWELVE_DATA", listingRef: ids.listing, close: current.price, marketData: current, identityVerified: true, reason: "D5" };
+  const served = await serveInvestingMarketData({ discovery, historical: null, requiresDisplay: true, rightsPolicyId: ids.rights, readCurrent: async () => current, readHistory: null, refresh: async () => { throw new Error("refresh must not run for valid cache"); } });
+  assert.equal(served.status, "AVAILABLE"); assert.equal(served.source, "CACHE"); assert.equal(served.refreshed, false); await reader.end();
 });
