@@ -22,4 +22,4 @@ jobs:
         with: { node-version: "22", cache: npm }
       - run: npm ci
       - run: npm run typecheck:market-data
-      - run: npm run test:market-data:g3a
+      - run: npm run test:market-data:g3a:pg17

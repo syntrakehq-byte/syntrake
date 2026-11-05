@@ -32,6 +32,14 @@ function statusFor(history: HistoricalMarketDataResult | null, current: MarketDa
   return "UNAVAILABLE";
 }
 
+function matchesDiscovery(current: MarketDataResult, discovery: InvestingDiscoveryQuote): boolean {
+  const expected = discovery.marketData;
+  return expected !== null && current.listingRef === discovery.listingRef &&
+    current.instrument.kind === expected.instrument.kind && current.instrument.symbol === expected.instrument.symbol &&
+    current.instrument.mic === expected.instrument.mic && current.instrument.currency === expected.instrument.currency &&
+    current.currency === expected.currency && current.interval === expected.interval && current.adjustment === expected.adjustment;
+}
+
 /**
  * Composes existing discovery, PIT readers and R3-C refresh without creating a
  * second ingestion engine. Cache is authoritative when it is valid; refresh is
@@ -49,6 +57,18 @@ export async function serveInvestingMarketData(input: InvestingMarketDataRequest
   if (history?.status === "LICENSE_BLOCKED" || current?.rights.policyId !== input.rightsPolicyId && current !== null) {
     return Object.freeze({ status: "LICENSE_BLOCKED", discovery: input.discovery, current: null, history, refreshed: false, source: "CACHE", reason: "The requested consumer rights do not authorize presentation." });
   }
+  if (current !== null && !matchesDiscovery(current, input.discovery)) {
+    return Object.freeze({ status: "UNAVAILABLE", discovery: input.discovery, current: null, history, refreshed: false, source: "CACHE", reason: "Persisted result does not match the canonical instrument, listing or provider request." });
+  }
+  if (history !== null && history.request.listingId !== input.discovery.listingRef) {
+    return Object.freeze({ status: "UNAVAILABLE", discovery: input.discovery, current: null, history, refreshed: false, source: "CACHE", reason: "Historical result belongs to another listing." });
+  }
+  if (current !== null && current.quality.coverage !== "FULL") {
+    return Object.freeze({ status: "PARTIAL", discovery: input.discovery, current: null, history, refreshed: false, source: "CACHE", reason: "Persisted result does not have full quality coverage." });
+  }
+  if (current !== null && current.quality.freshness !== "KNOWN") {
+    return Object.freeze({ status: "STALE", discovery: input.discovery, current: null, history, refreshed: false, source: "CACHE", reason: "Persisted result freshness is not established." });
+  }
   if (current !== null && (!input.requiresDisplay || current.rights.display)) {
     return Object.freeze({ status: statusFor(history, current), discovery: input.discovery, current, history, refreshed: false, source: "CACHE", reason: "A valid persisted result was reused; no refresh was requested." });
   }
@@ -57,7 +77,7 @@ export async function serveInvestingMarketData(input: InvestingMarketDataRequest
   }
   await input.refresh();
   const refreshed = await input.readCurrent();
-  if (refreshed === null || (input.requiresDisplay && !refreshed.rights.display) || refreshed.rights.policyId !== input.rightsPolicyId) {
+  if (refreshed === null || !matchesDiscovery(refreshed, input.discovery) || (input.requiresDisplay && !refreshed.rights.display) || refreshed.rights.policyId !== input.rightsPolicyId) {
     return Object.freeze({ status: refreshed?.rights.display === false ? "LICENSE_BLOCKED" : "UNAVAILABLE", discovery: input.discovery, current: null, history, refreshed: true, source: "WORKER", reason: "Worker completed without a permitted result." });
   }
   return Object.freeze({ status: statusFor(history, refreshed), discovery: input.discovery, current: refreshed, history, refreshed: true, source: "WORKER", reason: "Existing R3-C worker refreshed the persisted result." });
