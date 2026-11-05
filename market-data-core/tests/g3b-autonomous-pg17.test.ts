@@ -50,10 +50,37 @@ after(async () => {
   try {
     if (roleCreated) {
       await db.query(`REVOKE market_core_ingest FROM ${role}`);
-      await db.query(`DROP ROLE IF EXISTS ${role}`);
     }
     await db.query("DROP SCHEMA IF EXISTS market_core CASCADE");
     await db.query("DROP EXTENSION IF EXISTS btree_gist");
+    const fixtureRoles = [
+      role,
+      "market_core_coordinator_owner",
+      "market_core_supervisor",
+      "market_core_reader",
+      "market_core_ingest",
+      "market_core_catalog_ingest",
+      "market_core_catalog_reader",
+      "market_core_registry_reviewer",
+      "anon",
+      "authenticated",
+    ];
+    try {
+      const memberships = await db.query(
+        `SELECT member::regrole::text AS member, roleid::regrole::text AS granted
+           FROM pg_auth_members
+          WHERE member::regrole::text = ANY($1::text[])
+             OR roleid::regrole::text = ANY($1::text[])`,
+        [fixtureRoles],
+      );
+      for (const membership of memberships.rows as Array<{ member: string; granted: string }>) {
+        await db.query(`REVOKE "${membership.granted.replaceAll('"', '""')}" FROM "${membership.member.replaceAll('"', '""')}"`);
+      }
+    } catch { /* partial fixture */ }
+    for (const fixtureRole of fixtureRoles) {
+      try { await db.query(`DROP OWNED BY ${fixtureRole}`); } catch { /* partial fixture */ }
+      try { await db.query(`DROP ROLE IF EXISTS ${fixtureRole}`); } catch { /* memberships/ownership are cleaned best-effort */ }
+    }
   } finally { await db.end(); }
 });
 
