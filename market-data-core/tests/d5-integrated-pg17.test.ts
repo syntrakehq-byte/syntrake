@@ -13,6 +13,7 @@ import { canonicalIdentity, resolveProviderAlias } from "../identity";
 import type { CatalogSource } from "../instrumentDiscovery";
 import type { ProviderCapability } from "../providerCapabilities";
 import { serveInvestingMarketData } from "../investingOperationalService";
+import { historicalRowsToResult } from "../contracts";
 
 const db = new Client({ connectionString: process.env.DATABASE_URL ?? "postgres://postgres:postgres@localhost:5432/postgres" });
 const workerRole = "d5_worker_login";
@@ -114,7 +115,7 @@ test("D5 integrated offline AAPL discovery -> Registry/D3 -> D4 -> R3-C -> worke
   assert.equal((await db.query("SELECT consumed_credits::text FROM market_core.provider_budget_periods WHERE budget_period_id=$1", [ids.budget])).rows[0].consumed_credits, "1.000000");
   const replay = await new AutonomousWorker({ workerId: "d5-worker", clientFactory: async () => new Client({ connectionString: `postgres://${workerRole}:${workerPassword}@localhost:5432/postgres` }), provider: offlineProvider, exchangeTimezone: "America/New_York", maxTasks: 1, maxPolls: 1, consumedCredits: "1" }).run();
   assert.equal(replay.committed, 0); assert.equal(simulatedHttpCalls, 1);
-  const reader = new Client({ connectionString: `postgres://${readerRole}:${readerPassword}@localhost:5432/postgres` }); await reader.connect(); await reader.query("SET ROLE market_core_reader");
+  const reader = new Client({ connectionString: `postgres://${readerRole}:${readerPassword}@localhost:5432/postgres` }); await reader.connect(); await reader.query("SET ROLE market_core_reader"); try {
   await db.query("UPDATE market_core.license_policies SET display_allowed=true WHERE rights_policy_id=$1", [ids.rights]);
   assert.equal((await reader.query("SELECT status FROM market_core.read_market_pit($1,TIMESTAMPTZ '2027-01-04')", [ids.listing])).rows[0].status, "AVAILABLE");
   await db.query("UPDATE market_core.license_policies SET display_allowed=false WHERE rights_policy_id=$1", [ids.rights]);
@@ -134,10 +135,14 @@ test("D5 integrated offline AAPL discovery -> Registry/D3 -> D4 -> R3-C -> worke
   assert.equal(Number((await db.query("SELECT count(*)::int AS n FROM market_core.ingest_jobs")).rows[0].n), beforeJobs);
   assert.equal(Number((await db.query("SELECT count(*)::int AS n FROM market_core.credit_reservations")).rows[0].n), beforeReservations);
   await db.query("UPDATE market_core.license_policies SET display_allowed=true WHERE rights_policy_id=$1", [ids.rights]);
-  const row = (await reader.query("SELECT * FROM market_core.read_market_history($1,DATE '2025-01-01',DATE '2025-01-31',TIMESTAMPTZ '2027-01-04','1day','none')", [ids.listing])).rows[0];
+  const historicalRequest = { listingId: ids.listing, startDate: "2025-01-01", endDate: "2025-01-31", asOf: "2027-01-04T00:00:00Z", interval: "1day" as const, adjustment: "none" as const };
+  const historical = historicalRowsToResult(historicalRequest, (await reader.query("SELECT * FROM market_core.read_market_history($1,DATE '2025-01-01',DATE '2025-01-31',TIMESTAMPTZ '2027-01-04','1day','none')", [ids.listing])).rows);
+  assert.equal(historical.status, "AVAILABLE"); const point = historical.points[0]; assert.ok(point);
+  const row = { status: historical.status, revision_id: point.revisionId, close_value: point.close, market_date: point.marketDate, as_known_at: point.asKnownAt };
   assert.equal(row.status, "AVAILABLE");
   const current = { instrument: { kind: "EQUITY" as const, symbol: "AAPL", mic: "XNAS", currency: "USD", key: "EQUITY:XNAS:AAPL:USD", instrumentId: ids.instrument, listingId: ids.listing }, listingRef: ids.listing, sourceRefs: [{ provider: "TWELVE_DATA", originalSourceId: "d5-reader", requestId: null, sourceDocumentUri: null }], revisionId: row.revision_id as string, price: row.close_value as string, currency: "USD", marketDate: String(row.market_date), asOf: new Date(row.as_known_at).toISOString(), quality: { coverage: "FULL" as const, freshness: "KNOWN" as const }, rights: { policyId: ids.rights, display: true, retentionUntil: null }, interval: "1day" as const, adjustment: "none" as const };
   const discovery = { status: "READY" as const, candidates: [], resolutions: [], routing: null, providerKey: "TWELVE_DATA", listingRef: ids.listing, close: current.price, marketData: current, identityVerified: true, reason: "D5" };
   const served = await serveInvestingMarketData({ discovery, historical: null, requiresDisplay: true, rightsPolicyId: ids.rights, readCurrent: async () => current, readHistory: null, refresh: async () => { throw new Error("refresh must not run for valid cache"); } });
-  assert.equal(served.status, "AVAILABLE"); assert.equal(served.source, "CACHE"); assert.equal(served.refreshed, false); await reader.end();
+  assert.equal(served.status, "AVAILABLE"); assert.equal(served.source, "CACHE"); assert.equal(served.refreshed, false);
+  } finally { await reader.end(); }
 });
