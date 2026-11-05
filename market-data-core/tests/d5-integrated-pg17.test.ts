@@ -12,6 +12,8 @@ import { createTwelveDataOfflineProvider } from "../twelveDataProvider";
 import { canonicalIdentity, resolveProviderAlias } from "../identity";
 import type { CatalogSource } from "../instrumentDiscovery";
 import type { ProviderCapability } from "../providerCapabilities";
+import { serveInvestingMarketData } from "../investingOperationalService";
+import { historicalRowsToResult, type MarketDataResult } from "../contracts";
 
 const db = new Client({ connectionString: process.env.DATABASE_URL ?? "postgres://postgres:postgres@localhost:5432/postgres" });
 const workerRole = "d5_worker_login";
@@ -31,6 +33,7 @@ before(async () => {
   await db.connect();
   assert.match((await db.query("SELECT current_setting('server_version') AS v")).rows[0].v, /^17\./);
   await sql("supabase/release-candidates/20261031150000_r3b_market_core_candidate.sql");
+  await sql("supabase/release-candidates/20261102090000_g2a_universal_historical_api.sql");
   await sql("supabase/release-candidates/20261031170000_r3c_coordinator_candidate.sql");
   await sql("supabase/release-candidates/20261031183000_r3c3_sql_recovery_candidate.sql");
   await sql("supabase/release-candidates/20261101110000_r3d1_registry_identifiers_candidate.sql");
@@ -57,6 +60,7 @@ before(async () => {
   await db.query("INSERT INTO market_core.instrument_identifiers(identifier_id,identifier_type,identifier_value,identifier_scope,listing_id,source_id,snapshot_id,evidence_kind,verified,created_at) VALUES ('d5000000-0000-0000-0000-000000000014','FIGI','BBG000B9XRY4','LISTING',$1,$2,$3,'EXCHANGE_REFERENCE',true,TIMESTAMPTZ '2025-01-01')", [ids.listing, ids.source, ids.snapshot]);
   await db.query("INSERT INTO market_core.provider_budget_periods VALUES ($1,$2,DATE '2025-01-01',DATE '2027-01-01',1,0,0)", [ids.budget, ids.provider]);
 });
+
 after(async () => { await db.query("DROP SCHEMA IF EXISTS market_core CASCADE"); await db.query("DROP EXTENSION IF EXISTS btree_gist"); for (const role of [workerRole, readerRole, "market_core_reader", "market_core_ingest", "market_core_coordinator_owner", "market_core_catalog_ingest", "market_core_catalog_reader", "market_core_registry_reviewer", "market_core_supervisor"]) await db.query(`DROP ROLE IF EXISTS ${role}`); await db.end(); });
 
 test("D5 integrated offline AAPL discovery -> Registry/D3 -> D4 -> R3-C -> worker -> R3-B read", async () => {
@@ -111,13 +115,13 @@ test("D5 integrated offline AAPL discovery -> Registry/D3 -> D4 -> R3-C -> worke
   assert.equal((await db.query("SELECT consumed_credits::text FROM market_core.provider_budget_periods WHERE budget_period_id=$1", [ids.budget])).rows[0].consumed_credits, "1.000000");
   const replay = await new AutonomousWorker({ workerId: "d5-worker", clientFactory: async () => new Client({ connectionString: `postgres://${workerRole}:${workerPassword}@localhost:5432/postgres` }), provider: offlineProvider, exchangeTimezone: "America/New_York", maxTasks: 1, maxPolls: 1, consumedCredits: "1" }).run();
   assert.equal(replay.committed, 0); assert.equal(simulatedHttpCalls, 1);
-  const reader = new Client({ connectionString: `postgres://${readerRole}:${readerPassword}@localhost:5432/postgres` }); await reader.connect(); await reader.query("SET ROLE market_core_reader");
+  const reader = new Client({ connectionString: `postgres://${readerRole}:${readerPassword}@localhost:5432/postgres` }); await reader.connect(); await reader.query("SET ROLE market_core_reader"); try {
   await db.query("UPDATE market_core.license_policies SET display_allowed=true WHERE rights_policy_id=$1", [ids.rights]);
   assert.equal((await reader.query("SELECT status FROM market_core.read_market_pit($1,TIMESTAMPTZ '2027-01-04')", [ids.listing])).rows[0].status, "AVAILABLE");
   await db.query("UPDATE market_core.license_policies SET display_allowed=false WHERE rights_policy_id=$1", [ids.rights]);
   const blockedRead = (await reader.query("SELECT status,close_value FROM market_core.read_market_pit($1,TIMESTAMPTZ '2027-01-04')", [ids.listing])).rows[0];
   assert.equal(blockedRead.status, "LICENSE_BLOCKED"); assert.equal(blockedRead.close_value, null);
-  assert.equal((await reader.query("SELECT count(*)::int AS n FROM market_core.read_market_pit($1,TIMESTAMPTZ '2025-01-01')", [ids.listing])).rows[0].n, 0); await reader.end();
+  assert.equal((await reader.query("SELECT count(*)::int AS n FROM market_core.read_market_pit($1,TIMESTAMPTZ '2025-01-01')", [ids.listing])).rows[0].n, 0);
 
   const beforeJobs = Number((await db.query("SELECT count(*)::int AS n FROM market_core.ingest_jobs")).rows[0].n);
   const beforeReservations = Number((await db.query("SELECT count(*)::int AS n FROM market_core.credit_reservations")).rows[0].n);
@@ -130,4 +134,14 @@ test("D5 integrated offline AAPL discovery -> Registry/D3 -> D4 -> R3-C -> worke
   assert.equal(deniedD3, null, "D3 non-EXACT gate"); assert.equal(deniedRights, null, "D4 rights gate"); assert.equal(deniedQuota, null, "D4 quota gate"); assert.equal(deniedProviderId, null, "provider ID gate"); assert.equal(deniedListingId, null, "listing ID gate");
   assert.equal(Number((await db.query("SELECT count(*)::int AS n FROM market_core.ingest_jobs")).rows[0].n), beforeJobs);
   assert.equal(Number((await db.query("SELECT count(*)::int AS n FROM market_core.credit_reservations")).rows[0].n), beforeReservations);
+  await db.query("UPDATE market_core.license_policies SET display_allowed=true WHERE rights_policy_id=$1", [ids.rights]);
+  const historicalRequest = { listingId: ids.listing, startDate: "2025-01-01", endDate: "2025-01-31", asOf: "2027-01-04T00:00:00Z", interval: "1day" as const, adjustment: "none" as const };
+  const historical = historicalRowsToResult(historicalRequest, (await reader.query("SELECT * FROM market_core.read_market_history($1,DATE '2025-01-01',DATE '2025-01-31',TIMESTAMPTZ '2027-01-04','1day','none')", [ids.listing])).rows);
+  const point = historical.points[0];
+  if (historical.status !== "AVAILABLE" || !point || point.close === null || point.revisionId === null || point.asKnownAt === null) throw new Error("INVALID_HISTORICAL_POINT");
+  const current: MarketDataResult = { instrument: { kind: "EQUITY", symbol: "AAPL", mic: "XNAS", currency: "USD", key: "EQUITY:XNAS:AAPL:USD", instrumentId: ids.instrument, listingId: ids.listing }, listingRef: ids.listing, sourceRefs: [{ provider: "TWELVE_DATA", originalSourceId: "d5-reader", requestId: null, sourceDocumentUri: null }], revisionId: point.revisionId, price: point.close, currency: "USD", marketDate: point.marketDate, asOf: point.asKnownAt, quality: { coverage: "FULL", freshness: "KNOWN" }, rights: { policyId: ids.rights, display: true, retentionUntil: null }, interval: "1day", adjustment: "none" };
+  const discovery = { status: "READY" as const, candidates: [], resolutions: [], routing: null, providerKey: "TWELVE_DATA", listingRef: ids.listing, close: current.price, marketData: current, identityVerified: true, reason: "D5" };
+  const served = await serveInvestingMarketData({ discovery, historical: null, requiresDisplay: true, rightsPolicyId: ids.rights, readCurrent: async () => current, readHistory: null, refresh: async () => { throw new Error("refresh must not run for valid cache"); } });
+  assert.equal(served.status, "AVAILABLE"); assert.equal(served.source, "CACHE"); assert.equal(served.refreshed, false);
+  } finally { await reader.end(); }
 });
