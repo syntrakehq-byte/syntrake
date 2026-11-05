@@ -32,6 +32,7 @@ before(async () => {
   await db.connect();
   assert.match((await db.query("SELECT current_setting('server_version') AS v")).rows[0].v, /^17\./);
   await sql("supabase/release-candidates/20261031150000_r3b_market_core_candidate.sql");
+  await sql("supabase/release-candidates/20261102090000_g2a_universal_historical_api.sql");
   await sql("supabase/release-candidates/20261031170000_r3c_coordinator_candidate.sql");
   await sql("supabase/release-candidates/20261031183000_r3c3_sql_recovery_candidate.sql");
   await sql("supabase/release-candidates/20261101110000_r3d1_registry_identifiers_candidate.sql");
