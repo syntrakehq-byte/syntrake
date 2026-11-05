@@ -1,0 +1,28 @@
+name: market-data-g3d
+
+on:
+  pull_request:
+    paths:
+      - "app/markets/**"
+      - "components/workspace/MarketDataWorkspace.tsx"
+      - "market-data-core/**"
+      - "app/api/investing/market-data/**"
+      - "investing-core/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/market-data-g3d.yml"
+
+jobs:
+  g3d:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm run lint -- --no-fix
+      - run: npm run test:investing
+      - run: npm run test:market-data:g3a
