@@ -45,11 +45,6 @@ function matchesDiscovery(current: MarketDataResult, discovery: InvestingDiscove
 function redactedDiscovery(discovery: InvestingDiscoveryQuote): InvestingDiscoveryQuote {
   return Object.freeze({ ...discovery, close: null, marketData: null });
 }
-function redactedHistory(history: HistoricalMarketDataResult | null): HistoricalMarketDataResult | null {
-  if (history === null) return null;
-  return Object.freeze({ ...history, instrumentId: null, providerId: null, rightsPolicyId: null, currency: null,
-    points: Object.freeze(history.points.map(point => Object.freeze({ ...point, close: null, revisionId: null, asKnownAt: null, sourceRevision: null, qualityFlags: [] }))) });
-}
 
 /**
  * Composes existing discovery, PIT readers and R3-C refresh without creating a
@@ -68,10 +63,10 @@ export async function serveInvestingMarketData(input: InvestingMarketDataRequest
   const rightsBlocked = current !== null && (current.rights.policyId !== input.rightsPolicyId || !current.rights.display ||
     current.rights.retentionUntil !== null && Date.parse(current.rights.retentionUntil) <= Date.now());
   if (history?.status === "LICENSE_BLOCKED" || rightsBlocked) {
-    return Object.freeze({ status: "LICENSE_BLOCKED", discovery: redactedDiscovery(input.discovery), current: null, history: redactedHistory(history), refreshed: false, source: "CACHE", reason: "The requested consumer rights do not authorize presentation." });
+    return Object.freeze({ status: "LICENSE_BLOCKED", discovery: redactedDiscovery(input.discovery), current: null, history: null, refreshed: false, source: "CACHE", reason: "The requested consumer rights do not authorize presentation." });
   }
   if (current !== null && !matchesDiscovery(current, input.discovery)) {
-    return Object.freeze({ status: "UNAVAILABLE", discovery: redactedDiscovery(input.discovery), current: null, history: redactedHistory(history), refreshed: false, source: "CACHE", reason: "Persisted result does not match the canonical instrument, listing or provider request." });
+    return Object.freeze({ status: "UNAVAILABLE", discovery: redactedDiscovery(input.discovery), current: null, history: null, refreshed: false, source: "CACHE", reason: "Persisted result does not match the canonical instrument, listing or provider request." });
   }
   if (history !== null && (input.historical === null || history.request.listingId !== input.discovery.listingRef ||
       history.request.listingId !== input.historical.listingId || history.request.startDate !== input.historical.startDate ||
@@ -79,27 +74,27 @@ export async function serveInvestingMarketData(input: InvestingMarketDataRequest
       history.request.interval !== input.historical.interval || history.request.adjustment !== input.historical.adjustment ||
       history.rightsPolicyId !== null && history.rightsPolicyId !== input.rightsPolicyId ||
       history.currency !== null && current !== null && history.currency !== current.currency)) {
-    return Object.freeze({ status: "UNAVAILABLE", discovery: redactedDiscovery(input.discovery), current: null, history: redactedHistory(history), refreshed: false, source: "CACHE", reason: "Historical result belongs to another listing." });
+    return Object.freeze({ status: "UNAVAILABLE", discovery: redactedDiscovery(input.discovery), current: null, history: null, refreshed: false, source: "CACHE", reason: "Historical result belongs to another listing." });
   }
   if (current !== null && current.quality.coverage !== "FULL") {
-    return Object.freeze({ status: "PARTIAL", discovery: redactedDiscovery(input.discovery), current: null, history: redactedHistory(history), refreshed: false, source: "CACHE", reason: "Persisted result does not have full quality coverage." });
+    return Object.freeze({ status: "PARTIAL", discovery: redactedDiscovery(input.discovery), current: null, history: null, refreshed: false, source: "CACHE", reason: "Persisted result does not have full quality coverage." });
   }
   if (current !== null && current.quality.freshness !== "KNOWN") {
-    return Object.freeze({ status: "STALE", discovery: redactedDiscovery(input.discovery), current: null, history: redactedHistory(history), refreshed: false, source: "CACHE", reason: "Persisted result freshness is not established." });
+    return Object.freeze({ status: "STALE", discovery: redactedDiscovery(input.discovery), current: null, history: null, refreshed: false, source: "CACHE", reason: "Persisted result freshness is not established." });
   }
   if (current !== null && (!input.requiresDisplay || current.rights.display)) {
     return Object.freeze({ status: statusFor(history, current), discovery: input.discovery, current, history, refreshed: false, source: "CACHE", reason: "A valid persisted result was reused; no refresh was requested." });
   }
   if (input.refresh === null) {
-    return Object.freeze({ status: "REFRESH_REQUIRED", discovery: redactedDiscovery(input.discovery), current: null, history: redactedHistory(history), refreshed: false, source: "NONE", reason: "No valid persisted result is available and no server-side worker is configured." });
+    return Object.freeze({ status: "REFRESH_REQUIRED", discovery: redactedDiscovery(input.discovery), current: null, history: null, refreshed: false, source: "NONE", reason: "No valid persisted result is available and no server-side worker is configured." });
   }
   await input.refresh();
   const refreshed = await input.readCurrent();
   const refreshedRightsBlocked = refreshed !== null && (refreshed.rights.policyId !== input.rightsPolicyId || !refreshed.rights.display || refreshed.rights.retentionUntil !== null && Date.parse(refreshed.rights.retentionUntil) <= Date.now());
   if (refreshed === null || !matchesDiscovery(refreshed, input.discovery) || refreshedRightsBlocked) {
-    return Object.freeze({ status: refreshedRightsBlocked ? "LICENSE_BLOCKED" : "UNAVAILABLE", discovery: redactedDiscovery(input.discovery), current: null, history: redactedHistory(history), refreshed: true, source: "WORKER", reason: "Worker completed without a permitted result." });
+    return Object.freeze({ status: refreshedRightsBlocked ? "LICENSE_BLOCKED" : "UNAVAILABLE", discovery: redactedDiscovery(input.discovery), current: null, history: null, refreshed: true, source: "WORKER", reason: "Worker completed without a permitted result." });
   }
-  if (refreshed.quality.coverage !== "FULL") return Object.freeze({ status: "PARTIAL", discovery: redactedDiscovery(input.discovery), current: null, history: redactedHistory(history), refreshed: true, source: "WORKER", reason: "Worker result does not have full quality coverage." });
-  if (refreshed.quality.freshness !== "KNOWN") return Object.freeze({ status: "STALE", discovery: redactedDiscovery(input.discovery), current: null, history: redactedHistory(history), refreshed: true, source: "WORKER", reason: "Worker result freshness is not established." });
+  if (refreshed.quality.coverage !== "FULL") return Object.freeze({ status: "PARTIAL", discovery: redactedDiscovery(input.discovery), current: null, history: null, refreshed: true, source: "WORKER", reason: "Worker result does not have full quality coverage." });
+  if (refreshed.quality.freshness !== "KNOWN") return Object.freeze({ status: "STALE", discovery: redactedDiscovery(input.discovery), current: null, history: null, refreshed: true, source: "WORKER", reason: "Worker result freshness is not established." });
   return Object.freeze({ status: statusFor(history, refreshed), discovery: input.discovery, current: refreshed, history, refreshed: true, source: "WORKER", reason: "Existing R3-C worker refreshed the persisted result." });
 }
