@@ -11,7 +11,9 @@ export type CorporateActionRevision = Readonly<{
 export type CorporateActionRow = Readonly<Record<string, unknown>>;
 export type AdjustedCandle = Readonly<{ marketDate: string; open: string; high: string; low: string; close: string; volume: string | null }>;
 export type CorporateActionAdjustmentResult = Readonly<{ status: "AVAILABLE" | "UNAVAILABLE"; candles: readonly AdjustedCandle[]; appliedRevisionIds: readonly string[]; reason: string | null }>;
-// ratioFrom: source units, ratioTo: resulting units. A 2:1 split halves historical prices and doubles volume.
+// ratioFrom = units before the event; ratioTo = units after the event.
+// A 2:1 split is 1 -> 2: historical prices halve and volume doubles.
+// A 1:2 reverse split is 2 -> 1: historical prices double and volume halves.
 // All adjusted prices use fixed 12-decimal scale and round half-up; volume must remain an integer.
 
 const UUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
@@ -46,10 +48,12 @@ export function selectCorporateActionsPIT(rows: readonly CorporateActionRow[], l
   return Object.freeze([...selected.values()].sort((a, b) => a.exDate.localeCompare(b.exDate) || a.revisionId.localeCompare(b.revisionId)));
 }
 
-export function adjustHistoricalSeries(input: Readonly<{ candles: readonly AdjustedCandle[]; actions: readonly CorporateActionRevision[]; adjustment: CorporateActionAdjustment; quoteCurrency: string; listingId: string; providerId: string; rightsPolicyId: string; asOf: string; sourceAdjustment?: "none" | "splits" | "dividends" | "all" }>): CorporateActionAdjustmentResult {
-  if (!Array.isArray(input.candles) || !["none", "splits", "dividends", "all"].includes(input.adjustment) || !/^[A-Z]{3}$/.test(input.quoteCurrency) || !UUID.test(input.listingId) || !UUID.test(input.providerId) || !UUID.test(input.rightsPolicyId) || !UTC.test(input.asOf) || input.sourceAdjustment !== undefined && input.sourceAdjustment !== "none") return { status: "UNAVAILABLE", candles: [], appliedRevisionIds: [], reason: "INSUFFICIENT_ADJUSTMENT_PROVENANCE" };
+export function adjustHistoricalSeries(input: Readonly<{ candles: readonly AdjustedCandle[]; actions: readonly CorporateActionRevision[]; adjustment: CorporateActionAdjustment; quoteCurrency: string; listingId: string; providerId: string; rightsPolicyId: string; asOf: string; sourceAdjustment: "none" | "splits" | "dividends" | "all"; eventCoverage: Readonly<{ from: string; to: string; asOf: string; complete: boolean }> }>): CorporateActionAdjustmentResult {
+  if (!Array.isArray(input.candles) || !["none", "splits", "dividends", "all"].includes(input.adjustment) || !/^[A-Z]{3}$/.test(input.quoteCurrency) || !UUID.test(input.listingId) || !UUID.test(input.providerId) || !UUID.test(input.rightsPolicyId) || !UTC.test(input.asOf) || input.sourceAdjustment !== "none" || !input.eventCoverage || !input.eventCoverage.complete || !DATE.test(input.eventCoverage.from) || !DATE.test(input.eventCoverage.to) || !DATE.test(input.eventCoverage.asOf) || input.eventCoverage.asOf !== input.asOf.slice(0, 10) || input.eventCoverage.from > input.eventCoverage.to) return { status: "UNAVAILABLE", candles: [], appliedRevisionIds: [], reason: "INSUFFICIENT_ADJUSTMENT_PROVENANCE" };
   const candles = [...input.candles].sort((a, b) => a.marketDate.localeCompare(b.marketDate)); candles.forEach(validCandle); if (input.adjustment === "none") return { status: "AVAILABLE", candles, appliedRevisionIds: [], reason: null };
+  if (candles.length === 0 || input.eventCoverage.from > candles[0].marketDate || input.eventCoverage.to < candles[candles.length - 1].marketDate) return { status: "UNAVAILABLE", candles: [], appliedRevisionIds: [], reason: "INCOMPLETE_ACTION_COVERAGE" };
   const actions = [...input.actions]; const seen = new Set<string>(); const actionIds = new Set<string>(); for (const action of actions) { if (seen.has(action.revisionId) || actionIds.has(action.actionId) || action.listingId !== input.listingId || action.providerId !== input.providerId || action.rightsPolicyId !== input.rightsPolicyId || Date.parse(action.asKnownAt) > Date.parse(input.asOf)) return { status: "UNAVAILABLE", candles: [], appliedRevisionIds: [], reason: "INVALID_ACTION_CONTEXT" }; seen.add(action.revisionId); actionIds.add(action.actionId); }
+  if (actions.some(action => action.exDate < input.eventCoverage.from || action.exDate > input.eventCoverage.to)) return { status: "UNAVAILABLE", candles: [], appliedRevisionIds: [], reason: "INCOMPLETE_ACTION_COVERAGE" };
   let result = candles.map(c => ({ ...c })); const applied: string[] = [];
   for (const action of actions) {
     const applySplit = action.type === "SPLIT" && (input.adjustment === "splits" || input.adjustment === "all"); const applyDividend = action.type === "DIVIDEND" && (input.adjustment === "dividends" || input.adjustment === "all"); if (!applySplit && !applyDividend) continue;
