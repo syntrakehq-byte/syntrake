@@ -25,7 +25,7 @@ export type InvestingMarketDataRequest = Readonly<{
 }>;
 
 function statusFor(history: HistoricalMarketDataResult | null, current: MarketDataResult | null): InvestingMarketDataResponse["status"] {
-  if (history?.status === "LICENSE_BLOCKED" || current === null && history?.status === "LICENSE_BLOCKED") return "LICENSE_BLOCKED";
+  if (history?.status === "LICENSE_BLOCKED") return "LICENSE_BLOCKED";
   if (history?.status === "PARTIAL") return "PARTIAL";
   if (history?.status === "UNAVAILABLE" && current === null) return "UNAVAILABLE";
   if (current !== null || history?.status === "AVAILABLE") return "AVAILABLE";
@@ -36,8 +36,8 @@ function matchesDiscovery(current: MarketDataResult, discovery: InvestingDiscove
   const expected = discovery.marketData;
   return expected !== null && current.listingRef === discovery.listingRef &&
     current.sourceRefs.length > 0 && expected.sourceRefs.length > 0 && current.sourceRefs[0].provider === expected.sourceRefs[0].provider &&
-    (current.instrument.instrumentId === null || expected.instrument.instrumentId === null || current.instrument.instrumentId === expected.instrument.instrumentId) &&
-    (current.instrument.listingId === null || expected.instrument.listingId === null || current.instrument.listingId === expected.instrument.listingId) &&
+    expected.instrument.instrumentId !== null && expected.instrument.listingId !== null &&
+    current.instrument.instrumentId === expected.instrument.instrumentId && current.instrument.listingId === expected.instrument.listingId &&
     current.instrument.kind === expected.instrument.kind && current.instrument.symbol === expected.instrument.symbol &&
     current.instrument.mic === expected.instrument.mic && current.instrument.currency === expected.instrument.currency &&
     current.currency === expected.currency && current.interval === expected.interval && current.adjustment === expected.adjustment;
