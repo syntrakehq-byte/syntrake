@@ -1,0 +1,40 @@
+name: market-data-g3c-pg17
+
+on:
+  pull_request:
+    paths:
+      - "app/api/investing/market-data/**"
+      - "market-data-core/investingMarketDataHttp.ts"
+      - "market-data-core/tests/g3c-authenticated-*.test.ts"
+      - "investing-core/server/requireVerifiedClerkActor.ts"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/market-data-g3c-pg17.yml"
+
+jobs:
+  g3c:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck:market-data
+      - run: npx eslint market-data-core/investingMarketDataHttp.ts market-data-core/tests/g3c-authenticated-http.test.ts market-data-core/tests/g3c-authenticated-pg17.test.ts app/api/investing/market-data/route.ts
+      - run: npm run test:market-data:g3c:pg17
