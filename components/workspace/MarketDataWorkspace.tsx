@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Search, ShieldAlert, SlidersHorizontal } from "lucide-react";
 import type { SiteLang } from "@/lib/i18n/siteLanguage";
+import { buildMarketDataUrl, canPresentMarketData, LatestMarketRequest } from "./marketDataWorkspaceLogic";
 
 type MarketResponse = Readonly<{
   status: string;
@@ -31,21 +32,32 @@ export function MarketDataWorkspace({ lang }: { lang: SiteLang }) {
   const [result, setResult] = useState<MarketResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const requestGate = useRef<LatestMarketRequest | null>(null);
+  if (requestGate.current === null) requestGate.current = new LatestMarketRequest();
+
+  function changeQueryValue(setter: (value: string) => void, value: string): void {
+    requestGate.current?.invalidate();
+    setter(value);
+    setResult(null);
+    setError(null);
+  }
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setResult(null); setError(null); setLoading(true);
+    const request = requestGate.current!.begin();
     try {
-      const params = new URLSearchParams({ listingId: listingId.trim(), startDate: from, endDate: to, asOf, interval: "1day", adjustment: "none" });
-      const response = await fetch(`/api/investing/market-data?${params.toString()}`, { method: "GET", credentials: "include", cache: "no-store" });
+      const response = await fetch(buildMarketDataUrl("/api/investing/market-data", { listingId: listingId.trim(), startDate: from, endDate: to, asOf }), { method: "GET", credentials: "include", cache: "no-store", signal: request.signal });
       const body = await response.json() as { error?: string } & Partial<MarketResponse>;
+      if (!requestGate.current!.accepts(request.generation)) return;
       if (response.status === 401) setError(t.login);
       else if (response.status === 400) setError(t.invalid);
       else if (response.status === 404 || response.status === 503) setError(t.unavailable);
       else if (!response.ok) setError(t.unavailable);
+      else if (body.status && canPresentMarketData(body.status)) setResult(body as MarketResponse);
       else setResult(body as MarketResponse);
-    } catch { setError(t.unavailable); }
-    finally { setLoading(false); }
+    } catch (cause) { if (requestGate.current!.accepts(request.generation) && !(cause instanceof DOMException && cause.name === "AbortError")) { setResult(null); setError(t.unavailable); } }
+    finally { if (requestGate.current!.accepts(request.generation)) setLoading(false); }
   }
 
   const current = result?.status === "AVAILABLE" ? result.current : null;
@@ -60,10 +72,10 @@ export function MarketDataWorkspace({ lang }: { lang: SiteLang }) {
     <section className="rounded-[22px] border border-[#293850] bg-[#111d31] p-6" aria-labelledby="market-query-title">
       <div className="flex items-center gap-3"><SlidersHorizontal size={19} className="text-[#d8bc82]" aria-hidden="true"/><h2 id="market-query-title" className="text-lg font-semibold text-white">{t.listing}</h2></div>
       <form onSubmit={submit} className="mt-5 grid gap-4 md:grid-cols-2 lg:grid-cols-5">
-        <label className="lg:col-span-2"><span className="mb-2 block text-xs text-[#a9b7cc]">{t.listingHint}</span><input required value={listingId} onChange={e => setListingId(e.target.value)} className="w-full rounded-xl border border-[#3a4963] bg-[#0b1424] px-3 py-3 text-sm text-white outline-none focus:border-[#d8bc82]" /></label>
-        <label><span className="mb-2 block text-xs text-[#a9b7cc]">{t.from}</span><input required type="date" value={from} onChange={e => setFrom(e.target.value)} className="w-full rounded-xl border border-[#3a4963] bg-[#0b1424] px-3 py-3 text-sm text-white outline-none focus:border-[#d8bc82]" /></label>
-        <label><span className="mb-2 block text-xs text-[#a9b7cc]">{t.to}</span><input required type="date" value={to} onChange={e => setTo(e.target.value)} className="w-full rounded-xl border border-[#3a4963] bg-[#0b1424] px-3 py-3 text-sm text-white outline-none focus:border-[#d8bc82]" /></label>
-        <label><span className="mb-2 block text-xs text-[#a9b7cc]">{t.asOf}</span><input required type="datetime-local" value={asOf.slice(0, 16)} onChange={e => setAsOf(`${e.target.value}:00Z`)} className="w-full rounded-xl border border-[#3a4963] bg-[#0b1424] px-3 py-3 text-sm text-white outline-none focus:border-[#d8bc82]" /></label>
+        <label className="lg:col-span-2"><span className="mb-2 block text-xs text-[#a9b7cc]">{t.listingHint}</span><input required value={listingId} onChange={e => changeQueryValue(setListingId, e.target.value)} className="w-full rounded-xl border border-[#3a4963] bg-[#0b1424] px-3 py-3 text-sm text-white outline-none focus:border-[#d8bc82]" /></label>
+        <label><span className="mb-2 block text-xs text-[#a9b7cc]">{t.from}</span><input required type="date" value={from} onChange={e => changeQueryValue(setFrom, e.target.value)} className="w-full rounded-xl border border-[#3a4963] bg-[#0b1424] px-3 py-3 text-sm text-white outline-none focus:border-[#d8bc82]" /></label>
+        <label><span className="mb-2 block text-xs text-[#a9b7cc]">{t.to}</span><input required type="date" value={to} onChange={e => changeQueryValue(setTo, e.target.value)} className="w-full rounded-xl border border-[#3a4963] bg-[#0b1424] px-3 py-3 text-sm text-white outline-none focus:border-[#d8bc82]" /></label>
+        <label><span className="mb-2 block text-xs text-[#a9b7cc]">{t.asOf} (UTC)</span><input required type="text" inputMode="text" placeholder="2026-02-01T00:00:00Z" value={asOf} onChange={e => changeQueryValue(setAsOf, e.target.value)} className="w-full rounded-xl border border-[#3a4963] bg-[#0b1424] px-3 py-3 text-sm text-white outline-none focus:border-[#d8bc82]" /></label>
         <button disabled={loading} className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#d8bc82] px-4 py-3 text-sm font-semibold text-[#101827] transition hover:bg-[#f0d9a7] disabled:cursor-wait disabled:opacity-60 md:col-span-2 lg:col-span-5" type="submit"><Search size={17} aria-hidden="true"/>{loading ? t.loading : t.search}</button>
       </form>
     </section>
