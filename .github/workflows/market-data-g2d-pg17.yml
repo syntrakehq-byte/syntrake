@@ -1,0 +1,28 @@
+name: market-data-g2d-pg17
+on:
+  pull_request:
+    paths: ["market-data-core/corporateActions.ts", "market-data-core/tests/corporate-actions.test.ts", "market-data-core/tests/g2d-corporate-actions.test.ts", "supabase/release-candidates/20261102150000_g2d_corporate_actions_candidate.sql", "package.json", ".github/workflows/market-data-g2d-pg17.yml"]
+  workflow_dispatch:
+permissions: { contents: read }
+jobs:
+  g2d-pg17:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env: { POSTGRES_PASSWORD: postgres, POSTGRES_DB: postgres }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with: { node-version: "22", cache: npm }
+      - run: npm ci
+      - run: npm run typecheck:market-data
+      - run: npm run test:market-data:g2a
+      - run: npm run test:market-data:g2b
+      - run: npm run test:market-data:g2c
+      - run: npm run test:market-data:g2d
