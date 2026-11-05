@@ -13,7 +13,7 @@ import { canonicalIdentity, resolveProviderAlias } from "../identity";
 import type { CatalogSource } from "../instrumentDiscovery";
 import type { ProviderCapability } from "../providerCapabilities";
 import { serveInvestingMarketData } from "../investingOperationalService";
-import { historicalRowsToResult } from "../contracts";
+import { historicalRowsToResult, type MarketDataResult } from "../contracts";
 
 const db = new Client({ connectionString: process.env.DATABASE_URL ?? "postgres://postgres:postgres@localhost:5432/postgres" });
 const workerRole = "d5_worker_login";
@@ -137,8 +137,9 @@ test("D5 integrated offline AAPL discovery -> Registry/D3 -> D4 -> R3-C -> worke
   await db.query("UPDATE market_core.license_policies SET display_allowed=true WHERE rights_policy_id=$1", [ids.rights]);
   const historicalRequest = { listingId: ids.listing, startDate: "2025-01-01", endDate: "2025-01-31", asOf: "2027-01-04T00:00:00Z", interval: "1day" as const, adjustment: "none" as const };
   const historical = historicalRowsToResult(historicalRequest, (await reader.query("SELECT * FROM market_core.read_market_history($1,DATE '2025-01-01',DATE '2025-01-31',TIMESTAMPTZ '2027-01-04','1day','none')", [ids.listing])).rows);
-  assert.equal(historical.status, "AVAILABLE"); const point = historical.points[0]; assert.ok(point); assert.notEqual(point.close, null); assert.notEqual(point.revisionId, null); assert.notEqual(point.asKnownAt, null);
-  const current = { instrument: { kind: "EQUITY" as const, symbol: "AAPL", mic: "XNAS", currency: "USD", key: "EQUITY:XNAS:AAPL:USD", instrumentId: ids.instrument, listingId: ids.listing }, listingRef: ids.listing, sourceRefs: [{ provider: "TWELVE_DATA", originalSourceId: "d5-reader", requestId: null, sourceDocumentUri: null }], revisionId: point.revisionId, price: point.close, currency: "USD", marketDate: point.marketDate, asOf: point.asKnownAt, quality: { coverage: "FULL" as const, freshness: "KNOWN" as const }, rights: { policyId: ids.rights, display: true, retentionUntil: null }, interval: "1day" as const, adjustment: "none" as const };
+  const point = historical.points[0];
+  if (historical.status !== "AVAILABLE" || !point || point.close === null || point.revisionId === null || point.asKnownAt === null) throw new Error("INVALID_HISTORICAL_POINT");
+  const current: MarketDataResult = { instrument: { kind: "EQUITY", symbol: "AAPL", mic: "XNAS", currency: "USD", key: "EQUITY:XNAS:AAPL:USD", instrumentId: ids.instrument, listingId: ids.listing }, listingRef: ids.listing, sourceRefs: [{ provider: "TWELVE_DATA", originalSourceId: "d5-reader", requestId: null, sourceDocumentUri: null }], revisionId: point.revisionId, price: point.close, currency: "USD", marketDate: point.marketDate, asOf: point.asKnownAt, quality: { coverage: "FULL", freshness: "KNOWN" }, rights: { policyId: ids.rights, display: true, retentionUntil: null }, interval: "1day", adjustment: "none" };
   const discovery = { status: "READY" as const, candidates: [], resolutions: [], routing: null, providerKey: "TWELVE_DATA", listingRef: ids.listing, close: current.price, marketData: current, identityVerified: true, reason: "D5" };
   const served = await serveInvestingMarketData({ discovery, historical: null, requiresDisplay: true, rightsPolicyId: ids.rights, readCurrent: async () => current, readHistory: null, refresh: async () => { throw new Error("refresh must not run for valid cache"); } });
   assert.equal(served.status, "AVAILABLE"); assert.equal(served.source, "CACHE"); assert.equal(served.refreshed, false);
