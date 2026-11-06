@@ -7,6 +7,10 @@ import { ContinuousWorkerService } from "../continuousWorkerService";
 import { planDemand } from "../coordinator";
 import { handleInvestingMarketDataRead, loadInvestingMarketDataFromPostgres } from "../investingMarketDataHttp";
 import type { Actor } from "../../investing-core/contracts";
+import { createLicensedG3TwelveDataProvider } from "../g3LicensedTwelveData";
+import { runOfflineIngestOnce } from "../offlinePipeline";
+import { readMarketDataForConsumer, type MarketDataResult } from "../contracts";
+
 
 const adminUrl = process.env.DATABASE_URL ?? "postgres://postgres:postgres@localhost:5432/postgres";
 const db = new Client({ connectionString: adminUrl });
@@ -108,4 +112,114 @@ test("G3-E proves Coordinator -> LOGIN worker -> PG17 -> authenticated API using
   assert.notEqual(beforeBody.status, "AVAILABLE");
   assert.equal("current" in beforeBody, false);
   assert.equal("history" in beforeBody, false);
+});
+
+
+test("G3-F proves licensed canonical Twelve Data adapter -> worker LOGIN -> PG17 -> shared private Investing/Trading revision", async () => {
+  // Completely synthetic transport and disposable PG17 fixture; NO Twelve Data network call.
+  const fixture = {
+    provider: "e3000000-0000-0000-0000-000000000012",
+    rights: "e3000000-0000-0000-0000-000000000013",
+    listing: "e3000000-0000-0000-0000-000000000014",
+    alias: "e3000000-0000-0000-0000-000000000015",
+    budget: "e3000000-0000-0000-0000-000000000016",
+    job: "e3000000-0000-0000-0000-000000000017",
+    issuer: "e3000000-0000-0000-0000-000000000018",
+    instrument: "e3000000-0000-0000-0000-000000000019",
+  };
+  await db.query("INSERT INTO market_core.providers VALUES ($1,'TWELVE_DATA','ACTIVE')", [fixture.provider]);
+  await db.query("INSERT INTO market_core.license_policies VALUES ($1,'g3f-offline-license-fixture',true,false,TIMESTAMPTZ '2030-01-01')", [fixture.rights]);
+  await db.query("INSERT INTO market_core.issuers VALUES ($1,'G3F Test Issuer')", [fixture.issuer]);
+  await db.query("INSERT INTO market_core.instruments VALUES ($1,$2,'EQUITY','USD')", [fixture.instrument, fixture.issuer]);
+  await db.query("INSERT INTO market_core.listings (listing_id,instrument_id,mic,mic_role,trading_currency,ticker,valid_from) VALUES ($1,$2,'XNGS','OPERATING','USD','AAPL',DATE '1980-12-12')", [fixture.listing,fixture.instrument]);
+  await db.query("INSERT INTO market_core.provider_aliases (provider_alias_id,provider_id,provider_reference,listing_id,valid_from) VALUES ($1,$2,'AAPL',$3,DATE '1980-12-12')", [fixture.alias, fixture.provider,fixture.listing]);
+  await db.query("INSERT INTO market_core.provider_budget_periods VALUES ($1,$2,DATE '2020-01-01',DATE '2030-01-01',1,0,0)", [fixture.budget,fixture.provider]);
+  const demand = planDemand({ listingId:fixture.listing,providerId:fixture.provider,
+    rightsPolicyId:fixture.rights,interval:"1day",adjustment:"none",
+    from:"2026-11-05",to:"2026-11-05",freshness:"AVAILABLE",costClass:"KNOWN" });
+  assert.equal(demand.state,"READY");
+  await db.query(`INSERT INTO market_core.ingest_jobs
+    (job_id,demand_key,listing_id,provider_id,rights_policy_id,budget_period_id,
+     estimated_credits,idempotency_key,state,attempt,max_attempts,next_run_at)
+     VALUES ($1,$2,$3,$4,$5,$6,1,'g3f-licensed-offline','PENDING',0,2,clock_timestamp())`,
+     [fixture.job,demand.demandKey,fixture.listing,fixture.provider,fixture.rights,fixture.budget]);
+
+  const fakeEnv={
+    VERCEL_ENV:"preview",VERCEL_GIT_COMMIT_REF:"feat/g3e-integrated-rehearsal-20261106",
+    VERCEL_GIT_COMMIT_SHA:"f".repeat(40),SYNTRAKE_G3_APPROVED_SHA:"f".repeat(40),
+    SYNTRAKE_G3_PROVIDER_ENABLED:"enabled",SYNTRAKE_G3_LICENSE_SCOPE:"internal-non-display",
+    SYNTRAKE_TWELVE_DATA_API_KEY:"OFFLINE_TEST_NO_HTTP_123456789",
+  };
+  const readerFactory=async()=>{
+    const client=new Client({connectionString:`postgres://${readerRole}:${readerPassword}@localhost:5432/postgres`});
+    return client;
+  };
+  let providerCalls=0;
+  const providerAdapter=createLicensedG3TwelveDataProvider({
+    env:fakeEnv,readerFactory,clock:()=>new Date("2026-11-06T12:00:00Z"),
+    attestation:{
+      provider:"TWELVE_DATA",rightsPolicyId:fixture.rights,scope:"internal-non-display",
+      evidenceReference:"twelvedata:contract:offline-pg17-fixture",
+      retentionUntil:"2030-01-01T00:00:00Z",
+      reviewedAt:"2026-11-06T11:00:00Z",purgeVerified:true,
+    },
+    transport:async (url,init)=>{
+      providerCalls++;
+      assert.equal(new URL(url).hostname,"api.twelvedata.com");
+      assert.equal(new URL(url).searchParams.get("symbol"),"AAPL");
+      assert.equal(new Headers(init.headers).get("Authorization"),"apikey "+fakeEnv.SYNTRAKE_TWELVE_DATA_API_KEY);
+      return new Response(JSON.stringify({
+        status:"ok",meta:{
+          symbol:"AAPL",interval:"1day",currency:"USD",exchange_timezone:"America/New_York",
+          mic_code:"XNGS",type:"Common Stock",
+        },
+        values:[{datetime:"2026-11-05",open:"100.00",high:"110.00",
+          low:"90.00",close:"105.00",volume:"1000"}],
+      }),{status:200});
+    },
+  });
+  const writer=new Client({connectionString:`postgres://${workerRole}:${workerPassword}@localhost:5432/postgres`});
+  await writer.connect();
+  let persisted;
+  try {
+    const result=await runOfflineIngestOnce({
+      db:writer,provider:providerAdapter,workerId:"g3e-worker",
+      leaseToken:"e3000000-0000-0000-0000-000000000021",
+      runId:"e3000000-0000-0000-0000-000000000022",
+      providerRunKey:"g3f-offline-ingest",consumedCredits:"1",
+      exchangeTimezone:"America/New_York",
+    });
+    assert.equal(result.state,"COMMITTED");
+    persisted=result;
+  } finally {await writer.end();}
+  assert.equal(providerCalls,1,"One provider call for one canonical listing");
+  assert.equal(persisted?.state,"COMMITTED");
+  const saved=(await db.query(`SELECT r.revision_id::text AS revision_id, r.close_value::text AS close,
+      r.source_revision AS source_revision
+      FROM market_core.market_observation_revisions r
+      JOIN market_core.market_observations o USING (observation_id)
+      WHERE o.listing_id=$1 AND o.provider_id=$2`,[fixture.listing,fixture.provider])).rows;
+  assert.equal(saved.length,1);
+  assert.equal(saved[0].close,"105.000000000000");
+  const consumed=(await db.query("SELECT consumed_credits::text FROM market_core.provider_budget_periods WHERE budget_period_id=$1",[fixture.budget])).rows[0].consumed_credits;
+  assert.equal(consumed,"1.000000");
+  const shared:MarketDataResult={
+    instrument:{kind:"EQUITY",symbol:"AAPL",mic:"XNGS",currency:"USD",
+      key:"instrument:"+fixture.instrument+":listing:"+fixture.listing,
+      instrumentId:fixture.instrument,listingId:fixture.listing},
+    listingRef:fixture.listing,sourceRefs:[{provider:"TWELVE_DATA",originalSourceId:saved[0].source_revision,requestId:null,sourceDocumentUri:null}],
+    revisionId:saved[0].revision_id,price:saved[0].close,currency:"USD",
+    marketDate:"2026-11-05",asOf:"2026-11-06T12:00:00Z",quality:{coverage:"FULL",freshness:"UNKNOWN"},
+    rights:{policyId:fixture.rights,display:false,retentionUntil:"2030-01-01T00:00:00Z"},
+    interval:"1day",adjustment:"none",
+  };
+  const checkAt=new Date("2026-11-06T21:00:00Z");
+  const investing=readMarketDataForConsumer(shared,{rightsPolicyId:fixture.rights,requiresDisplay:false,interval:"1day"},checkAt);
+  const trading=readMarketDataForConsumer(shared,{rightsPolicyId:fixture.rights,requiresDisplay:false,interval:"1day"},checkAt);
+  assert.strictEqual(investing,trading);
+  assert.strictEqual(investing,shared);
+  assert.equal(providerCalls,1,"Consumers reuse the stored revision without refetch");
+  assert.equal(readMarketDataForConsumer(shared,{rightsPolicyId:fixture.rights,requiresDisplay:true},checkAt),null);
+  assert.equal(readMarketDataForConsumer(shared,{rightsPolicyId:fixture.rights,requiresDisplay:false,interval:"1min"},checkAt),null);
+  assert.equal(readMarketDataForConsumer(shared,{rightsPolicyId:fixture.rights,requiresDisplay:false},new Date("2030-01-01T00:00:00Z")),null);
 });
