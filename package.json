@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "tsx scripts/preview-postgres-probe.ts && next build",
     "start": "next start",
     "lint": "eslint .",
     "verify": "npm run lint && npx tsc --noEmit && npm run build",
@@ -15,7 +15,7 @@
     "test:investing:pg17": "tsx --test investing-core/tests/pg17.test.ts",
     "test:investing:pg17:readonly": "tsx --test investing-core/tests/pg17-release-readonly.test.ts",
     "test:investing:r2f:mock": "tsx --test investing-core/tests/verifySignedClerkRlsAB.test.ts",
-      "test:market-data": "tsx --test market-data-core/tests/r3a.test.ts market-data-core/tests/d0-instrument-discovery.test.ts market-data-core/tests/g1-four-consumers.test.ts",
+    "test:market-data": "tsx --test market-data-core/tests/r3a.test.ts market-data-core/tests/d0-instrument-discovery.test.ts market-data-core/tests/g1-four-consumers.test.ts",
     "typecheck:market-data": "tsc -p tsconfig.market-data.json --noEmit",
     "test:market-data:r3b": "tsx --test market-data-core/tests/r3b-pg17.test.ts",
     "test:market-data:g2a": "tsx --test --test-timeout=20000 market-data-core/tests/g2a-historical-pg17.test.ts",
@@ -45,8 +45,8 @@
     "test:market-data:g3c:pg17": "tsx --test --test-timeout=30000 market-data-core/tests/g3c-authenticated-pg17.test.ts && npm run test:market-data:g3c",
     "test:market-data:g3d": "tsx --test --test-timeout=10000 components/workspace/marketDataWorkspaceLogic.test.ts",
     "test:market-data:g3e:pg17": "tsx --test --test-timeout=30000 market-data-core/tests/g3e-integrated-pg17.test.ts",
-    "twelve-data:real:once": "tsx scripts/twelve-data-real-once.ts"
-    ,"twelve-data:real:rehearsal": "tsx scripts/twelve-data-real-rehearsal.ts"
+    "twelve-data:real:once": "tsx scripts/twelve-data-real-once.ts",
+    "twelve-data:real:rehearsal": "tsx scripts/twelve-data-real-rehearsal.ts"
   },
   "overrides": {
     "@clerk/shared": "3.47.7",
