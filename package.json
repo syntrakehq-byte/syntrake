@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "scripts": {
     "dev": "next dev",
-    "build": "tsx scripts/g3-preview-real-provider-probe.ts && next build",
+    "build": "next build",
     "start": "next start",
     "lint": "eslint .",
     "verify": "npm run lint && npx tsc --noEmit && npm run build",
