@@ -10,6 +10,7 @@ import type { Actor } from "../../investing-core/contracts";
 import { createLicensedG3TwelveDataProvider } from "../g3LicensedTwelveData";
 import { runOfflineIngestOnce } from "../offlinePipeline";
 import { readMarketDataForConsumer, type MarketDataResult } from "../contracts";
+import { loadSharedInternalMarketHistory, selectHistoryForMarketCore } from "../sharedInternalMarketHistory";
 
 
 const adminUrl = process.env.DATABASE_URL ?? "postgres://postgres:postgres@localhost:5432/postgres";
@@ -203,6 +204,37 @@ test("G3-F proves licensed canonical Twelve Data adapter -> worker LOGIN -> PG17
   assert.equal(saved[0].close,"105.000000000000");
   const consumed=(await db.query("SELECT consumed_credits::text FROM market_core.provider_budget_periods WHERE budget_period_id=$1",[fixture.budget])).rows[0].consumed_credits;
   assert.equal(consumed,"1.000000");
+  const sharedSnapshot=await loadSharedInternalMarketHistory({
+    readerFactory,
+    request:{
+      listingId:fixture.listing,startDate:"2026-11-01",endDate:"2026-11-06",
+      asOf:"2026-11-06T19:00:00Z",interval:"1day",adjustment:"none",
+    },
+    providerId:fixture.provider,rightsPolicyId:fixture.rights,
+  });
+  assert.equal(sharedSnapshot.status,"AVAILABLE");
+  const investingPersisted=selectHistoryForMarketCore({
+    source:sharedSnapshot,consumer:"INVESTING",requiresDisplay:false,
+    expectedRightsPolicyId:fixture.rights,interval:"1day",
+    now:new Date("2026-11-06T19:00:00Z"),
+  });
+  const tradingPersisted=selectHistoryForMarketCore({
+    source:sharedSnapshot,consumer:"TRADING",requiresDisplay:false,
+    expectedRightsPolicyId:fixture.rights,interval:"1day",
+    now:new Date("2026-11-06T19:00:00Z"),
+  });
+  assert.ok(investingPersisted);
+  assert.strictEqual(investingPersisted,tradingPersisted,"both cores reuse one PG17 PIT snapshot");
+  assert.equal(investingPersisted.points[0]?.close,saved[0].close);
+  assert.equal(selectHistoryForMarketCore({
+    source:sharedSnapshot,consumer:"TRADING",requiresDisplay:true,
+    expectedRightsPolicyId:fixture.rights,interval:"1day",now:new Date("2026-11-06T19:00:00Z"),
+  }),null,"non-display Basic data must not reach UI");
+  assert.equal(selectHistoryForMarketCore({
+    source:sharedSnapshot,consumer:"TRADING",requiresDisplay:false,
+    expectedRightsPolicyId:fixture.rights,interval:"1min",now:new Date("2026-11-06T19:00:00Z"),
+  }),null,"daily candles cannot satisfy intraday needs");
+  assert.equal(providerCalls,1,"shared persisted reader never refetches from Twelve Data");
   const shared:MarketDataResult={
     instrument:{kind:"EQUITY",symbol:"AAPL",mic:"XNGS",currency:"USD",
       key:"instrument:"+fixture.instrument+":listing:"+fixture.listing,
