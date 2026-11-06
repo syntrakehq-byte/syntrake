@@ -235,8 +235,16 @@ export function createHistoricalMarketDataResult(input: HistoricalMarketDataResu
 export function readMarketDataForConsumer(
   result: MarketDataResult,
   requirement: Readonly<{ rightsPolicyId: string; requiresDisplay: boolean; interval?: "1day" | "1hour" | "1min" }>,
+  now: Date = new Date(),
 ): MarketDataResult | null {
-  if (result.rights.policyId !== requirement.rightsPolicyId || (requirement.requiresDisplay && !result.rights.display) || (requirement.interval !== undefined && result.interval !== requirement.interval)) return null;
+  const until = result.rights.retentionUntil;
+  // License expiry applies equally to private Investing/Trading consumers,
+  // not only the HTTP display route. Invalid clocks and retention fail closed.
+  if (!(now instanceof Date) || Number.isNaN(now.valueOf()) ||
+      (until !== null && (Number.isNaN(Date.parse(until)) || Date.parse(until) <= now.valueOf())) ||
+      result.rights.policyId !== requirement.rightsPolicyId ||
+      (requirement.requiresDisplay && !result.rights.display) ||
+      (requirement.interval !== undefined && result.interval !== requirement.interval)) return null;
   return result;
 }
 
