@@ -1,0 +1,57 @@
+name: market-data-g3e
+
+on:
+  pull_request:
+    paths:
+      - "market-data-core/**"
+      - "components/workspace/**"
+      - "app/api/investing/market-data/**"
+      - "investing-core/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/market-data-g3e.yml"
+
+jobs:
+  g3e:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx tsx --test market-data-core/tests/g3-provider-gate.test.ts
+      - run: npx tsx --test market-data-core/tests/g3f-licensed-ingestion.test.ts
+      - run: npx tsx --test market-data-core/tests/g3f-bounded-worker.test.ts
+      - run: npx tsc --noEmit
+      - run: npm run lint -- --no-fix
+      - run: npm run test:market-data:g3e:pg17
+      - run: npm run test:market-data:g3a:pg17
+      - run: npm run test:market-data:g3c:pg17
+      - run: npm run test:market-data:g3b:pg17
+      - run: npm run test:market-data:g3d
+      - run: npm run test:investing
+      - name: Next.js build with non-production Clerk test configuration
+        env:
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+        run: |
+          if [ -z "$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" ]; then
+            echo "::error::BLOCKED: NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY GitHub Actions secret is not configured"
+            exit 1
+          fi
+          npm run build

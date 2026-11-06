@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { instrumentIdentity, MarketDataError, record, resolveProviderAlias, validMarketDate, type AliasResolution, type InstrumentIdentity } from "./identity";
-import { isR3E1RealCallReady, requireR3AProviderReady, requireR3E1RealCallReady } from "./gate";
+import { isR3E1RealCallReady, requirePreviewMarketProviderReady, requireR3E1RealCallReady } from "./gate";
 import { validateEnvelope, type DataEnvelope } from "./contracts";
 
 export type DailyCandle = Readonly<{
@@ -136,7 +136,7 @@ export async function fetchDailySeries(input: Readonly<{
   // Fail BEFORE constructing URL or calling transport when not authorized.
   const apikey = input.internalAuthorization === R3E1_INTERNAL
     ? requireR3E1ProviderReadyOnce(input.env, input.checkoutSha)
-    : requireR3AProviderReady(input.env);
+    : requirePreviewMarketProviderReady(input.env);
   const hint = instrumentIdentity({
     kind: input.instrument?.kind, symbol: input.instrument?.symbol,
     mic: input.instrument?.mic, currency: input.instrument?.currency,

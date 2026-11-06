@@ -1,4 +1,5 @@
-import { Client } from "pg";
+import type { Client } from "pg";
+import { createMarketReaderClient } from "./pgReaderTls";
 import { instrumentIdentity } from "./identity";
 import { historicalRowsToResult, type HistoricalMarketDataRequest, type MarketDataResult } from "./contracts";
 import { serveInvestingMarketData, type InvestingMarketDataResponse } from "./investingOperationalService";
@@ -88,12 +89,12 @@ export async function handleInvestingMarketDataRead(
   catch { return json(503, { error: "READ_UNAVAILABLE" }); }
 }
 
-export async function loadInvestingMarketDataFromPostgres(request: InvestingMarketDataHttpRequest, _actor: Actor, env: Env = process.env): Promise<InvestingMarketDataResponse> {
+export async function loadInvestingMarketDataFromPostgres(request: InvestingMarketDataHttpRequest, _actor: Actor, env: Env = process.env, createClient: (input: Env) => Client = createMarketReaderClient): Promise<InvestingMarketDataResponse> {
   const connectionString = env.MARKET_DATA_READER_DATABASE_URL;
   const approvedPolicyId = env.MARKET_DATA_G3C_APPROVED_RIGHTS_POLICY_ID;
   if (!connectionString) throw new Error("INVALID_CONFIGURATION");
   if (!approvedPolicyId || !validUuid(approvedPolicyId)) throw new Error("INVALID_CONFIGURATION");
-  const client = new Client({ connectionString });
+  const client = createClient(env);
   await client.connect();
   try {
     await client.query("SET ROLE market_core_reader");
