@@ -17,7 +17,13 @@ async function main(): Promise<void> {
         env.VERCEL_GIT_COMMIT_SHA === env.SYNTRAKE_G3_APPROVED_SHA],
       ["provider", env.SYNTRAKE_G3_PROVIDER_ENABLED === "enabled"],
       ["rights", env.SYNTRAKE_G3_LICENSE_SCOPE === "internal-non-display"],
-      ["credential", validKey],
+      ["credential_present", typeof env.SYNTRAKE_TWELVE_DATA_API_KEY === "string"],
+      ["credential_length", typeof env.SYNTRAKE_TWELVE_DATA_API_KEY === "string" &&
+        env.SYNTRAKE_TWELVE_DATA_API_KEY.length >= 16 &&
+        env.SYNTRAKE_TWELVE_DATA_API_KEY.length <= 128],
+      ["credential_trimmed", typeof env.SYNTRAKE_TWELVE_DATA_API_KEY === "string" &&
+        env.SYNTRAKE_TWELVE_DATA_API_KEY === env.SYNTRAKE_TWELVE_DATA_API_KEY.trim()],
+      ["credential_format", validKey],
     ] as const;
     console.log("G3_REAL_PROVIDER_PROBE SKIPPED checks=" +
       flags.map(([key, ok]) => key + ":" + (ok ? "ok" : "blocked")).join(","));
