@@ -144,7 +144,7 @@ test("G3 F feeds an internal Investing and Trading reader from one canonical, no
   assert.equal(envelope.value[0].close,"105.00");
   assert.equal(envelope.rights.policyId,policy);
   assert.equal(envelope.rights.display,false);
-  assert.equal(envelope.rights.retentionUntil,rights.retentionUntil);
+  assert.equal(Date.parse(envelope.rights.retentionUntil),Date.parse(rights.retentionUntil),"same license deadline regardless of ISO millisecond precision");
   const data: MarketDataResult = {
     instrument: { kind:"EQUITY",symbol:"AAPL",mic:"XNGS",currency:"USD",
       key:"instrument:"+instrument+":listing:"+listing,instrumentId:instrument,listingId:listing },
