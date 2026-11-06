@@ -14,10 +14,13 @@ async function main() {
   }
   const client = createMarketReaderClient(process.env);
   try {
-    step = "tls_login";
+    step = "connect_tls";
     await client.connect();
-    const tls = (await client.query("SELECT ssl FROM pg_stat_ssl WHERE pid=pg_backend_pid()")).rows[0];
-    if (tls?.ssl !== true) throw new Error("TLS_NOT_ACTIVE");
+    const stream = (client as unknown as {
+      connection?: { stream?: { encrypted?: boolean; authorized?: boolean } }
+    }).connection?.stream;
+    step = "tls_socket";
+    if (stream?.encrypted !== true || stream.authorized !== true) throw new Error("TLS_SOCKET_NOT_VERIFIED");
     ok("tls");
 
     step = "identity";
