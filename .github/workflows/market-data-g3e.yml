@@ -37,6 +37,7 @@ jobs:
       - run: npm ci
       - run: npx tsx --test market-data-core/tests/g3-provider-gate.test.ts
       - run: npx tsx --test market-data-core/tests/g3f-licensed-ingestion.test.ts
+      - run: npx tsx --test market-data-core/tests/g3f-bounded-worker.test.ts
       - run: npx tsc --noEmit
       - run: npm run lint -- --no-fix
       - run: npm run test:market-data:g3e:pg17
