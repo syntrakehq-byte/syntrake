@@ -1,4 +1,4 @@
-import { Client } from "pg";
+import { createMarketReaderClient } from "./pgReaderTls";
 import { instrumentIdentity } from "./identity";
 import { historicalRowsToResult, type HistoricalMarketDataRequest, type MarketDataResult } from "./contracts";
 import { serveInvestingMarketData, type InvestingMarketDataResponse } from "./investingOperationalService";
@@ -93,7 +93,7 @@ export async function loadInvestingMarketDataFromPostgres(request: InvestingMark
   const approvedPolicyId = env.MARKET_DATA_G3C_APPROVED_RIGHTS_POLICY_ID;
   if (!connectionString) throw new Error("INVALID_CONFIGURATION");
   if (!approvedPolicyId || !validUuid(approvedPolicyId)) throw new Error("INVALID_CONFIGURATION");
-  const client = new Client({ connectionString });
+  const client = createMarketReaderClient(env);
   await client.connect();
   try {
     await client.query("SET ROLE market_core_reader");
