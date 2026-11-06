@@ -85,7 +85,7 @@ test("G3-E proves Coordinator -> LOGIN worker -> PG17 -> authenticated API using
   const readerUrl = new URL(adminUrl); readerUrl.username = readerRole; readerUrl.password = readerPassword;
   const env = { VERCEL_ENV: "preview", MARKET_DATA_G3C_MODE: "enabled", MARKET_DATA_G3C_APPROVED_SHA: "e".repeat(40), VERCEL_GIT_COMMIT_SHA: "e".repeat(40), MARKET_DATA_G3C_APPROVED_RIGHTS_POLICY_ID: ids.rights, MARKET_DATA_READER_DATABASE_URL: readerUrl.toString() };
   const url = `https://preview.invalid/api/investing/market-data?listingId=${ids.listing}&startDate=2026-02-01&endDate=2026-02-28&asOf=2026-03-01T00%3A00%3A00Z&interval=1day&adjustment=none`;
-  const response = await handleInvestingMarketDataRead(url, env, async () => actor, (request, authenticatedActor) => loadInvestingMarketDataFromPostgres(request, authenticatedActor, env));
+  const response = await handleInvestingMarketDataRead(url, env, async () => actor, (request, authenticatedActor) => loadInvestingMarketDataFromPostgres(request, authenticatedActor, env, () => new Client({ connectionString: env.MARKET_DATA_READER_DATABASE_URL })));
   assert.equal(response.status, 200);
   const body = await response.json() as { status: string; current?: { revisionId: string; price: string } | null; history?: { points: Array<{ revisionId: string; close: string | null }> } | null };
   assert.equal(body.status, "AVAILABLE");
@@ -97,13 +97,13 @@ test("G3-E proves Coordinator -> LOGIN worker -> PG17 -> authenticated API using
   assert.equal((await db.query("SELECT has_table_privilege($1,'market_core.market_observations','INSERT') AS can_insert", [readerRole])).rows[0].can_insert, false);
 
   await db.query("UPDATE market_core.license_policies SET display_allowed=false WHERE rights_policy_id=$1", [ids.rights]);
-  const blocked = await handleInvestingMarketDataRead(url, env, async () => actor, (request, authenticatedActor) => loadInvestingMarketDataFromPostgres(request, authenticatedActor, env));
+  const blocked = await handleInvestingMarketDataRead(url, env, async () => actor, (request, authenticatedActor) => loadInvestingMarketDataFromPostgres(request, authenticatedActor, env, () => new Client({ connectionString: env.MARKET_DATA_READER_DATABASE_URL })));
   assert.deepEqual(await blocked.json(), { status: "LICENSE_BLOCKED", listingId: ids.listing });
   await db.query("UPDATE market_core.license_policies SET display_allowed=true, retention_until=TIMESTAMPTZ '2020-01-01' WHERE rights_policy_id=$1", [ids.rights]);
-  const expired = await handleInvestingMarketDataRead(url, env, async () => actor, (request, authenticatedActor) => loadInvestingMarketDataFromPostgres(request, authenticatedActor, env));
+  const expired = await handleInvestingMarketDataRead(url, env, async () => actor, (request, authenticatedActor) => loadInvestingMarketDataFromPostgres(request, authenticatedActor, env, () => new Client({ connectionString: env.MARKET_DATA_READER_DATABASE_URL })));
   assert.deepEqual(await expired.json(), { status: "LICENSE_BLOCKED", listingId: ids.listing });
   await db.query("UPDATE market_core.license_policies SET retention_until=NULL WHERE rights_policy_id=$1", [ids.rights]);
-  const beforeKnowledge = await handleInvestingMarketDataRead(url.replace("2026-03-01T00%3A00%3A00Z", "2026-02-01T00%3A00%3A00Z"), env, async () => actor, (request, authenticatedActor) => loadInvestingMarketDataFromPostgres(request, authenticatedActor, env));
+  const beforeKnowledge = await handleInvestingMarketDataRead(url.replace("2026-03-01T00%3A00%3A00Z", "2026-02-01T00%3A00%3A00Z"), env, async () => actor, (request, authenticatedActor) => loadInvestingMarketDataFromPostgres(request, authenticatedActor, env, () => new Client({ connectionString: env.MARKET_DATA_READER_DATABASE_URL })));
   const beforeBody = await beforeKnowledge.json() as Record<string, unknown>;
   assert.notEqual(beforeBody.status, "AVAILABLE");
   assert.equal("current" in beforeBody, false);
