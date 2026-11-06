@@ -66,4 +66,6 @@ if (!connectionString) {
   }
 }
 
+}
+
 void main();
