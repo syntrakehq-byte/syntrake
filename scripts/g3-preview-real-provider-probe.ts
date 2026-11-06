@@ -7,7 +7,20 @@ import { isG3PreviewProviderReady } from "../market-data-core/gate";
 async function main(): Promise<void> {
   const env = process.env;
   if (env.SYNTRAKE_G3_REAL_PROBE !== "run-one" || !isG3PreviewProviderReady(env)) {
-    console.log("G3_REAL_PROVIDER_PROBE SKIPPED");
+    const validKey = typeof env.SYNTRAKE_TWELVE_DATA_API_KEY === "string" &&
+      /^[A-Za-z0-9_-]{16,128}$/.test(env.SYNTRAKE_TWELVE_DATA_API_KEY);
+    const flags = [
+      ["probe", env.SYNTRAKE_G3_REAL_PROBE === "run-one"],
+      ["preview", env.VERCEL_ENV === "preview"],
+      ["branch", env.VERCEL_GIT_COMMIT_REF === "feat/g3e-integrated-rehearsal-20261106"],
+      ["sha", /^[a-f0-9]{40}$/.test(env.VERCEL_GIT_COMMIT_SHA ?? "") &&
+        env.VERCEL_GIT_COMMIT_SHA === env.SYNTRAKE_G3_APPROVED_SHA],
+      ["provider", env.SYNTRAKE_G3_PROVIDER_ENABLED === "enabled"],
+      ["rights", env.SYNTRAKE_G3_LICENSE_SCOPE === "internal-non-display"],
+      ["credential", validKey],
+    ] as const;
+    console.log("G3_REAL_PROVIDER_PROBE SKIPPED checks=" +
+      flags.map(([key, ok]) => key + ":" + (ok ? "ok" : "blocked")).join(","));
     return;
   }
   if (env.VERCEL_ENV !== "preview" ||
