@@ -8,6 +8,7 @@ const blocked = (name: string) => {
   process.exitCode = 1;
 };
 
+async function main() {
 if (!connectionString) {
   blocked("configuration");
 } else {
