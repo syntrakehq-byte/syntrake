@@ -154,12 +154,13 @@ test("G3 F feeds an internal Investing and Trading reader from one canonical, no
     rights: {policyId:policy,display:false,retentionUntil:rights.retentionUntil},
     interval:"1day",adjustment:"none",
   };
-  const investing=readMarketDataForConsumer(data,{rightsPolicyId:policy,requiresDisplay:false,interval:"1day"});
-  const trading=readMarketDataForConsumer(data,{rightsPolicyId:policy,requiresDisplay:false,interval:"1day"});
+  const investing=readMarketDataForConsumer(data,{rightsPolicyId:policy,requiresDisplay:false,interval:"1day"},now);
+  const trading=readMarketDataForConsumer(data,{rightsPolicyId:policy,requiresDisplay:false,interval:"1day"},now);
   assert.strictEqual(investing,data);
   assert.strictEqual(trading,data);
   assert.strictEqual(investing,trading);
   assert.equal(calls,1,"Both cores use the same market-data payload; no second provider call");
-  assert.equal(readMarketDataForConsumer(data,{rightsPolicyId:policy,requiresDisplay:true,interval:"1day"}),null);
-  assert.equal(readMarketDataForConsumer(data,{rightsPolicyId:policy,requiresDisplay:false,interval:"1min"}),null);
+  assert.equal(readMarketDataForConsumer(data,{rightsPolicyId:policy,requiresDisplay:true,interval:"1day"},now),null);
+  assert.equal(readMarketDataForConsumer(data,{rightsPolicyId:policy,requiresDisplay:false,interval:"1min"},now),null);
+  assert.equal(readMarketDataForConsumer(data,{rightsPolicyId:policy,requiresDisplay:false,interval:"1day"},new Date("2026-11-07T00:00:00Z")),null,"Neither core may use prices after license expiry");
 });
