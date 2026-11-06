@@ -171,6 +171,9 @@ export function createLicensedG3TwelveDataProvider(input: Readonly<{
       clock: input.clock,
     });
     const envelope = await provider(claim);
+    if (typeof envelope !== "object" || envelope === null || Array.isArray(envelope)) {
+      throw new Error("G3_INVALID_PROVIDER_ENVELOPE");
+    }
     return {
       ...envelope,
       rights: {
