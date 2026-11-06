@@ -62,7 +62,7 @@ if (!connectionString) {
     blocked("connection-or-query");
   } finally {
     try { await client.end(); } catch {}
-  }}
+  }
 }
 
 void main();
