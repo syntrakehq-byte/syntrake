@@ -6,6 +6,7 @@ on:
       - "market-data-core/**"
       - "scripts/g3g-readiness-once*.mjs"
       - "app/api/internal/g3-worker/**"
+      - "app/api/market-data/**"
       - ".github/workflows/market-data-g3g.yml"
       - "package.json"
       - "package-lock.json"
@@ -40,7 +41,7 @@ jobs:
       - name: Verify protected-readiness CLI locally without network
         run: node --test scripts/g3g-readiness-once.test.mjs
       - name: Prove one Market Core request, Twelve Data parser, shared cache, no duplicates
-        run: npx tsx --test market-data-core/tests/on-demand-market-data.test.ts market-data-core/tests/on-demand-twelve-data.test.ts
+        run: npx tsx --test market-data-core/tests/on-demand-market-data.test.ts market-data-core/tests/on-demand-twelve-data.test.ts market-data-core/tests/shared-market-server.test.ts
       - name: Prove hosted handler is fail-closed
         run: npx tsx --test market-data-core/tests/g3g-hosted-preview-executor.test.ts
       - name: Prove licensed provider gates remain closed without operator attestation
