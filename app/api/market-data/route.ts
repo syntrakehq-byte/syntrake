@@ -1,4 +1,5 @@
 import type { NextRequest } from "next/server";
+import type { Actor } from "@/investing-core/contracts";
 import { requireVerifiedClerkActor } from "@/investing-core/server/requireVerifiedClerkActor";
 import { handleOnDemandMarketDataHttp } from "@/market-data-core/onDemandMarketDataHttp";
 import {
@@ -14,16 +15,19 @@ export async function GET(request: NextRequest): Promise<Response> {
   if (!isSharedMarketDataPreviewEnabled(process.env)) {
     return Response.json({ error: "NOT_FOUND" }, { status: 404, headers: { "Cache-Control": "private, no-store" } });
   }
+  let verifiedActor: Actor | null = null;
   return handleOnDemandMarketDataHttp(request, {
-    authenticate: requireVerifiedClerkActor,
+    authenticate: async () => {
+      const actor = await requireVerifiedClerkActor();
+      verifiedActor = actor;
+      return actor;
+    },
     resolve: (listingId, actor) => resolveSharedMarketDemand(listingId, actor, process.env),
     request: async demand => {
       // Authentication already completed. All data reads use the restricted
       // reader LOGIN and the existing PIT + rights validation.
-      const gateway = createSharedMarketGateway(
-        { userId: "market-data-service", sessionId: "server-verified" },
-        process.env,
-      );
+      if (verifiedActor === null) throw new Error("UNAUTHENTICATED");
+      const gateway = createSharedMarketGateway(verifiedActor, process.env);
       return gateway.request(demand);
     },
   });
