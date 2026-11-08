@@ -2,7 +2,7 @@ import type { Client } from "pg";
 import { createMarketReaderClient } from "./pgReaderTls";
 
 type Env = Readonly<Record<string, string | undefined>>;
-const PREVIEW_DB_HOST = "db.gehlmcjctcfdbtzlyswm.supabase.co";
+const PREVIEW_DB_HOST = "aws-1-eu-west-3.pooler.supabase.com";
 const LOGINS = {
   reader: "syntrake_g3_preview_reader",
   ingest: "syntrake_g3_preview_ingest",
