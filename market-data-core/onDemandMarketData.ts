@@ -71,7 +71,8 @@ function checkedData(data: MarketDataResult | null, demand: MarketDataDemand, no
       !price.test(data.price) || !/[1-9]/.test(data.price) ||
       !utc.test(data.asOf) || !Number.isFinite(Date.parse(data.asOf)) ||
       Date.parse(data.asOf) > now.valueOf() ||
-      data.quality.coverage !== "FULL" || data.quality.freshness !== "KNOWN" ||
+      data.quality?.coverage !== "FULL" ||
+      !["KNOWN", "UNKNOWN"].includes(data.quality?.freshness ?? "") ||
       !Array.isArray(data.sourceRefs) || data.sourceRefs.length < 1 ||
       data.sourceRefs.some(source => !source || !source.provider || !source.originalSourceId)) {
     return "INVALID";
@@ -111,14 +112,29 @@ export function createOnDemandMarketDataGateway(deps: MarketDataGatewayDependenc
     if (cacheCheck === "INVALID") return { status: "UNAVAILABLE", source: "NONE", data: null };
     if (cacheCheck === "ALLOWED" && cached !== null &&
         now.getTime() - Date.parse(cached.asOf) <= demand.maxAgeMs) {
-      return { status: "AVAILABLE", source: "CACHE", data: cached };
+      return { status: cached.quality.freshness === "KNOWN" ? "AVAILABLE" : "STALE", source: "CACHE", data: cached };
     }
-    const key = [demand.instrument.key, demand.rightsPolicyId, demand.interval, demand.adjustment].join("|");
+    const key = [demand.instrument.key, demand.rightsPolicyId, demand.interval,
+      demand.adjustment, String(demand.requiresDisplay)].join("|");
     let pending = inflight.get(key);
     if (!pending) {
-      pending = deps.fetchAuthorized(demand);
+      // One fetch and at most one authorized persistence for concurrent callers
+      // on this process; the durable adapter retains cross-process idempotency.
+      const operation = async (): Promise<MarketDataProviderResult | null> => {
+        const result = await deps.fetchAuthorized(demand);
+        if (result === null) return null;
+        const verdict = checkedData(result.data, demand, getNow());
+        if (verdict === "ALLOWED" && result.storageAllowed) {
+          await deps.storeAuthorized(demand, result.data);
+        }
+        return result;
+      };
+      pending = operation();
       inflight.set(key, pending);
-      void pending.finally(() => { if (inflight.get(key) === pending) inflight.delete(key); }).catch(() => {});
+      const current = pending;
+      void current.finally(() => {
+        if (inflight.get(key) === current) inflight.delete(key);
+      }).catch(() => {});
     }
     let fetched: MarketDataProviderResult | null;
     try { fetched = await pending; }
@@ -132,11 +148,10 @@ export function createOnDemandMarketDataGateway(deps: MarketDataGatewayDependenc
     const providerCheck = checkedData(fetched.data, demand, getNow());
     if (providerCheck === "BLOCKED") return { status: "LICENSE_BLOCKED", source: "NONE", data: null };
     if (providerCheck !== "ALLOWED") return { status: "UNAVAILABLE", source: "NONE", data: null };
-    if (fetched.storageAllowed) {
-      // The storage adapter must additionally enforce actual provider retention.
-      await deps.storeAuthorized(demand, fetched.data);
-    }
-    return { status: "AVAILABLE", source: "PROVIDER", data: fetched.data };
+    return {
+      status: fetched.data.quality.freshness === "KNOWN" ? "AVAILABLE" : "STALE",
+      source: "PROVIDER", data: fetched.data,
+    };
   }
 
   return { request };
