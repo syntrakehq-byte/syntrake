@@ -74,7 +74,9 @@ export function createOnDemandTwelveDataAuthorizer(input: Readonly<{
       await client.end().catch(() => {});
     }
 
-    const selected = row;\n    if (!selected) return null;\n    const retention = asDate(selected.retention_until);
+    const selected = row;
+    if (!selected) return null;
+    const retention = asDate(selected.retention_until);
     if (selected.rights_policy_id !== demand.rightsPolicyId ||
         selected.listing_id !== demand.instrument.listingId ||
         selected.instrument_id !== demand.instrument.instrumentId ||
