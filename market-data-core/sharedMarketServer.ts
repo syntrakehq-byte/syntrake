@@ -4,6 +4,7 @@ import { instrumentIdentity, type InstrumentIdentity } from "./identity";
 import { loadInvestingMarketDataFromPostgres } from "./investingMarketDataHttp";
 import { createOnDemandMarketDataGateway, type MarketDataDemand, type MarketDataGatewayDependencies } from "./onDemandMarketData";
 import { createOnDemandTwelveDataSource } from "./onDemandTwelveData";
+import { createOnDemandTwelveDataAuthorizer } from "./onDemandAuthorization";
 import type { Actor } from "../investing-core/contracts";
 
 type Env = Readonly<Record<string, string | undefined>>;
@@ -87,9 +88,14 @@ export function createSharedMarketGateway(
 ): ReturnType<typeof createOnDemandMarketDataGateway> {
   const source = createOnDemandTwelveDataSource({
     env,
-    // No provider calls until a server-side coordinator reservation and licensed
-    // alias decision are wired. Never manufacture a positive authorization here.
-    authorize: async () => null,
+    // Authorization is resolved from the canonical PG registry. The default
+    // capability callbacks remain closed without independent evidence.
+    authorize: createOnDemandTwelveDataAuthorizer({
+      env,
+      readerFactory: input => createG3PreviewClient(input, "reader"),
+      creditReserved: async () => env.G3G_CREDIT_RESERVATION === "enabled",
+      purgeVerified: async () => env.G3G_PURGE_ATTESTATION === "verified",
+    }),
   });
   const deps: MarketDataGatewayDependencies = {
     readCached: overrides.readCached ?? (async demand => {
