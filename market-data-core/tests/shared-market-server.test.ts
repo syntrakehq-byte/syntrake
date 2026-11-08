@@ -55,7 +55,7 @@ test("shared market endpoint accepts only exact Preview SHA and on-demand mode, 
 
 test("a single server registry lookup resolves the verified listing and licensed policy", async () => {
   let calls = 0;
-  const withClient = async <T>(_env: typeof env, operation:(client:Client)=>Promise<T>):Promise<T> => {
+  const withClient = async <T>(_env: Readonly<Record<string, string | undefined>>, operation:(client:Client)=>Promise<T>):Promise<T> => {
     const fake = {query:async (_sql:string, values:unknown[])=>{
       calls++;
       assert.deepEqual(values,[listingId,policyId]);
@@ -72,7 +72,7 @@ test("a single server registry lookup resolves the verified listing and licensed
 
 test("missing or expired registry rights fail closed before any provider request",async()=>{
   let lookedUp = 0;
-  const withClient = async <T>(_env: typeof env, operation:(client:Client)=>Promise<T>):Promise<T> =>
+  const withClient = async <T>(_env: Readonly<Record<string, string | undefined>>, operation:(client:Client)=>Promise<T>):Promise<T> =>
     operation({query:async()=>{
       lookedUp++;
       return {rows:[{...registry,display_allowed:false}]};
