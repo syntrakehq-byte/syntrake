@@ -1,0 +1,57 @@
+name: market-data-g3g
+
+on:
+  pull_request:
+    paths:
+      - "market-data-core/**"
+      - "app/api/internal/g3-worker/**"
+      - ".github/workflows/market-data-g3g.yml"
+      - "package.json"
+      - "package-lock.json"
+
+permissions:
+  contents: read
+
+jobs:
+  hosted-preview:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Prove hosted handler is fail-closed
+        run: npx tsx --test market-data-core/tests/g3g-hosted-preview-executor.test.ts
+      - name: Prove licensed provider gates remain closed without operator attestation
+        run: npx tsx --test market-data-core/tests/g3f-licensed-ingestion.test.ts market-data-core/tests/g3f-bounded-worker.test.ts market-data-core/tests/g3-provider-gate.test.ts
+      - name: TypeScript
+        run: npx tsc --noEmit
+      - name: Lint
+        run: npm run lint -- --no-fix
+      - name: Previous full offline PostgreSQL 17 integrated rehearsal
+        run: npm run test:market-data:g3e:pg17
+      - name: Next.js build with non-production Clerk test configuration
+        env:
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+        run: |
+          if [ -z "$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" ]; then
+            echo "::error::BLOCKED: Clerk GitHub Actions test key is missing"
+            exit 1
+          fi
+          npm run build
