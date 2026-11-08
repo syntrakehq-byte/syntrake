@@ -3,6 +3,7 @@ import { createMarketReaderClient } from "./pgReaderTls";
 
 type Env = Readonly<Record<string, string | undefined>>;
 const PREVIEW_DB_HOST = "aws-1-eu-west-3.pooler.supabase.com";
+const PREVIEW_PROJECT_REF = "gehlmcjctcfdbtzlyswm";
 const LOGINS = {
   reader: "syntrake_g3_preview_reader",
   ingest: "syntrake_g3_preview_ingest",
@@ -21,7 +22,7 @@ export function createG3PreviewClient(env: Env, kind: "reader" | "ingest"): Clie
   try { url = new URL(raw); } catch { throw new Error("G3G_DB_NOT_CONFIGURED"); }
   if (!["postgres:", "postgresql:"].includes(url.protocol) ||
       url.hostname !== PREVIEW_DB_HOST ||
-      decodeURIComponent(url.username) !== LOGINS[kind] ||
+      decodeURIComponent(url.username) !== `${LOGINS[kind]}.${PREVIEW_PROJECT_REF}` ||
       url.pathname !== "/postgres" ||
       (url.port !== "" && url.port !== "5432") ||
       url.password.length < 16 ||
