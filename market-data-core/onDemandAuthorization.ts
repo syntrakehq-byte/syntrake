@@ -74,21 +74,21 @@ export function createOnDemandTwelveDataAuthorizer(input: Readonly<{
       await client.end().catch(() => {});
     }
 
-    const retention = asDate(row.retention_until);
-    if (row.rights_policy_id !== demand.rightsPolicyId ||
-        row.listing_id !== demand.instrument.listingId ||
-        row.instrument_id !== demand.instrument.instrumentId ||
-        !UUID.test(row.provider_id) || !retention || retention <= now ||
-        !row.cache_allowed || (demand.requiresDisplay && !row.display_allowed)) return null;
+    const selected = row;\n    if (!selected) return null;\n    const retention = asDate(selected.retention_until);
+    if (selected.rights_policy_id !== demand.rightsPolicyId ||
+        selected.listing_id !== demand.instrument.listingId ||
+        selected.instrument_id !== demand.instrument.instrumentId ||
+        !UUID.test(selected.provider_id) || !retention || retention <= now ||
+        !selected.cache_allowed || (demand.requiresDisplay && !selected.display_allowed)) return null;
 
     const alias: AliasResolution = resolveProviderAlias("TWELVE_DATA",
-      row.provider_reference, now.toISOString().slice(0, 10), [{
+      selected.provider_reference, now.toISOString().slice(0, 10), [{
         provider: "TWELVE_DATA",
-        providerReference: row.provider_reference,
-        instrumentId: row.instrument_id,
-        listingId: row.listing_id,
-        validFrom: row.alias_valid_from,
-        validTo: row.alias_valid_to,
+        providerReference: selected.provider_reference,
+        instrumentId: selected.instrument_id,
+        listingId: selected.listing_id,
+        validFrom: selected.alias_valid_from,
+        validTo: selected.alias_valid_to,
       }]);
     if (alias.status !== "EXACT") return null;
 
@@ -97,10 +97,10 @@ export function createOnDemandTwelveDataAuthorizer(input: Readonly<{
     return {
       alias,
       asOfMarketDate: now.toISOString().slice(0, 10),
-      policyId: row.rights_policy_id,
+      policyId: selected.rights_policy_id,
       queryAllowed: true,
-      displayAllowed: row.display_allowed,
-      cacheAllowed: row.cache_allowed,
+      displayAllowed: selected.display_allowed,
+      cacheAllowed: selected.cache_allowed,
       retentionUntil: retention.toISOString(),
       creditReserved,
       purgeVerified,
