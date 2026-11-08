@@ -24,9 +24,10 @@ function json(status: number, result: unknown): Response {
 
 /** A separate operator SHA gate prevents accidentally enabling stale Preview builds. */
 export function isG3HostedPreviewReady(env: Env): boolean {
-  const sha = env.VERCEL_GIT_COMMIT_SHA;
+  const ref = env.G3G_DEPLOYMENT_REF ?? env.VERCEL_GIT_COMMIT_REF;
+  const sha = env.G3G_DEPLOYMENT_SHA ?? env.VERCEL_GIT_COMMIT_SHA;
   return env.VERCEL_ENV === "preview" &&
-    env.VERCEL_GIT_COMMIT_REF === BRANCH &&
+    ref === BRANCH &&
     typeof sha === "string" && SHA.test(sha) &&
     env.G3G_APPROVED_SHA === sha;
 }
