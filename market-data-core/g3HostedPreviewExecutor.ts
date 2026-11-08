@@ -65,8 +65,8 @@ export async function handleG3HostedPreviewRequest(
     try {
       await operations.readiness();
       return json(200, { status: "READY_READONLY", providerCalls: 0, marketWrites: 0 });
-    } catch {
-      return json(503, { error: "G3G_READINESS_UNAVAILABLE" });
+    } catch (error) {
+      return json(503, { error: "G3G_READINESS_UNAVAILABLE", reason: error instanceof Error ? error.message : "UNKNOWN" });
     }
   }
 
