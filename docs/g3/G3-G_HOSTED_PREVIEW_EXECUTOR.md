@@ -22,3 +22,19 @@ The G3-G CI workflow must pass the new unauthorized/readiness/disabled/aggregate
 ## Rollback
 
 Disable G3G_READINESS_MODE and G3G_WORKER_MODE; clear the exact SHA approval for this branch. No Cron job is created here, so there is no recurring task to cancel. The G3-G branch and PR may be abandoned without altering the G3-E baseline.
+
+## Protected HTTP readiness verification — operator procedure
+
+The checked-in script scripts/g3g-readiness-once.mjs uses the authenticated Vercel CLI with 'vercel curl'. It sends exactly one POST with X-G3-Operation: readiness and the application Bearer token. It is read-only; it refuses Production, unpinned Preview deployments, an enabled worker or an enabled Twelve Data provider.
+
+Use an authorized Vercel CLI session for the SYNTRAKE project. Load the G3-G branch-scoped Preview secrets with the documented 'vercel env run' workflow without printing credentials. Set G3G_PREVIEW_URL to the exact READY Preview deployment URL and G3G_EXPECTED_DEPLOYMENT_HOST to its hostname. Set VERCEL_ENV=preview and VERCEL_GIT_COMMIT_REF=feat/g3g-preview-hosted-worker-20261108. Confirm VERCEL_GIT_COMMIT_SHA and G3G_APPROVED_SHA both match the deployment. Run: node scripts/g3g-readiness-once.mjs.
+
+A valid result is JSON status READY_READONLY with providerCalls=0 and marketWrites=0. A Vercel SSO error, refused credential, failed TLS, non-JSON response, invalid deployment or connection failure means BLOCKED. Unit tests use a fake Vercel command and do not prove the real HTTP call. Record deployment ID, exact SHA, HTTP status and timestamp without recording tokens or database URLs. Never pass a Bearer token as a query parameter.
+
+## Supervisor identity
+
+Supabase Preview has a dedicated LOGIN syntrake_g3_preview_supervisor with password in Vault. It inherits market_core_supervisor, without SET ROLE. It may execute market_core.register_worker_instance; ingest LOGIN cannot. A fixed login binding to g3-preview-bounded exists, but no active worker instance or capability token has been registered. Register using a real supervisor LOGIN, store capability securely, then validate a heartbeat as the ingestion LOGIN. Do not impersonate the supervisor through a PostgreSQL administrator connection.
+
+## Autonomous rehearsal acceptance
+
+Until authenticated readiness and supervisor capability registration pass, do not install active Cron jobs. The Market Data Core rehearsal must use an explicitly synthetic provider and separate short-lived fixture rights. Prove exactly-once claim/ACK, append-only historical revision, cache reuse, PIT, budget reservation and recovery, license masking, and private shared historical reads for Investing and Trading. Synthetic fixtures do not grant Twelve Data storage, retention or display rights.
