@@ -27,7 +27,8 @@ export function requireR3AProviderReady(env: Env): string {
 export function isG3PreviewProviderReady(env: Env): boolean {
   const sha = env.VERCEL_GIT_COMMIT_SHA;
   return env.VERCEL_ENV === "preview" &&
-    env.VERCEL_GIT_COMMIT_REF === "feat/g3e-integrated-rehearsal-20261106" &&
+    (env.VERCEL_GIT_COMMIT_REF === "feat/g3e-integrated-rehearsal-20261106" ||
+     env.VERCEL_GIT_COMMIT_REF === "feat/g3g-preview-hosted-worker-20261108") &&
     env.SYNTRAKE_G3_PROVIDER_ENABLED === "enabled" &&
     env.SYNTRAKE_G3_LICENSE_SCOPE === "internal-non-display" &&
     !!sha && SHA.test(sha) && env.SYNTRAKE_G3_APPROVED_SHA === sha &&
