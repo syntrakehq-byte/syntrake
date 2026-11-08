@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "market-data-core/**"
+      - "scripts/g3g-readiness-once*.mjs"
       - "app/api/internal/g3-worker/**"
       - ".github/workflows/market-data-g3g.yml"
       - "package.json"
@@ -36,6 +37,8 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
+      - name: Verify protected-readiness CLI locally without network
+        run: node --test scripts/g3g-readiness-once.test.mjs
       - name: Prove hosted handler is fail-closed
         run: npx tsx --test market-data-core/tests/g3g-hosted-preview-executor.test.ts
       - name: Prove licensed provider gates remain closed without operator attestation
