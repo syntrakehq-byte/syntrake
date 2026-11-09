@@ -127,6 +127,9 @@ export async function fetchDailySeries(input: Readonly<{
   sourceAlias?: AliasResolution;
   asOf?: string;
   outputSize: number;
+  /** Inclusive exchange-local dates for an explicit daily-history request. */
+  startDate?: string;
+  endDate?: string;
   transport?: Fetcher;
   clock?: Clock;
   onResponseHeaders?: (headers: ProviderUsageHeaders) => void;
@@ -145,6 +148,14 @@ export async function fetchDailySeries(input: Readonly<{
     mic: input.instrument?.mic, currency: input.instrument?.currency,
   });
   if (!Number.isSafeInteger(input.outputSize) || input.outputSize < 1 || input.outputSize > 1000) {
+    throw new MarketDataError("INVALID_REQUEST");
+  }
+  const hasRange = input.startDate !== undefined || input.endDate !== undefined;
+  if (hasRange && (!input.startDate || !input.endDate ||
+      !validDate(input.startDate) || !validDate(input.endDate) ||
+      input.startDate > input.endDate ||
+      (Date.parse(input.endDate + "T00:00:00Z") -
+       Date.parse(input.startDate + "T00:00:00Z")) > 366 * 86400000)) {
     throw new MarketDataError("INVALID_REQUEST");
   }
 
@@ -183,6 +194,10 @@ export async function fetchDailySeries(input: Readonly<{
   url.searchParams.set("interval", "1day");
   url.searchParams.set("outputsize", String(input.outputSize));
   url.searchParams.set("adjust", "none"); // Explicit to prevent implicit corporate-action rewrites.
+  if (hasRange) {
+    url.searchParams.set("start_date", input.startDate!);
+    url.searchParams.set("end_date", input.endDate!);
+  }
   if (instrument.mic) url.searchParams.set("mic_code", instrument.mic);
 
   let response: Response;
@@ -234,6 +249,10 @@ export async function fetchDailySeries(input: Readonly<{
   if (!(now instanceof Date) || Number.isNaN(now.valueOf())) throw new MarketDataError("INVALID_REQUEST");
   const series = parseSeries(body, instrument, now.toISOString(), providerReference);
   if (series.candles.length > input.outputSize) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+  if (hasRange && series.candles.some(c =>
+    c.marketDate < input.startDate! || c.marketDate > input.endDate!)) {
+    throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+  }
   if (resolved) {
     const alias = input.sourceAlias!.alias;
     if (series.candles.some(c => (alias.validFrom !== null && c.marketDate < alias.validFrom) ||
