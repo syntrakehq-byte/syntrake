@@ -55,8 +55,8 @@ function compatibleQuote(raw: unknown, instrument: InstrumentIdentity): raw is D
     q.priceType === "DAILY_CLOSE" && q.interval === "1day" &&
     q.kind === instrument.kind && q.symbol === instrument.symbol &&
     q.mic === instrument.mic && q.currency === instrument.currency &&
-    typeof q.price === "string" && /^(?:0|[1-9]\\d{0,17})(?:\\.\\d{1,12})?$/.test(q.price) &&
-    typeof q.marketDate === "string" && /^\\d{4}-\\d{2}-\\d{2}$/.test(q.marketDate) &&
+    typeof q.price === "string" && /^(?:0|[1-9]\d{0,17})(?:\.\d{1,12})?$/.test(q.price) &&
+    typeof q.marketDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(q.marketDate) &&
     typeof q.observedAt === "string" && Number.isFinite(Date.parse(q.observedAt));
 }
 
@@ -76,7 +76,7 @@ function compatibleHistory(raw: unknown, instrument: InstrumentIdentity, start: 
         bar.marketDate > end || bar.marketDate <= prev ||
         !["open","high","low","close"].every(field =>
           typeof bar[field as keyof typeof bar] === "string" &&
-          /^(?:0|[1-9]\\d{0,17})(?:\\.\\d{1,12})?$/.test(bar[field as keyof typeof bar] as string))) return false;
+          /^(?:0|[1-9]\d{0,17})(?:\.\d{1,12})?$/.test(bar[field as keyof typeof bar] as string))) return false;
     prev = bar.marketDate;
   }
   return true;
