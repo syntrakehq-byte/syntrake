@@ -38,7 +38,7 @@ export async function POST(request: Request): Promise<Response> {
       if (error.code === "RATE_LIMITED") return response(429, { error: "RATE_LIMITED" });
       if (error.code === "INVALID_PROVIDER_RESPONSE") return response(502, { error: "PROVIDER_VALIDATION_FAILED" });
       if (error.code === "PROVIDER_REJECTED") return response(502, { error: "PROVIDER_REJECTED" });
-      if (error.code === "INVALID_REQUEST") return response(400, { error: "PROBE_INVALID_REQUEST" });
+      if (error.code === "INVALID_REQUEST") return response(error.providerStatus === null ? 409 : 502, { error: error.providerStatus === null ? "PROBE_ONCE_ALREADY_USED" : "PROVIDER_REQUEST_REJECTED" });
     }
     return response(503, { error: "PROVIDER_UNAVAILABLE" });
   }
