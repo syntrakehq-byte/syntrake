@@ -190,8 +190,8 @@ export function createDynamicMarketGateway(input: Readonly<{
       pending = (async () => {
         const series: DailySeries = await (input.fetchSeries ?? fetchPersonalPreviewDailySeries)({
           env: input.env, instrument, outputSize: 1, checkoutSha: sha,
-          transport: input.transport,
-          clock: input.clock,
+          ...(input.transport ? { transport: input.transport } : {}),
+          ...(input.clock ? { clock: input.clock } : {}),
           rights: { policyId: "preview-private-direct", display: true, retentionUntil: null },
         });
         const candle = series.candles.at(-1);
@@ -267,7 +267,9 @@ export function createDynamicMarketGateway(input: Readonly<{
           const last = new Date(chunkEndMs).toISOString().slice(0, 10);
           const series = await (input.fetchSeries ?? fetchPersonalPreviewDailySeries)({
             env: input.env, instrument, outputSize: 1000, checkoutSha: sha,
-            startDate: first, endDate: last, transport: input.transport, clock: input.clock,
+            startDate: first, endDate: last,
+            ...(input.transport ? { transport: input.transport } : {}),
+            ...(input.clock ? { clock: input.clock } : {}),
             rights: { policyId: "preview-private-direct", display: true, retentionUntil: null },
           });
           providerCalls++;
