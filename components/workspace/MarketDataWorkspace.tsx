@@ -16,6 +16,16 @@ type Quote = Readonly<{
   source: "PROVIDER" | "MEMORY_CACHE" | "SHARED_CACHE";
 }>;
 
+type History = Readonly<{
+  status: "AVAILABLE";
+  currency: string;
+  symbol: string;
+  startDate: string;
+  endDate: string;
+  candles: readonly Readonly<{marketDate:string;close:string;volume:string|null}>[];
+  source: "PROVIDER" | "MEMORY_CACHE" | "SHARED_CACHE";
+}>;
+
 const copy = {
   pt: {
     label: "Market Data · SYNTRAKE", title: "Dados de mercado",
@@ -23,6 +33,8 @@ const copy = {
     searchLabel: "Empresa, ação, ETF ou par cambial", placeholder: "Ex.: Microsoft, Apple, NVDA, EUR/USD",
     search: "Pesquisar na bolsa", searching: "A pesquisar…",
     results: "Resultados encontrados", choose: "Consultar preço", loading: "A consultar…",
+    history: "Histórico dos últimos 14 dias", historyAction: "Consultar histórico",
+    historyLoading: "A consultar histórico…", historyEmpty: "O fornecedor não devolveu candles para estas datas.",
     noResults: "A fonte não devolveu instrumentos correspondentes.",
     selected: "Instrumento selecionado", latest: "Último fecho diário disponível",
     date: "Data da cotação", checked: "Consultado em", provider: "Fornecedor",
@@ -39,6 +51,8 @@ const copy = {
     searchLabel: "Company, stock, ETF or FX pair", placeholder: "E.g. Microsoft, Apple, NVDA, EUR/USD",
     search: "Search markets", searching: "Searching…",
     results: "Search results", choose: "Get price", loading: "Loading…",
+    history: "Last 14 days of history", historyAction: "Load history",
+    historyLoading: "Loading history…", historyEmpty: "No bars were returned for this range.",
     noResults: "No matching instruments were returned by the provider.",
     selected: "Selected instrument", latest: "Latest available daily close",
     date: "Market date", checked: "Retrieved at", provider: "Provider",
@@ -55,6 +69,8 @@ const copy = {
     searchLabel: "Entreprise, action, ETF ou paire de devises", placeholder: "Ex. Microsoft, Apple, NVDA, EUR/USD",
     search: "Rechercher", searching: "Recherche…",
     results: "Résultats", choose: "Obtenir le cours", loading: "Chargement…",
+    history: "Historique des 14 derniers jours", historyAction: "Consulter l'historique",
+    historyLoading: "Chargement de l'historique…", historyEmpty: "Aucune donnée pour cette période.",
     noResults: "Aucun instrument correspondant n'a été retourné.",
     selected: "Instrument choisi", latest: "Dernière clôture journalière disponible",
     date: "Date de marché", checked: "Consulté à", provider: "Fournisseur",
@@ -82,6 +98,8 @@ export function MarketDataWorkspace({ lang }: { lang: SiteLang }) {
   const [candidates, setCandidates] = useState<readonly Candidate[]>([]);
   const [selected, setSelected] = useState<Candidate | null>(null);
   const [quote, setQuote] = useState<Quote | null>(null);
+  const [history, setHistory] = useState<History | null>(null);
+  const [busyHistory, setBusyHistory] = useState(false);
   const [busySearch, setBusySearch] = useState(false);
   const [busyQuote, setBusyQuote] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -91,7 +109,7 @@ export function MarketDataWorkspace({ lang }: { lang: SiteLang }) {
   async function search(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const generation = ++sequence.current;
-    setCandidates([]); setSelected(null); setQuote(null);
+    setCandidates([]); setSelected(null); setQuote(null); setHistory(null);
     setError(null); setBusySearch(true); setSearched(false);
     try {
       const response = await fetch("/api/market-data/discover?q=" + encodeURIComponent(query.trim()), {
@@ -110,7 +128,7 @@ export function MarketDataWorkspace({ lang }: { lang: SiteLang }) {
 
   async function getQuote(candidate: Candidate) {
     const generation = ++sequence.current;
-    setSelected(candidate); setQuote(null); setError(null); setBusyQuote(true);
+    setSelected(candidate); setQuote(null); setHistory(null); setError(null); setBusyQuote(true);
     try {
       const response = await fetch("/api/market-data/quote", {
         method: "POST", credentials: "include", cache: "no-store",
@@ -128,6 +146,28 @@ export function MarketDataWorkspace({ lang }: { lang: SiteLang }) {
     }
   }
 
+  async function getHistory(candidate: Candidate) {
+    const generation = ++sequence.current;
+    setHistory(null); setError(null); setBusyHistory(true);
+    try {
+      const endDate = new Date().toISOString().slice(0,10);
+      const startDate = new Date(Date.now() - 14 * 86400000).toISOString().slice(0,10);
+      const response = await fetch("/api/market-data/history",{
+        method:"POST",credentials:"include",cache:"no-store",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({token:candidate.token,startDate,endDate}),
+      });
+      const body = await response.json() as History & {error?:string};
+      if(generation !== sequence.current)return;
+      if(!response.ok || body.status!=="AVAILABLE")setError(describeError(body.error,lang));
+      else setHistory(body);
+    } catch {
+      if(generation===sequence.current)setError(t.error);
+    } finally {
+      if(generation===sequence.current)setBusyHistory(false);
+    }
+  }
+
   return <div className="space-y-7">
     <section className="rounded-[26px] border border-[#33465e] bg-gradient-to-br from-[#153a41] to-[#112637] px-7 py-10 sm:px-10">
       <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#e9c68b]">{t.label}</p>
@@ -141,7 +181,7 @@ export function MarketDataWorkspace({ lang }: { lang: SiteLang }) {
           <input id="market-query" value={query} onChange={e => {
             sequence.current++;
             setQuery(e.target.value);
-            setCandidates([]); setQuote(null); setSelected(null); setError(null); setSearched(false);
+            setCandidates([]); setQuote(null); setHistory(null); setSelected(null); setError(null); setSearched(false);
             setBusySearch(false); setBusyQuote(false);
           }} minLength={2} maxLength={64} required placeholder={t.placeholder}
             className="min-w-0 flex-1 rounded-xl border border-[#3a4963] bg-[#0b1424] px-4 py-3 text-white outline-none focus:border-[#d8bc82]" />
@@ -179,6 +219,24 @@ export function MarketDataWorkspace({ lang }: { lang: SiteLang }) {
         <div><dt>{t.provider}</dt><dd className="text-white">{quote.provider}</dd></div>
         <div><dt>{t.source}</dt><dd className="text-white">{quote.source === "MEMORY_CACHE" || quote.source === "SHARED_CACHE" ? t.cache : t.live}</dd></div>
       </dl>
+      <div className="mt-5 border-t border-[#2d5b58] pt-5">
+        <p className="mb-3 text-sm font-medium text-[#c1d6db]">{t.history}</p>
+        <button type="button" disabled={busyHistory || !selected}
+          className="rounded-lg border border-[#d8bc82] px-4 py-2 text-sm font-semibold text-[#e9c68b] disabled:opacity-60"
+          onClick={() => { if(selected) void getHistory(selected); }}>
+          {busyHistory ? t.historyLoading : t.historyAction}
+        </button>
+        {history && (history.candles.length===0
+          ? <p className="mt-4 text-sm text-[#c1d6db]">{t.historyEmpty}</p>
+          : <div className="mt-4 space-y-2">
+            {history.candles.slice(-8).reverse().map(candle =>
+              <div key={candle.marketDate} className="flex justify-between gap-4 border-b border-[#2d5b58] py-2 text-sm text-white">
+                <span>{candle.marketDate}</span><span>{candle.close} {history.currency}</span>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
       <button type="button" disabled={busyQuote || !selected}
         className="mt-5 flex items-center gap-2 text-sm font-semibold text-[#e9c68b] disabled:opacity-60"
         onClick={() => { if (selected) void getQuote(selected); }}><RefreshCw size={15}/>{t.choose}</button>
