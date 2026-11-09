@@ -18,6 +18,12 @@ const text = {
   fr: { eyebrow: "Market Data · G3-D", title: "Données de marché", intro: "Consultation technique d'une cotation canonique persistée. L'identifiant sert uniquement à demander les données au serveur.", listing: "Listing ID", listingHint: "UUID canonique de la cotation", from: "Début", to: "Fin", asOf: "Connu jusqu'au", search: "Consulter", loading: "Consultation…", unavailable: "Les données de marché ne sont pas disponibles dans cet environnement.", login: "La session a expiré. Veuillez vous reconnecter.", invalid: "Requête invalide. Vérifiez la cotation et les dates.", blocked: "Les droits d'utilisation n'autorisent pas l'affichage de ces données.", partial: "Les données sont incomplètes ou leur qualité est insuffisante pour une cotation validée.", stale: "Les données ne sont pas assez fraîches pour être présentées comme actuelles.", noData: "Aucune donnée persistée n'existe pour cette requête.", quote: "Dernière valeur persistée", history: "Historique quotidien", quality: "Qualité et provenance", priceDate: "Date du prix", known: "Connu le", provider: "Source", coverage: "Couverture", freshness: "Fraîcheur", revision: "Révision", pit: "Cutoff PIT", noHistory: "Aucun point historique autorisé." },
 } as const;
 
+const personalProbeText = {
+  pt: { title: "Verificar ligação Twelve Data", action: "Testar uma consulta real", busy: "A verificar…", ok: "A API respondeu com dados validados", failed: "A consulta não foi validada", detail: "Teste privado de uma observação diária AAPL. Não altera a carteira nem guarda preços." },
+  en: { title: "Verify Twelve Data connection", action: "Test one real request", busy: "Verifying…", ok: "API returned validated data", failed: "Request was not validated", detail: "Private AAPL daily-observation diagnostic. Does not modify a portfolio or store prices." },
+  fr: { title: "Vérifier la connexion Twelve Data", action: "Tester une requête réelle", busy: "Vérification…", ok: "L'API a retourné des données validées", failed: "Requête non validée", detail: "Diagnostic privé sur une observation quotidienne AAPL. Aucune écriture de portefeuille ni stockage de prix." },
+} as const;
+
 function message(lang: SiteLang, status: string): string {
   const t = text[lang];
   return status === "LICENSE_BLOCKED" ? t.blocked : status === "PARTIAL" ? t.partial : status === "STALE" ? t.stale : status === "UNAVAILABLE" || status === "REFRESH_REQUIRED" ? t.noData : t.unavailable;
@@ -32,6 +38,9 @@ export function MarketDataWorkspace({ lang }: { lang: SiteLang }) {
   const [result, setResult] = useState<MarketResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [probe, setProbe] = useState<{ pending: boolean; message: string | null }>({ pending: false, message: null });
+  const probeCopy = personalProbeText[lang];
+
   const requestGate = useRef<LatestMarketRequest | null>(null);
   if (requestGate.current === null) requestGate.current = new LatestMarketRequest();
 
@@ -41,6 +50,25 @@ export function MarketDataWorkspace({ lang }: { lang: SiteLang }) {
     setResult(null);
     setError(null);
     setLoading(false);
+  }
+
+  async function runPersonalProbe(): Promise<void> {
+    setProbe({ pending: true, message: null });
+    try {
+      const response = await fetch("/api/internal/g3-personal-probe", {
+        method: "POST", credentials: "include", cache: "no-store",
+        headers: { "Content-Type": "application/json" }, body: "{}",
+      });
+      const body = await response.json() as { status?: string; error?: string; marketDate?: string };
+      setProbe({
+        pending: false,
+        message: response.ok && body.status === "PROVIDER_VALIDATED"
+          ? probeCopy.ok + (body.marketDate ? " · " + body.marketDate : "")
+          : probeCopy.failed + (body.error ? " · " + body.error : ""),
+      });
+    } catch {
+      setProbe({ pending: false, message: probeCopy.failed });
+    }
   }
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
@@ -69,6 +97,17 @@ export function MarketDataWorkspace({ lang }: { lang: SiteLang }) {
       <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#e9c68b]">{t.eyebrow}</p>
       <h1 className="mt-4 text-4xl font-semibold text-white">{t.title}</h1>
       <p className="mt-4 max-w-2xl text-sm leading-7 text-[#c0cce0]">{t.intro}</p>
+    </section>
+    <section className="rounded-[22px] border border-[#293850] bg-[#111d31] p-6">
+      <h2 className="text-lg font-semibold text-white">{probeCopy.title}</h2>
+      <p className="mt-2 text-sm text-[#a9b7cc]">{probeCopy.detail}</p>
+      <button
+        type="button"
+        onClick={() => { void runPersonalProbe(); }}
+        disabled={probe.pending}
+        className="mt-4 rounded-xl border border-[#d8bc82] px-4 py-3 text-sm font-semibold text-[#d8bc82] disabled:opacity-60"
+      >{probe.pending ? probeCopy.busy : probeCopy.action}</button>
+      {probe.message && <p role="status" className="mt-3 text-sm text-[#e1e8f5]">{probe.message}</p>}
     </section>
     <section className="rounded-[22px] border border-[#293850] bg-[#111d31] p-6" aria-labelledby="market-query-title">
       <div className="flex items-center gap-3"><SlidersHorizontal size={19} className="text-[#d8bc82]" aria-hidden="true"/><h2 id="market-query-title" className="text-lg font-semibold text-white">{t.listing}</h2></div>
