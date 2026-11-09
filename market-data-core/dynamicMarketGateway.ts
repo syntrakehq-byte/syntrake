@@ -26,6 +26,21 @@ export type DynamicMarketQuote = Readonly<{
   providerCalls: 0 | 1;
 }>;
 
+export type DynamicMarketHistory = Readonly<{
+  status: "AVAILABLE";
+  symbol: string; name: string; mic: string | null;
+  currency: string; kind: InstrumentKind;
+  interval: "1day"; adjustment: "none";
+  startDate: string; endDate: string; observedAt: string;
+  candles: readonly Readonly<{
+    marketDate: string; open: string; high: string; low: string;
+    close: string; volume: string | null;
+  }>[];
+  provider: "TWELVE_DATA";
+  source: "PROVIDER" | "MEMORY_CACHE";
+  providerCalls: number;
+}>;
+
 const TOKEN_TTL_MS = 10 * 60_000;
 const QUOTE_TTL_MS = 60_000;
 const MAX_CACHE_SIZE = 128;
@@ -111,6 +126,8 @@ export function createDynamicMarketGateway(input: Readonly<{
 }>) {
   const cache = new Map<string, { quote: DynamicMarketQuote; until: number }>();
   const inflight = new Map<string, Promise<DynamicMarketQuote>>();
+  const historyCache = new Map<string, { value: DynamicMarketHistory; until: number }>();
+  const historyInflight = new Map<string, Promise<DynamicMarketHistory>>();
   const now = () => (input.clock ?? (() => new Date()))().getTime();
 
   async function discover(search: string): Promise<readonly DynamicMarketCandidate[]> {
@@ -203,13 +220,105 @@ export function createDynamicMarketGateway(input: Readonly<{
     return await pending;
   }
 
+  /**
+   * Date-bounded daily history, using the same Twelve Data validation boundary.
+   * Works for any selected equity, ETF or FX pair supported by the provider.
+   * The response is AS OBSERVED NOW, not reconstructed PIT market knowledge.
+   */
+  async function readHistory(
+    selected: Omit<Selected, "expires">, startDate: string, endDate: string,
+  ): Promise<DynamicMarketHistory> {
+    const { sha } = keyForPreview(input.env);
+    const date = (value: string): boolean => {
+      if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(value)) return false;
+      const parsed = new Date(value + "T00:00:00Z");
+      return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+    };
+    if (!date(startDate) || !date(endDate) || startDate > endDate ||
+        Date.parse(endDate + "T00:00:00Z") - Date.parse(startDate + "T00:00:00Z") > 5 * 366 * 86400000 ||
+        endDate > new Date(now()).toISOString().slice(0, 10)) {
+      throw new MarketDataError("INVALID_REQUEST");
+    }
+    let instrument: InstrumentIdentity;
+    try {
+      instrument = instrumentIdentity({
+        kind: selected.kind, symbol: selected.symbol,
+        mic: selected.mic, currency: selected.currency,
+      });
+    } catch { throw new MarketDataError("INVALID_REQUEST"); }
+    const cacheKey = instrument.key + ":" + startDate + ":" + endDate;
+    const current = historyCache.get(cacheKey);
+    if (current && current.until > now()) return {
+      ...current.value, source: "MEMORY_CACHE", providerCalls: 0,
+    };
+    let operation = historyInflight.get(cacheKey);
+    if (!operation) {
+      operation = (async () => {
+        const candles: DynamicMarketHistory["candles"][number][] = [];
+        const oneDay = 86400000;
+        const endMs = Date.parse(endDate + "T00:00:00Z");
+        let cursor = Date.parse(startDate + "T00:00:00Z");
+        let providerCalls = 0;
+        let observedAt = "";
+        while (cursor <= endMs) {
+          // Max 366 calendar days per call; never exceed a parser's 1000 bars.
+          const chunkEndMs = Math.min(cursor + 365 * oneDay, endMs);
+          const first = new Date(cursor).toISOString().slice(0, 10);
+          const last = new Date(chunkEndMs).toISOString().slice(0, 10);
+          const series = await (input.fetchSeries ?? fetchPersonalPreviewDailySeries)({
+            env: input.env, instrument, outputSize: 1000, checkoutSha: sha,
+            startDate: first, endDate: last, transport: input.transport, clock: input.clock,
+            rights: { policyId: "preview-private-direct", display: true, retentionUntil: null },
+          });
+          providerCalls++;
+          if (series.provider !== "TWELVE_DATA" || series.instrument.key !== instrument.key ||
+              series.candles.length === 0) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+          for (const candle of series.candles) {
+            if (candle.marketDate < first || candle.marketDate > last ||
+                candle.marketDate < startDate || candle.marketDate > endDate ||
+                (candles.length > 0 && candle.marketDate <= candles[candles.length - 1].marketDate)) {
+              throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+            }
+            candles.push(candle);
+          }
+          observedAt = series.observedAtUtc;
+          cursor = chunkEndMs + oneDay;
+          if (providerCalls > 6) throw new MarketDataError("INVALID_REQUEST");
+        }
+        if (candles.length === 0) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+        const value: DynamicMarketHistory = Object.freeze({
+          status: "AVAILABLE", symbol: selected.symbol, name: selected.name,
+          mic: selected.mic, currency: selected.currency, kind: selected.kind,
+          interval: "1day", adjustment: "none",
+          startDate, endDate, observedAt,
+          candles: Object.freeze(candles), provider: "TWELVE_DATA",
+          source: "PROVIDER", providerCalls,
+        });
+        if (historyCache.size >= MAX_CACHE_SIZE) historyCache.delete(historyCache.keys().next().value!);
+        historyCache.set(cacheKey, { value, until: now() + QUOTE_TTL_MS });
+        return value;
+      })();
+      historyInflight.set(cacheKey, operation);
+      const pending = operation;
+      void pending.finally(() => {
+        if (historyInflight.get(cacheKey) === pending) historyInflight.delete(cacheKey);
+      }).catch(() => {});
+    }
+    return await operation;
+  }
+
+  async function historyToken(token: unknown, startDate: string, endDate: string): Promise<DynamicMarketHistory> {
+    const { key, sha } = keyForPreview(input.env);
+    return readHistory(readSelection(token, key, sha, now()), startDate, endDate);
+  }
+
   async function quoteToken(token: unknown): Promise<DynamicMarketQuote> {
     const { key, sha } = keyForPreview(input.env);
     const selected = readSelection(token, key, sha, now());
     return readInstrument(selected);
   }
 
-  return { discover, quoteToken, readInstrument };
+  return { discover, quoteToken, readInstrument, readHistory, historyToken };
 }
 
 export function classifyDynamicMarketError(error: unknown): { status: number; error: string } {
