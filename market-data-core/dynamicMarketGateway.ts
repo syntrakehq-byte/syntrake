@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { CatalogConnectorError } from "./catalogConnector";
 import { createTwelveDataCatalogConnector } from "./twelveDataCatalog";
+import type { CatalogCandidate } from "./instrumentDiscovery";
 import { isR3E1RealCallReady } from "./gate";
 import { isG3HostedPreviewReady } from "./g3HostedPreviewExecutor";
 import { instrumentIdentity, MarketDataError, type InstrumentIdentity, type InstrumentKind } from "./identity";
@@ -48,10 +49,7 @@ function validSearchTerm(query: unknown): string {
   }
   return term;
 }
-function fromProvider(row: Readonly<{
-  descriptiveName: string | null; descriptiveAssetClass: InstrumentKind | null;
-  listing: { ticker: string; mic: string | null; tradingCurrency: string } | null;
-}>): Omit<Selected, "expires"> | null {
+function fromProvider(row: CatalogCandidate): Omit<Selected, "expires"> | null {
   const listing = row.listing;
   if (!listing || !row.descriptiveName || !row.descriptiveAssetClass) return null;
   try {
