@@ -46,7 +46,7 @@ export async function runPersonalMarketProbe(
   });
   const latest = series.candles.at(-1);
   if (!latest || series.provider !== "TWELVE_DATA" || series.candles.length !== 1 ||
-      !/^\\d{4}-\\d{2}-\\d{2}$/.test(latest.marketDate)) {
+      latest.marketDate.length !== 10) {
     throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
   }
   return {
