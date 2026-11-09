@@ -71,7 +71,7 @@ CREATE POLICY market_shared_cache_ingest_insert ON market_core.shared_market_cac
    retention_until >= expires_at AND
    EXISTS(
      SELECT 1 FROM market_core.license_policies lp
-     WHERE lp.rights_policy_id=rights_policy_id
+     WHERE lp.rights_policy_id=shared_market_cache.rights_policy_id
        AND lp.cache_allowed IS TRUE
        AND lp.retention_until IS NOT NULL
        AND lp.retention_until >= expires_at
@@ -87,7 +87,7 @@ CREATE POLICY market_shared_cache_ingest_update ON market_core.shared_market_cac
    retention_until >= expires_at AND
    EXISTS(
      SELECT 1 FROM market_core.license_policies lp
-     WHERE lp.rights_policy_id=rights_policy_id
+     WHERE lp.rights_policy_id=shared_market_cache.rights_policy_id
        AND lp.cache_allowed IS TRUE
        AND lp.retention_until IS NOT NULL
        AND lp.retention_until >= expires_at
