@@ -32,7 +32,7 @@ test("G3 personal Preview probe checks a single real-parser result without displ
     calls++;
     assert.equal(input.outputSize, 1);
     assert.equal(input.instrument.symbol, "AAPL");
-    assert.equal(input.instrument.mic, "XNAS");
+    assert.equal(input.instrument.mic, "XNGS");
     assert.equal(input.rights?.display, false);
     return {
       provider: "TWELVE_DATA",
@@ -44,7 +44,7 @@ test("G3 personal Preview probe checks a single real-parser result without displ
   assert.deepEqual(result, {
     status: "PROVIDER_VALIDATED",
     provider: "TWELVE_DATA",
-    symbol: "AAPL", mic: "XNAS", currency: "USD",
+    symbol: "AAPL", mic: "XNGS", currency: "USD",
     marketDate: "2026-11-09", observationCount: 1, providerCalls: 1,
     persisted: false, displayed: false,
   });
