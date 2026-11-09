@@ -1,0 +1,152 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { createDynamicMarketGateway } from "../dynamicMarketGateway";
+import { fetchPersonalPreviewDailySeries } from "../twelveData";
+
+const SHA = "f".repeat(40);
+const BRANCH = "feat/g3g-preview-hosted-worker-20261108";
+const env = {
+  VERCEL_ENV: "preview", VERCEL_GIT_COMMIT_REF: BRANCH,
+  VERCEL_GIT_COMMIT_SHA: SHA, G3G_DEPLOYMENT_SHA: SHA,
+  G3G_DEPLOYMENT_REF: BRANCH, G3G_APPROVED_SHA: SHA,
+  G3G_WORKER_MODE: "disabled", SYNTRAKE_G3_PROVIDER_ENABLED: "disabled",
+  SYNTRAKE_R3E1_APPROVED_SHA: SHA,
+  SYNTRAKE_R3E1_APPROVED_ENV: "preview",
+  SYNTRAKE_R3E1_REAL_CALL_ENABLED: "confirm-once",
+  SYNTRAKE_R3E1_REHEARSAL_LICENSE_CONFIRMED: "confirm-query-no-display",
+  SYNTRAKE_TWELVE_DATA_API_KEY: "fake_test_0123456789abcdefghijklmnopqrstuvwxyz",
+};
+
+test("Market Core discovers a generic equity and uses the existing provider validator for historical bars",async()=>{
+  let searches=0,historyCalls=0;
+  const transport=async(url:string, options:RequestInit):Promise<Response>=>{
+    const u=new URL(url);
+    assert.equal(u.origin,"https://api.twelvedata.com");
+    assert.equal((options.headers as Record<string,string>).Authorization,
+      "apikey "+env.SYNTRAKE_TWELVE_DATA_API_KEY);
+    if(u.pathname==="/symbol_search"){
+      searches++;
+      return Response.json({status:"ok",data:[{
+        symbol:"NVDA",instrument_name:"NVIDIA Corp",mic_code:"XNGS",
+        instrument_type:"Common Stock",currency:"USD",
+      }]});
+    }
+    if(u.pathname==="/time_series"){
+      historyCalls++;
+      assert.equal(u.searchParams.get("start_date"),"2026-11-02");
+      assert.equal(u.searchParams.get("end_date"),"2026-11-09");
+      assert.equal(u.searchParams.get("interval"),"1day");
+      assert.equal(u.searchParams.get("outputsize"),"1000");
+      return Response.json({status:"ok",meta:{
+        symbol:"NVDA",interval:"1day",currency:"USD",
+        type:"Common Stock",exchange_timezone:"America/New_York",mic_code:"XNGS",
+      },values:[
+        {datetime:"2026-11-06",open:"4",high:"6",low:"3",close:"5",volume:"22"},
+        {datetime:"2026-11-05",open:"3",high:"5",low:"2",close:"4",volume:"19"},
+      ]});
+    }
+    throw new Error("UNEXPECTED_ENDPOINT");
+  };
+  const service=createDynamicMarketGateway({
+    env,transport,clock:()=>new Date("2026-11-09T21:00:00Z"),
+  });
+  const found=await service.discover("NVIDIA");
+  assert.equal(found.length,1);
+  assert.equal(found[0].symbol,"NVDA");
+  const first=await service.historyToken(found[0].token,"2026-11-02","2026-11-09");
+  assert.equal(first.status,"AVAILABLE");
+  assert.equal(first.candles.length,2);
+  assert.deepEqual(first.candles.map(x=>x.marketDate),["2026-11-05","2026-11-06"]);
+  assert.equal(first.candles[0].close,"4");
+  assert.equal(first.interval,"1day");
+  assert.equal(first.adjustment,"none");
+  assert.equal(first.providerCalls,1);
+  const cached=await service.historyToken(found[0].token,"2026-11-02","2026-11-09");
+  assert.equal(cached.source,"MEMORY_CACHE");
+  assert.equal(cached.providerCalls,0);
+  assert.equal(historyCalls,1);
+  assert.equal(searches,1);
+});
+
+test("historical range of >366 calendar days is split into bounded exchange-date queries",async()=>{
+  let priceCalls=0;
+  const transport=async(url:string):Promise<Response>=>{
+    const u=new URL(url);
+    if(u.pathname==="/symbol_search"){
+      return Response.json({status:"ok",data:[{
+        symbol:"MSFT",instrument_name:"Microsoft Corporation",mic_code:"XNGS",
+        instrument_type:"Common Stock",currency:"USD",
+      }]});
+    }
+    priceCalls++;
+    const begin=u.searchParams.get("start_date")!;
+    const end=u.searchParams.get("end_date")!;
+    assert.ok(begin<=end);
+    const age=Date.parse(end+"T00:00:00Z")-Date.parse(begin+"T00:00:00Z");
+    assert.ok(age<=365*86400000);
+    const date=begin;
+    return Response.json({status:"ok",meta:{
+      symbol:"MSFT",interval:"1day",currency:"USD",
+      type:"Common Stock",exchange_timezone:"America/New_York",mic_code:"XNGS",
+    },values:[{datetime:date,open:"1",high:"1",low:"1",close:"1",volume:"1"}]});
+  };
+  const service=createDynamicMarketGateway({env,transport,clock:()=>new Date("2026-11-09T12:00:00Z")});
+  const found=await service.discover("Microsoft");
+  const response=await service.historyToken(found[0].token,"2025-01-01","2026-10-01");
+  assert.equal(response.status,"AVAILABLE");
+  assert.equal(priceCalls,2);
+  assert.equal(response.providerCalls,2);
+  assert.ok(response.candles[0].marketDate<response.candles[1].marketDate);
+});
+
+test("out-of-range provider bars, invalid range and future data are rejected",async()=>{
+  let priceCalls=0;
+  const transport=async(url:string):Promise<Response>=>{
+    const u=new URL(url);
+    if(u.pathname==="/symbol_search"){
+      return Response.json({status:"ok",data:[{
+        symbol:"AAPL",instrument_name:"Apple Inc",mic_code:"XNGS",
+        instrument_type:"Common Stock",currency:"USD",
+      }]});
+    }
+    priceCalls++;
+    return Response.json({status:"ok",meta:{
+      symbol:"AAPL",interval:"1day",currency:"USD",
+      type:"Common Stock",exchange_timezone:"America/New_York",mic_code:"XNGS",
+    },values:[{datetime:"2026-10-01",open:"1",high:"1",low:"1",close:"1",volume:"1"}]});
+  };
+  const core=createDynamicMarketGateway({env,transport,clock:()=>new Date("2026-11-09T12:00:00Z")});
+  const hit=(await core.discover("Apple"))[0];
+  await assert.rejects(core.historyToken(hit.token,"2027-01-01","2027-01-31"));
+  await assert.rejects(core.historyToken(hit.token,"2026-11-09","2026-11-01"));
+  await assert.rejects(core.historyToken(hit.token,"2026-11-04","2026-11-09"));
+  assert.equal(priceCalls,1);
+});
+
+test("currency pair uses explicit direction and daily FX history, not an inferred reverse quote",async()=>{
+  let calls=0;
+  const transport=async(url:string):Promise<Response>=>{
+    const u=new URL(url);
+    if(u.pathname==="/symbol_search") {
+      return Response.json({status:"ok",data:[{
+        symbol:"EUR/USD",instrument_name:"Euro / US Dollar",
+        instrument_type:"Physical Currency",currency:"USD",
+      }]});
+    }
+    calls++;
+    assert.equal(u.searchParams.get("symbol"),"EUR/USD");
+    assert.equal(u.searchParams.get("mic_code"),null);
+    return Response.json({status:"ok",meta:{
+      symbol:"EUR/USD",interval:"1day",currency:"USD",
+      exchange_timezone:"UTC",type:"Physical Currency",
+    },values:[{datetime:"2026-11-06",open:"1.1",high:"1.2",low:"1.0",close:"1.15"}]});
+  };
+  const core=createDynamicMarketGateway({env,transport,clock:()=>new Date("2026-11-09T12:00:00Z")});
+  const found=await core.discover("EUR/USD");
+  assert.equal(found[0].kind,"FX");
+  const history=await core.historyToken(found[0].token,"2026-11-02","2026-11-09");
+  assert.equal(history.candles[0].close,"1.15");
+  assert.equal(history.candles[0].volume,null);
+  assert.equal(history.currency,"USD");
+  assert.equal(calls,1);
+});
