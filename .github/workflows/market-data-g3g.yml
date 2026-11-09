@@ -7,6 +7,10 @@ on:
       - "scripts/g3g-readiness-once*.mjs"
       - "app/api/internal/g3-worker/**"
       - "app/api/market-data/**"
+      - "app/api/investing/market-data/**"
+      - "investing-core/marketDataBridge.ts"
+      - "investing-core/marketDataQuoteHttp.ts"
+      - "investing-core/tests/marketDataQuoteHttp.test.ts"
       - ".github/workflows/market-data-g3g.yml"
       - "package.json"
       - "package-lock.json"
@@ -46,6 +50,8 @@ jobs:
         run: npx tsx --test market-data-core/tests/g3-personal-market-probe.test.ts
       - name: Prove generic provider discovery, selection, daily price and cache
         run: npx tsx --test market-data-core/tests/dynamicMarketGateway.test.ts
+      - name: Prove Investing and Trading use the same Market Core, with authentication and bounded batch reads
+        run: npx tsx --test market-data-core/tests/consumerMarketService.test.ts investing-core/tests/marketDataQuoteHttp.test.ts
       - name: Prove hosted handler is fail-closed
         run: npx tsx --test market-data-core/tests/g3g-hosted-preview-executor.test.ts
       - name: Prove licensed provider gates remain closed without operator attestation
