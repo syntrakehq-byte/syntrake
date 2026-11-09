@@ -27,6 +27,7 @@ type Fetcher = (url: string, init: RequestInit) => Promise<Response>;
 type Clock = () => Date;
 export type ProviderUsageHeaders = Readonly<{ remaining: string | null; used: string | null }>;
 const R3E1_INTERNAL = Symbol("r3e1-once");
+const PERSONAL_PREVIEW_INTERNAL = Symbol("personal-dynamic-preview");
 let r3e1CallConsumed = false;
 function sanitizeCreditHeader(value: string | null): string | null {
   if (value === null || !/^\d{1,9}$/.test(value)) return null;
@@ -136,7 +137,9 @@ export async function fetchDailySeries(input: Readonly<{
   // Fail BEFORE constructing URL or calling transport when not authorized.
   const apikey = input.internalAuthorization === R3E1_INTERNAL
     ? requireR3E1ProviderReadyOnce(input.env, input.checkoutSha)
-    : requirePreviewMarketProviderReady(input.env);
+    : input.internalAuthorization === PERSONAL_PREVIEW_INTERNAL
+      ? requireR3E1RealCallReady(input.env, input.checkoutSha ?? "")
+      : requirePreviewMarketProviderReady(input.env);
   const hint = instrumentIdentity({
     kind: input.instrument?.kind, symbol: input.instrument?.symbol,
     mic: input.instrument?.mic, currency: input.instrument?.currency,
@@ -272,4 +275,9 @@ function requireR3E1ProviderReadyOnce(env: Env, checkoutSha: string | undefined)
 
 export async function fetchDailySeriesR3E1Once(input: Readonly<Parameters<typeof fetchDailySeries>[0] & { checkoutSha: string }>): Promise<DailySeries> {
   return fetchDailySeries({ ...input, internalAuthorization: R3E1_INTERNAL });
+}
+
+/** Shared Market Core daily-price adapter. Requires an authenticated server caller and a pinned personal Preview. */
+export async function fetchPersonalPreviewDailySeries(input: Readonly<Parameters<typeof fetchDailySeries>[0] & { checkoutSha: string }>): Promise<DailySeries> {
+  return fetchDailySeries({ ...input, internalAuthorization: PERSONAL_PREVIEW_INTERNAL });
 }
