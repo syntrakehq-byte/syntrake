@@ -1,5 +1,6 @@
 import { requireVerifiedClerkActor } from "@/investing-core/server/requireVerifiedClerkActor";
-import { createDynamicMarketGateway, classifyDynamicMarketError } from "@/market-data-core/dynamicMarketGateway";
+import { classifyDynamicMarketError } from "@/market-data-core/dynamicMarketGateway";
+import { getDynamicMarketCore } from "@/market-data-core/dynamicMarketServer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,7 +10,7 @@ const headers = {
   "Vary": "Cookie, Authorization",
   "X-Robots-Tag": "noindex, nofollow, noarchive",
 };
-const market = createDynamicMarketGateway({ env: process.env });
+const market = getDynamicMarketCore();
 
 export async function GET(request: Request): Promise<Response> {
   try {
