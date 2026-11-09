@@ -13,7 +13,7 @@ type Quote = Readonly<{
   mic: string | null; currency: string; kind: string;
   price: string; marketDate: string; observedAt: string;
   provider: "TWELVE_DATA"; priceType: "DAILY_CLOSE";
-  source: "PROVIDER" | "MEMORY_CACHE";
+  source: "PROVIDER" | "MEMORY_CACHE" | "SHARED_CACHE";
 }>;
 
 const copy = {
@@ -177,7 +177,7 @@ export function MarketDataWorkspace({ lang }: { lang: SiteLang }) {
         <div><dt>{t.date}</dt><dd className="text-white">{quote.marketDate}</dd></div>
         <div><dt>{t.checked}</dt><dd className="text-white">{quote.observedAt}</dd></div>
         <div><dt>{t.provider}</dt><dd className="text-white">{quote.provider}</dd></div>
-        <div><dt>{t.source}</dt><dd className="text-white">{quote.source === "MEMORY_CACHE" ? t.cache : t.live}</dd></div>
+        <div><dt>{t.source}</dt><dd className="text-white">{quote.source === "MEMORY_CACHE" || quote.source === "SHARED_CACHE" ? t.cache : t.live}</dd></div>
       </dl>
       <button type="button" disabled={busyQuote || !selected}
         className="mt-5 flex items-center gap-2 text-sm font-semibold text-[#e9c68b] disabled:opacity-60"
