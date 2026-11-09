@@ -13,12 +13,16 @@ export function createTwelveDataCatalogConnector(input: Readonly<{
   transport?: CatalogTransport;
   endpoint?: string;
   apiKeyEnv?: string;
+  /** Read-only discovery, never persists catalog records. */
+  readOnly?: boolean;
+  /** Provider-ranked results for both company names and tickers. */
+  broadSearch?: boolean;
 }>): CatalogConnector {
   if (!input.transport) throw new CatalogConnectorError("PROVIDER_UNAVAILABLE");
   const transport = input.transport;
   const endpoint = input.endpoint ?? "https://api.twelvedata.com/symbol_search";
   if (input.source.providerKey !== "TWELVE_DATA" || new URL(endpoint).origin !== "https://api.twelvedata.com") throw new CatalogConnectorError("INVALID_REQUEST");
-  requireCatalogLicense(input.source);
+  if (!input.readOnly) requireCatalogLicense(input.source);
   const request = async (params: URLSearchParams, query: CatalogQuery, lookupReference?: string): Promise<ReturnType<typeof resultForCandidates>> => {
     const apiKey = input.env[input.apiKeyEnv ?? "TWELVE_DATA_API_KEY"];
     if (!apiKey) throw new CatalogConnectorError("PROVIDER_REJECTED", 401);
@@ -34,7 +38,7 @@ export function createTwelveDataCatalogConnector(input: Readonly<{
     if (!root || root.status !== "ok" || !Array.isArray(root.data)) throw new CatalogConnectorError("INVALID_PROVIDER_RESPONSE");
     const candidates = root.data.map(item => fromTwelveData(item, input.source)).filter((candidate): candidate is CatalogCandidate => candidate !== null);
     if (lookupReference && !candidates.some(candidate => candidate.providerReference.providerReference === lookupReference)) throw new CatalogConnectorError("NO_RESULTS");
-    return resultForCandidates(query, filterCatalogCandidates(query, candidates));
+    return resultForCandidates(query, input.broadSearch ? candidates.slice(0, 30) : filterCatalogCandidates(query, candidates));
   };
   return {
     providerKey: "TWELVE_DATA",
@@ -55,7 +59,7 @@ function fromTwelveData(value: unknown, source: CatalogSource): CatalogCandidate
   const row = record(value);
   if (!row) throw new CatalogConnectorError("INVALID_PROVIDER_RESPONSE");
   const symbol = text(row.symbol, "symbol");
-  if (!/^[A-Z0-9][A-Z0-9._-]{0,31}$/.test(symbol)) throw new CatalogConnectorError("INVALID_PROVIDER_RESPONSE");
+  if (!/^[A-Z0-9][A-Z0-9._\/-]{0,31}$/.test(symbol)) throw new CatalogConnectorError("INVALID_PROVIDER_RESPONSE");
   const mic = optionalText(row.mic_code)?.toUpperCase() ?? null;
   const micRole = row.mic_role === null || row.mic_role === undefined ? null : row.mic_role;
   if (micRole !== null && !validMicRole(micRole)) throw new CatalogConnectorError("INVALID_PROVIDER_RESPONSE");
