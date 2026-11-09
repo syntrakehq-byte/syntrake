@@ -7,6 +7,8 @@ on:
       - "scripts/g3g-readiness-once*.mjs"
       - "app/api/internal/g3-worker/**"
       - "app/api/market-data/**"
+      - "app/api/internal/market-core/**"
+      - "supabase/migrations/20261109212000_market_core_shared_cache.sql"
       - "app/api/investing/market-data/**"
       - "investing-core/marketDataBridge.ts"
       - "investing-core/marketDataQuoteHttp.ts"
@@ -52,6 +54,10 @@ jobs:
         run: npx tsx --test market-data-core/tests/dynamicMarketGateway.test.ts market-data-core/tests/dynamicMarketHistory.test.ts
       - name: Prove Investing and Trading use the same Market Core, with authentication and bounded batch reads
         run: npx tsx --test market-data-core/tests/consumerMarketService.test.ts investing-core/tests/marketDataQuoteHttp.test.ts
+      - name: Prove shared PostgreSQL cache safety and cross-instance reuse
+        run: npx tsx --test market-data-core/tests/pgSharedMarketCache.test.ts
+      - name: Prove authenticated machine service without Clerk session
+        run: npx tsx --test market-data-core/tests/machineMarketCore.test.ts
       - name: Prove hosted handler is fail-closed
         run: npx tsx --test market-data-core/tests/g3g-hosted-preview-executor.test.ts
       - name: Prove licensed provider gates remain closed without operator attestation
