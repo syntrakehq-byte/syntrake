@@ -1,11 +1,19 @@
 import { createDynamicMarketGateway } from "./dynamicMarketGateway";
+import { createPostgresSharedMarketCache, isSharedMarketCacheConfigured } from "./pgSharedMarketCache";
 
-/**
- * One source of truth for the Preview market service. In-memory cache is
- * best-effort per warm server instance, never a substitute for a shared
- * durable cache across Vercel instances.
- */
-const marketCore = createDynamicMarketGateway({ env: process.env });
+/** One Market Core instance shared by browser API and internal consumers. */
+const env = process.env;
+if (env.G3G_SHARED_CACHE_MODE === "enabled" && !isSharedMarketCacheConfigured(env)) {
+  throw new Error("MARKET_CACHE_CONFIGURATION_INCOMPLETE");
+}
+const sharedCache = isSharedMarketCacheConfigured(env)
+  ? createPostgresSharedMarketCache({ env })
+  : null;
+const marketCore = createDynamicMarketGateway({
+  env,
+  ...(sharedCache !== null ? { sharedCache } : {}),
+});
+
 export function getDynamicMarketCore(): typeof marketCore {
   return marketCore;
 }
