@@ -1,4 +1,5 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import type { SharedMarketCache } from "./pgSharedMarketCache";
 import { CatalogConnectorError } from "./catalogConnector";
 import { createTwelveDataCatalogConnector } from "./twelveDataCatalog";
 import type { CatalogCandidate } from "./instrumentDiscovery";
@@ -22,7 +23,7 @@ export type DynamicMarketQuote = Readonly<{
   status: "AVAILABLE"; symbol: string; name: string; mic: string | null;
   currency: string; kind: InstrumentKind; price: string; marketDate: string;
   observedAt: string; provider: "TWELVE_DATA"; interval: "1day";
-  priceType: "DAILY_CLOSE"; source: "PROVIDER" | "MEMORY_CACHE";
+  priceType: "DAILY_CLOSE"; source: "PROVIDER" | "MEMORY_CACHE" | "SHARED_CACHE";
   providerCalls: 0 | 1;
 }>;
 
@@ -37,9 +38,49 @@ export type DynamicMarketHistory = Readonly<{
     close: string; volume: string | null;
   }>[];
   provider: "TWELVE_DATA";
-  source: "PROVIDER" | "MEMORY_CACHE";
+  source: "PROVIDER" | "MEMORY_CACHE" | "SHARED_CACHE";
   providerCalls: number;
 }>;
+
+function sharedKey(kind: "DAILY_QUOTE" | "DAILY_HISTORY", identity: InstrumentIdentity, policy: string, start = "", end = ""): string {
+  return createHash("sha256").update(JSON.stringify([
+    "TWELVE_DATA", kind, identity.key, policy, "1day", "none", start, end,
+  ])).digest("hex");
+}
+
+function compatibleQuote(raw: unknown, instrument: InstrumentIdentity): raw is DynamicMarketQuote {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
+  const q = raw as Partial<DynamicMarketQuote>;
+  return q.status === "AVAILABLE" && q.provider === "TWELVE_DATA" &&
+    q.priceType === "DAILY_CLOSE" && q.interval === "1day" &&
+    q.kind === instrument.kind && q.symbol === instrument.symbol &&
+    q.mic === instrument.mic && q.currency === instrument.currency &&
+    typeof q.price === "string" && /^(?:0|[1-9]\\d{0,17})(?:\\.\\d{1,12})?$/.test(q.price) &&
+    typeof q.marketDate === "string" && /^\\d{4}-\\d{2}-\\d{2}$/.test(q.marketDate) &&
+    typeof q.observedAt === "string" && Number.isFinite(Date.parse(q.observedAt));
+}
+
+function compatibleHistory(raw: unknown, instrument: InstrumentIdentity, start: string, end: string): raw is DynamicMarketHistory {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
+  const h = raw as Partial<DynamicMarketHistory>;
+  if (h.status !== "AVAILABLE" || h.provider !== "TWELVE_DATA" ||
+      h.kind !== instrument.kind || h.symbol !== instrument.symbol ||
+      h.mic !== instrument.mic || h.currency !== instrument.currency ||
+      h.interval !== "1day" || h.adjustment !== "none" ||
+      h.startDate !== start || h.endDate !== end ||
+      typeof h.observedAt !== "string" || !Number.isFinite(Date.parse(h.observedAt)) ||
+      !Array.isArray(h.candles) || h.candles.length === 0 || h.candles.length > 2000) return false;
+  let prev = "";
+  for (const bar of h.candles) {
+    if (!bar || typeof bar.marketDate !== "string" || bar.marketDate < start ||
+        bar.marketDate > end || bar.marketDate <= prev ||
+        !["open","high","low","close"].every(field =>
+          typeof bar[field as keyof typeof bar] === "string" &&
+          /^(?:0|[1-9]\\d{0,17})(?:\\.\\d{1,12})?$/.test(bar[field as keyof typeof bar] as string))) return false;
+    prev = bar.marketDate;
+  }
+  return true;
+}
 
 const TOKEN_TTL_MS = 10 * 60_000;
 const QUOTE_TTL_MS = 60_000;
@@ -122,6 +163,7 @@ export function createDynamicMarketGateway(input: Readonly<{
   env: Env;
   transport?: Transport;
   fetchSeries?: SeriesFetcher;
+  sharedCache?: SharedMarketCache;
   clock?: () => Date;
 }>) {
   const cache = new Map<string, { quote: DynamicMarketQuote; until: number }>();
@@ -185,6 +227,17 @@ export function createDynamicMarketGateway(input: Readonly<{
     if (existing && existing.until > timestamp) {
       return { ...existing.quote, source: "MEMORY_CACHE", providerCalls: 0 };
     }
+    const storageKey = sharedKey("DAILY_QUOTE", instrument, input.env.G3G_SHARED_CACHE_RIGHTS_POLICY_ID ?? "");
+    if (input.sharedCache) {
+      const shared = await input.sharedCache.read(storageKey, "DAILY_QUOTE");
+      if (compatibleQuote(shared, instrument)) {
+        const hit: DynamicMarketQuote = {
+          ...shared, name: selected.name, source: "SHARED_CACHE", providerCalls: 0,
+        };
+        cache.set(cacheKey, { quote: hit, until: now() + QUOTE_TTL_MS });
+        return hit;
+      }
+    }
     let pending = inflight.get(cacheKey);
     if (!pending) {
       pending = (async () => {
@@ -207,6 +260,7 @@ export function createDynamicMarketGateway(input: Readonly<{
           interval: "1day", priceType: "DAILY_CLOSE",
           source: "PROVIDER", providerCalls: 1,
         };
+        if (input.sharedCache) await input.sharedCache.write(storageKey, "DAILY_QUOTE", value);
         if (cache.size >= MAX_CACHE_SIZE) cache.delete(cache.keys().next().value!);
         cache.set(cacheKey, { quote: value, until: now() + QUOTE_TTL_MS });
         return value;
@@ -251,6 +305,18 @@ export function createDynamicMarketGateway(input: Readonly<{
     if (current && current.until > now()) return {
       ...current.value, source: "MEMORY_CACHE", providerCalls: 0,
     };
+    const storageKey = sharedKey("DAILY_HISTORY", instrument,
+      input.env.G3G_SHARED_CACHE_RIGHTS_POLICY_ID ?? "", startDate, endDate);
+    if (input.sharedCache) {
+      const shared = await input.sharedCache.read(storageKey, "DAILY_HISTORY");
+      if (compatibleHistory(shared, instrument, startDate, endDate)) {
+        const hit: DynamicMarketHistory = {
+          ...shared, name: selected.name, source: "SHARED_CACHE", providerCalls: 0,
+        };
+        historyCache.set(cacheKey, { value: hit, until: now() + QUOTE_TTL_MS });
+        return hit;
+      }
+    }
     let operation = historyInflight.get(cacheKey);
     if (!operation) {
       operation = (async () => {
@@ -296,6 +362,7 @@ export function createDynamicMarketGateway(input: Readonly<{
           candles: Object.freeze(candles), provider: "TWELVE_DATA",
           source: "PROVIDER", providerCalls,
         });
+        if (input.sharedCache) await input.sharedCache.write(storageKey, "DAILY_HISTORY", value);
         if (historyCache.size >= MAX_CACHE_SIZE) historyCache.delete(historyCache.keys().next().value!);
         historyCache.set(cacheKey, { value, until: now() + QUOTE_TTL_MS });
         return value;
