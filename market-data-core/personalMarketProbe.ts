@@ -17,7 +17,7 @@ export async function runPersonalMarketProbe(
   status: "PROVIDER_VALIDATED";
   provider: "TWELVE_DATA";
   symbol: "AAPL";
-  mic: "XNAS";
+  mic: "XNGS";
   currency: "USD";
   marketDate: string;
   observationCount: number;
@@ -38,7 +38,7 @@ export async function runPersonalMarketProbe(
   const series = await fetchSeries({
     env,
     instrument: instrumentIdentity({
-      kind: "EQUITY", symbol: "AAPL", mic: "XNAS", currency: "USD",
+      kind: "EQUITY", symbol: "AAPL", mic: "XNGS", currency: "USD",
     }),
     outputSize: 1,
     checkoutSha: sha,
@@ -53,7 +53,7 @@ export async function runPersonalMarketProbe(
     status: "PROVIDER_VALIDATED",
     provider: "TWELVE_DATA",
     symbol: "AAPL",
-    mic: "XNAS",
+    mic: "XNGS",
     currency: "USD",
     marketDate: latest.marketDate,
     observationCount: series.candles.length,
