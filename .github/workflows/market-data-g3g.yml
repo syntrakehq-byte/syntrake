@@ -48,8 +48,8 @@ jobs:
         run: npx tsx --test market-data-core/tests/on-demand-market-data.test.ts market-data-core/tests/on-demand-twelve-data.test.ts market-data-core/tests/shared-market-server.test.ts
       - name: Prove personal Preview one-shot provider validation stays bounded
         run: npx tsx --test market-data-core/tests/g3-personal-market-probe.test.ts
-      - name: Prove generic provider discovery, selection, daily price and cache
-        run: npx tsx --test market-data-core/tests/dynamicMarketGateway.test.ts
+      - name: Prove generic provider discovery, daily price, history, FX and cache
+        run: npx tsx --test market-data-core/tests/dynamicMarketGateway.test.ts market-data-core/tests/dynamicMarketHistory.test.ts
       - name: Prove Investing and Trading use the same Market Core, with authentication and bounded batch reads
         run: npx tsx --test market-data-core/tests/consumerMarketService.test.ts investing-core/tests/marketDataQuoteHttp.test.ts
       - name: Prove hosted handler is fail-closed
