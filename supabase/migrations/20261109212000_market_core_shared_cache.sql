@@ -23,13 +23,13 @@ CREATE INDEX IF NOT EXISTS idx_market_shared_cache_expiry
  ON market_core.shared_market_cache(expires_at);
 
 -- A dedicated NOLOGIN cache role cannot mutate canonical observations.
-DO $
+DO $cache_ddl$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='market_core_cache') THEN
     CREATE ROLE market_core_cache NOLOGIN NOBYPASSRLS;
   END IF;
 END;
-$;
+$cache_ddl$;
 GRANT USAGE ON SCHEMA market_core TO market_core_cache;
 GRANT SELECT (rights_policy_id,cache_allowed,retention_until)
  ON market_core.license_policies TO market_core_cache;
@@ -39,13 +39,13 @@ CREATE POLICY market_core_cache_rights_lookup ON market_core.license_policies
  USING (CURRENT_USER='market_core_cache'::name);
 
 -- Only the existing private Preview ingest LOGIN may assume this role.
-DO $
+DO $cache_ddl$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='syntrake_g3_preview_ingest') THEN
     GRANT market_core_cache TO syntrake_g3_preview_ingest;
   END IF;
 END;
-$;
+$cache_ddl$;
 REVOKE ALL ON market_core.shared_market_cache FROM PUBLIC, anon, authenticated;
 GRANT SELECT ON market_core.shared_market_cache TO market_core_reader;
 GRANT SELECT,INSERT,UPDATE,DELETE ON market_core.shared_market_cache TO market_core_cache;
