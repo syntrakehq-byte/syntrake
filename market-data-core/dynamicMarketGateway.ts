@@ -224,7 +224,7 @@ export function createDynamicMarketGateway(input: Readonly<{
     const cacheKey = instrument.key;
     const timestamp = now();
     const existing = cache.get(cacheKey);
-    if (existing && existing.until > timestamp) {
+    if (!input.sharedCache && existing && existing.until > timestamp) {
       return { ...existing.quote, source: "MEMORY_CACHE", providerCalls: 0 };
     }
     const storageKey = sharedKey("DAILY_QUOTE", instrument, input.env.G3G_SHARED_CACHE_RIGHTS_POLICY_ID ?? "");
@@ -234,7 +234,6 @@ export function createDynamicMarketGateway(input: Readonly<{
         const hit: DynamicMarketQuote = {
           ...shared, name: selected.name, source: "SHARED_CACHE", providerCalls: 0,
         };
-        cache.set(cacheKey, { quote: hit, until: now() + QUOTE_TTL_MS });
         return hit;
       }
     }
@@ -262,7 +261,7 @@ export function createDynamicMarketGateway(input: Readonly<{
         };
         if (input.sharedCache) await input.sharedCache.write(storageKey, "DAILY_QUOTE", value);
         if (cache.size >= MAX_CACHE_SIZE) cache.delete(cache.keys().next().value!);
-        cache.set(cacheKey, { quote: value, until: now() + QUOTE_TTL_MS });
+        if (!input.sharedCache) cache.set(cacheKey, { quote: value, until: now() + QUOTE_TTL_MS });
         return value;
       })();
       inflight.set(cacheKey, pending);
@@ -302,7 +301,7 @@ export function createDynamicMarketGateway(input: Readonly<{
     } catch { throw new MarketDataError("INVALID_REQUEST"); }
     const cacheKey = instrument.key + ":" + startDate + ":" + endDate;
     const current = historyCache.get(cacheKey);
-    if (current && current.until > now()) return {
+    if (!input.sharedCache && current && current.until > now()) return {
       ...current.value, source: "MEMORY_CACHE", providerCalls: 0,
     };
     const storageKey = sharedKey("DAILY_HISTORY", instrument,
@@ -313,7 +312,6 @@ export function createDynamicMarketGateway(input: Readonly<{
         const hit: DynamicMarketHistory = {
           ...shared, name: selected.name, source: "SHARED_CACHE", providerCalls: 0,
         };
-        historyCache.set(cacheKey, { value: hit, until: now() + QUOTE_TTL_MS });
         return hit;
       }
     }
@@ -364,7 +362,7 @@ export function createDynamicMarketGateway(input: Readonly<{
         });
         if (input.sharedCache) await input.sharedCache.write(storageKey, "DAILY_HISTORY", value);
         if (historyCache.size >= MAX_CACHE_SIZE) historyCache.delete(historyCache.keys().next().value!);
-        historyCache.set(cacheKey, { value, until: now() + QUOTE_TTL_MS });
+        if (!input.sharedCache) historyCache.set(cacheKey, { value, until: now() + QUOTE_TTL_MS });
         return value;
       })();
       historyInflight.set(cacheKey, operation);
