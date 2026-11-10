@@ -175,7 +175,7 @@ export function createDynamicMarketGateway(input: Readonly<{
       providerKey: "TWELVE_DATA",
       snapshotId: "on-demand-" + sha.slice(0, 12), snapshotVersion: "1",
       observedAt: new Date(now()).toISOString(),
-      licensePolicyId: "personal-owner-readthrough", storageAllowed: false, sharingAllowed: false,
+      licensePolicyId: "market-authenticated-readthrough", storageAllowed: false, sharingAllowed: false,
     };
     const connector = createTwelveDataCatalogConnector({
       env: input.env, source,
@@ -223,7 +223,7 @@ export function createDynamicMarketGateway(input: Readonly<{
     if (!input.sharedCache && existing && existing.until > timestamp) {
       return { ...existing.quote, source: "MEMORY_CACHE", providerCalls: 0 };
     }
-    const storageKey = sharedKey("DAILY_QUOTE", instrument, input.env.G3G_SHARED_CACHE_RIGHTS_POLICY_ID ?? "");
+    const storageKey = sharedKey("DAILY_QUOTE", instrument, input.env.SYNTRAKE_MARKET_CACHE_POLICY ?? "short-lived-internal-30s");
     if (input.sharedCache) {
       const shared = await input.sharedCache.read(storageKey, "DAILY_QUOTE");
       if (compatibleQuote(shared, instrument)) {
@@ -240,7 +240,7 @@ export function createDynamicMarketGateway(input: Readonly<{
           env: input.env, instrument, outputSize: 1, checkoutSha: sha,
           ...(input.transport ? { transport: input.transport } : {}),
           ...(input.clock ? { clock: input.clock } : {}),
-          rights: { policyId: "personal-owner-readthrough", display: true, retentionUntil: null },
+          rights: { policyId: "market-authenticated-readthrough", display: true, retentionUntil: null },
         });
         const candle = series.candles.at(-1);
         if (!candle || series.provider !== "TWELVE_DATA" ||
@@ -301,7 +301,7 @@ export function createDynamicMarketGateway(input: Readonly<{
       ...current.value, source: "MEMORY_CACHE", providerCalls: 0,
     };
     const storageKey = sharedKey("DAILY_HISTORY", instrument,
-      input.env.G3G_SHARED_CACHE_RIGHTS_POLICY_ID ?? "", startDate, endDate);
+      input.env.SYNTRAKE_MARKET_CACHE_POLICY ?? "short-lived-internal-30s", startDate, endDate);
     if (input.sharedCache) {
       const shared = await input.sharedCache.read(storageKey, "DAILY_HISTORY");
       if (compatibleHistory(shared, instrument, startDate, endDate)) {
@@ -330,7 +330,7 @@ export function createDynamicMarketGateway(input: Readonly<{
             startDate: first, endDate: last,
             ...(input.transport ? { transport: input.transport } : {}),
             ...(input.clock ? { clock: input.clock } : {}),
-            rights: { policyId: "personal-owner-readthrough", display: true, retentionUntil: null },
+            rights: { policyId: "market-authenticated-readthrough", display: true, retentionUntil: null },
           });
           providerCalls++;
           if (series.provider !== "TWELVE_DATA" || series.instrument.key !== instrument.key ||
