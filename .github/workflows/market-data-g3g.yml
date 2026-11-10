@@ -58,6 +58,8 @@ jobs:
         run: npx tsx --test market-data-core/tests/pgSharedMarketCache.test.ts
       - name: Prove authenticated machine service without Clerk session
         run: npx tsx --test market-data-core/tests/machineMarketCore.test.ts
+      - name: Prove private Market Core works for sessionless authenticated consumers
+        run: npx tsx --test market-data-core/tests/internalMarketRequest.test.ts
       - name: Prove hosted handler is fail-closed
         run: npx tsx --test market-data-core/tests/g3g-hosted-preview-executor.test.ts
       - name: Prove licensed provider gates remain closed without operator attestation
