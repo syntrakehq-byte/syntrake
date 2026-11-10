@@ -72,6 +72,29 @@ test("an internal consumer discovers and selects a market instrument without Cle
     "HISTORY:signed-selection-token:2026-11-01:2026-11-09",
   ]);
 });
+test("a unique provider discovery resolves directly; ambiguity never silently selects the first listing",async()=>{
+  let prices=0;
+  const unique={
+    discover:async()=>[candidate],
+    quoteToken:async()=>{prices++;return quote;},
+    historyToken:async()=>history,
+  };
+  const selected=await handleInternalMarketRequest(request({action:"RESOLVE_QUOTE",query:"Any Instrument"}),env,unique);
+  assert.equal(selected.status,200);
+  assert.equal((await selected.json()).symbol,"TEST");
+  assert.equal(prices,1);
+  const multiple={
+    ...unique,
+    discover:async()=>[candidate,{...candidate,mic:"XNAS",token:"alternate"}],
+  };
+  const ambiguous=await handleInternalMarketRequest(request({action:"RESOLVE_QUOTE",query:"Any"}),env,multiple);
+  assert.equal(ambiguous.status,200);
+  const body=await ambiguous.json();
+  assert.equal(body.status,"AMBIGUOUS");
+  assert.equal(body.candidates.length,2);
+  assert.equal(prices,1);
+});
+
 test("arbitrary asset identifiers and extra fields are rejected before the provider",async()=>{
   let calls=0;
   const core={
