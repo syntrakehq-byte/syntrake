@@ -1,0 +1,413 @@
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import type { SharedMarketCache } from "./pgSharedMarketCache";
+import { CatalogConnectorError } from "./catalogConnector";
+import { createTwelveDataCatalogConnector } from "./twelveDataCatalog";
+import type { CatalogCandidate } from "./instrumentDiscovery";
+import { isR3E1RealCallReady } from "./gate";
+import { isG3HostedPreviewReady } from "./g3HostedPreviewExecutor";
+import { instrumentIdentity, MarketDataError, type InstrumentIdentity, type InstrumentKind } from "./identity";
+import { fetchPersonalPreviewDailySeries, type DailySeries } from "./twelveData";
+
+type Env = Readonly<Record<string, string | undefined>>;
+type Transport = (url: string, init: RequestInit) => Promise<Response>;
+type SeriesFetcher = typeof fetchPersonalPreviewDailySeries;
+type Selected = Readonly<{
+  symbol: string; mic: string | null; currency: string;
+  kind: InstrumentKind; name: string; expires: number;
+}>;
+export type DynamicMarketCandidate = Readonly<{
+  name: string; symbol: string; mic: string | null; currency: string;
+  kind: InstrumentKind; token: string;
+}>;
+export type DynamicMarketQuote = Readonly<{
+  status: "AVAILABLE"; symbol: string; name: string; mic: string | null;
+  currency: string; kind: InstrumentKind; price: string; marketDate: string;
+  observedAt: string; provider: "TWELVE_DATA"; interval: "1day";
+  priceType: "DAILY_CLOSE"; source: "PROVIDER" | "MEMORY_CACHE" | "SHARED_CACHE";
+  providerCalls: 0 | 1;
+}>;
+
+export type DynamicMarketHistory = Readonly<{
+  status: "AVAILABLE";
+  symbol: string; name: string; mic: string | null;
+  currency: string; kind: InstrumentKind;
+  interval: "1day"; adjustment: "none";
+  startDate: string; endDate: string; observedAt: string;
+  candles: readonly Readonly<{
+    marketDate: string; open: string; high: string; low: string;
+    close: string; volume: string | null;
+  }>[];
+  provider: "TWELVE_DATA";
+  source: "PROVIDER" | "MEMORY_CACHE" | "SHARED_CACHE";
+  providerCalls: number;
+}>;
+
+function sharedKey(kind: "DAILY_QUOTE" | "DAILY_HISTORY", identity: InstrumentIdentity, policy: string, start = "", end = ""): string {
+  return createHash("sha256").update(JSON.stringify([
+    "TWELVE_DATA", kind, identity.key, policy, "1day", "none", start, end,
+  ])).digest("hex");
+}
+
+function compatibleQuote(raw: unknown, instrument: InstrumentIdentity): raw is DynamicMarketQuote {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
+  const q = raw as Partial<DynamicMarketQuote>;
+  return q.status === "AVAILABLE" && q.provider === "TWELVE_DATA" &&
+    q.priceType === "DAILY_CLOSE" && q.interval === "1day" &&
+    q.kind === instrument.kind && q.symbol === instrument.symbol &&
+    q.mic === instrument.mic && q.currency === instrument.currency &&
+    typeof q.price === "string" && /^(?:0|[1-9]\d{0,17})(?:\.\d{1,12})?$/.test(q.price) &&
+    typeof q.marketDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(q.marketDate) &&
+    typeof q.observedAt === "string" && Number.isFinite(Date.parse(q.observedAt));
+}
+
+function compatibleHistory(raw: unknown, instrument: InstrumentIdentity, start: string, end: string): raw is DynamicMarketHistory {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
+  const h = raw as Partial<DynamicMarketHistory>;
+  if (h.status !== "AVAILABLE" || h.provider !== "TWELVE_DATA" ||
+      h.kind !== instrument.kind || h.symbol !== instrument.symbol ||
+      h.mic !== instrument.mic || h.currency !== instrument.currency ||
+      h.interval !== "1day" || h.adjustment !== "none" ||
+      h.startDate !== start || h.endDate !== end ||
+      typeof h.observedAt !== "string" || !Number.isFinite(Date.parse(h.observedAt)) ||
+      !Array.isArray(h.candles) || h.candles.length === 0 || h.candles.length > 2000) return false;
+  let prev = "";
+  for (const bar of h.candles) {
+    if (!bar || typeof bar.marketDate !== "string" || bar.marketDate < start ||
+        bar.marketDate > end || bar.marketDate <= prev ||
+        !["open","high","low","close"].every(field =>
+          typeof bar[field as keyof typeof bar] === "string" &&
+          /^(?:0|[1-9]\d{0,17})(?:\.\d{1,12})?$/.test(bar[field as keyof typeof bar] as string))) return false;
+    prev = bar.marketDate;
+  }
+  return true;
+}
+
+const TOKEN_TTL_MS = 10 * 60_000;
+const QUOTE_TTL_MS = 60_000;
+const MAX_CACHE_SIZE = 128;
+const TOKEN_LIMIT = 800;
+
+function keyForPreview(env: Env): { key: string; sha: string } {
+  const sha = env.G3G_DEPLOYMENT_SHA ?? env.VERCEL_GIT_COMMIT_SHA ?? "";
+  if (!isG3HostedPreviewReady(env) || env.G3G_WORKER_MODE !== "disabled" ||
+      !isR3E1RealCallReady(env, sha) ||
+      env.SYNTRAKE_R3E1_REHEARSAL_LICENSE_CONFIRMED !== "confirm-query-no-display" ||
+      env.SYNTRAKE_G3_PROVIDER_ENABLED !== "disabled") {
+    throw new MarketDataError("DISABLED");
+  }
+  return { key: env.SYNTRAKE_TWELVE_DATA_API_KEY!, sha };
+}
+function validSearchTerm(query: unknown): string {
+  if (typeof query !== "string") throw new MarketDataError("INVALID_REQUEST");
+  const term = query.trim();
+  if (term.length < 2 || term.length > 64 || !/^[\p{L}\p{N} .&'/_-]+$/u.test(term)) {
+    throw new MarketDataError("INVALID_REQUEST");
+  }
+  return term;
+}
+function fromProvider(row: CatalogCandidate): Omit<Selected, "expires"> | null {
+  const listing = row.listing;
+  if (!listing || !row.descriptiveName || !row.descriptiveAssetClass) return null;
+  try {
+    instrumentIdentity({
+      kind: row.descriptiveAssetClass, symbol: listing.ticker,
+      mic: listing.mic, currency: listing.tradingCurrency,
+    });
+  } catch { return null; }
+  return {
+    symbol: listing.ticker, mic: listing.mic, currency: listing.tradingCurrency,
+    kind: row.descriptiveAssetClass, name: row.descriptiveName,
+  };
+}
+function mac(payload: string, key: string, sha: string): string {
+  return createHmac("sha256", key).update("syntrake-market-v1:" + sha + ":" + payload).digest("base64url");
+}
+function createSelection(item: Selected, key: string, sha: string): string {
+  const payload = Buffer.from(JSON.stringify(item), "utf8").toString("base64url");
+  return payload + "." + mac(payload, key, sha);
+}
+function readSelection(token: unknown, key: string, sha: string, now: number): Selected {
+  if (typeof token !== "string" || token.length > TOKEN_LIMIT || token.length < 60) {
+    throw new MarketDataError("INVALID_REQUEST");
+  }
+  const parts = token.split(".");
+  if (parts.length !== 2 || !/^[A-Za-z0-9_-]+$/.test(parts[0]) ||
+      !/^[A-Za-z0-9_-]{43}$/.test(parts[1])) throw new MarketDataError("INVALID_REQUEST");
+  const expected = Buffer.from(mac(parts[0], key, sha));
+  const actual = Buffer.from(parts[1]);
+  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
+    throw new MarketDataError("INVALID_REQUEST");
+  }
+  let parsed: unknown;
+  try { parsed = JSON.parse(Buffer.from(parts[0], "base64url").toString("utf8")); }
+  catch { throw new MarketDataError("INVALID_REQUEST"); }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new MarketDataError("INVALID_REQUEST");
+  }
+  const item = parsed as Record<string, unknown>;
+  if (typeof item.expires !== "number" || !Number.isSafeInteger(item.expires) ||
+      item.expires <= now || item.expires > now + TOKEN_TTL_MS ||
+      typeof item.name !== "string" || item.name.length > 160 || !item.name.trim()) {
+    throw new MarketDataError("INVALID_REQUEST");
+  }
+  try {
+    instrumentIdentity({
+      kind: item.kind, symbol: item.symbol, mic: item.mic, currency: item.currency,
+    });
+  } catch { throw new MarketDataError("INVALID_REQUEST"); }
+  return item as Selected;
+}
+
+/** Read-only provider discovery with no hard-coded universe or Supabase pre-registration. */
+export function createDynamicMarketGateway(input: Readonly<{
+  env: Env;
+  transport?: Transport;
+  fetchSeries?: SeriesFetcher;
+  sharedCache?: SharedMarketCache;
+  clock?: () => Date;
+}>) {
+  const cache = new Map<string, { quote: DynamicMarketQuote; until: number }>();
+  const inflight = new Map<string, Promise<DynamicMarketQuote>>();
+  const historyCache = new Map<string, { value: DynamicMarketHistory; until: number }>();
+  const historyInflight = new Map<string, Promise<DynamicMarketHistory>>();
+  const now = () => (input.clock ?? (() => new Date()))().getTime();
+
+  async function discover(search: string): Promise<readonly DynamicMarketCandidate[]> {
+    const term = validSearchTerm(search);
+    const { key, sha } = keyForPreview(input.env);
+    const source = {
+      providerKey: "TWELVE_DATA",
+      snapshotId: "on-demand-" + sha.slice(0, 12), snapshotVersion: "1",
+      observedAt: new Date(now()).toISOString(),
+      licensePolicyId: "preview-private-direct", storageAllowed: false, sharingAllowed: false,
+    };
+    const connector = createTwelveDataCatalogConnector({
+      env: input.env, source,
+      transport: input.transport ?? ((url, init) => fetch(url, {
+        ...init, signal: AbortSignal.timeout(5500),
+      })),
+      apiKeyEnv: "SYNTRAKE_TWELVE_DATA_API_KEY",
+      readOnly: true, broadSearch: true,
+    });
+    const matches = await connector.search({ name: term });
+    const seen = new Set<string>();
+    const output: DynamicMarketCandidate[] = [];
+    for (const raw of matches.candidates) {
+      const item = fromProvider(raw);
+      if (!item) continue;
+      const identity = [item.kind, item.symbol, item.mic, item.currency].join("|");
+      if (seen.has(identity)) continue;
+      seen.add(identity);
+      output.push({
+        ...item,
+        token: createSelection({ ...item, expires: now() + TOKEN_TTL_MS }, key, sha),
+      });
+      if (output.length >= 20) break;
+    }
+    return output;
+  }
+
+  /**
+   * Consumer-neutral Market Core read. The Investing server can call this
+   * directly using a previously selected verified instrument identity.
+   * No browser, portfolio writes, workers or scheduler are involved.
+   */
+  async function readInstrument(selected: Omit<Selected, "expires">): Promise<DynamicMarketQuote> {
+    const { sha } = keyForPreview(input.env);
+    let instrument: InstrumentIdentity;
+    try {
+      instrument = instrumentIdentity({
+        kind: selected.kind, symbol: selected.symbol,
+        mic: selected.mic, currency: selected.currency,
+      });
+    } catch { throw new MarketDataError("INVALID_REQUEST"); }
+    const cacheKey = instrument.key;
+    const timestamp = now();
+    const existing = cache.get(cacheKey);
+    if (!input.sharedCache && existing && existing.until > timestamp) {
+      return { ...existing.quote, source: "MEMORY_CACHE", providerCalls: 0 };
+    }
+    const storageKey = sharedKey("DAILY_QUOTE", instrument, input.env.G3G_SHARED_CACHE_RIGHTS_POLICY_ID ?? "");
+    if (input.sharedCache) {
+      const shared = await input.sharedCache.read(storageKey, "DAILY_QUOTE");
+      if (compatibleQuote(shared, instrument)) {
+        const hit: DynamicMarketQuote = {
+          ...shared, name: selected.name, source: "SHARED_CACHE", providerCalls: 0,
+        };
+        return hit;
+      }
+    }
+    let pending = inflight.get(cacheKey);
+    if (!pending) {
+      pending = (async () => {
+        const series: DailySeries = await (input.fetchSeries ?? fetchPersonalPreviewDailySeries)({
+          env: input.env, instrument, outputSize: 1, checkoutSha: sha,
+          ...(input.transport ? { transport: input.transport } : {}),
+          ...(input.clock ? { clock: input.clock } : {}),
+          rights: { policyId: "preview-private-direct", display: true, retentionUntil: null },
+        });
+        const candle = series.candles.at(-1);
+        if (!candle || series.provider !== "TWELVE_DATA" ||
+            series.instrument.key !== instrument.key) {
+          throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+        }
+        const value: DynamicMarketQuote = {
+          status: "AVAILABLE", symbol: selected.symbol, name: selected.name,
+          mic: selected.mic, currency: selected.currency, kind: selected.kind,
+          price: candle.close, marketDate: candle.marketDate,
+          observedAt: series.observedAtUtc, provider: "TWELVE_DATA",
+          interval: "1day", priceType: "DAILY_CLOSE",
+          source: "PROVIDER", providerCalls: 1,
+        };
+        if (input.sharedCache) await input.sharedCache.write(storageKey, "DAILY_QUOTE", value);
+        if (cache.size >= MAX_CACHE_SIZE) cache.delete(cache.keys().next().value!);
+        if (!input.sharedCache) cache.set(cacheKey, { quote: value, until: now() + QUOTE_TTL_MS });
+        return value;
+      })();
+      inflight.set(cacheKey, pending);
+      const operation = pending;
+      void operation.finally(() => {
+        if (inflight.get(cacheKey) === operation) inflight.delete(cacheKey);
+      }).catch(() => {});
+    }
+    return await pending;
+  }
+
+  /**
+   * Date-bounded daily history, using the same Twelve Data validation boundary.
+   * Works for any selected equity, ETF or FX pair supported by the provider.
+   * The response is AS OBSERVED NOW, not reconstructed PIT market knowledge.
+   */
+  async function readHistory(
+    selected: Omit<Selected, "expires">, startDate: string, endDate: string,
+  ): Promise<DynamicMarketHistory> {
+    const { sha } = keyForPreview(input.env);
+    const date = (value: string): boolean => {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+      const parsed = new Date(value + "T00:00:00Z");
+      return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+    };
+    if (!date(startDate) || !date(endDate) || startDate > endDate ||
+        Date.parse(endDate + "T00:00:00Z") - Date.parse(startDate + "T00:00:00Z") > 5 * 366 * 86400000 ||
+        endDate > new Date(now()).toISOString().slice(0, 10)) {
+      throw new MarketDataError("INVALID_REQUEST");
+    }
+    let instrument: InstrumentIdentity;
+    try {
+      instrument = instrumentIdentity({
+        kind: selected.kind, symbol: selected.symbol,
+        mic: selected.mic, currency: selected.currency,
+      });
+    } catch { throw new MarketDataError("INVALID_REQUEST"); }
+    const cacheKey = instrument.key + ":" + startDate + ":" + endDate;
+    const current = historyCache.get(cacheKey);
+    if (!input.sharedCache && current && current.until > now()) return {
+      ...current.value, source: "MEMORY_CACHE", providerCalls: 0,
+    };
+    const storageKey = sharedKey("DAILY_HISTORY", instrument,
+      input.env.G3G_SHARED_CACHE_RIGHTS_POLICY_ID ?? "", startDate, endDate);
+    if (input.sharedCache) {
+      const shared = await input.sharedCache.read(storageKey, "DAILY_HISTORY");
+      if (compatibleHistory(shared, instrument, startDate, endDate)) {
+        const hit: DynamicMarketHistory = {
+          ...shared, name: selected.name, source: "SHARED_CACHE", providerCalls: 0,
+        };
+        return hit;
+      }
+    }
+    let operation = historyInflight.get(cacheKey);
+    if (!operation) {
+      operation = (async () => {
+        const candles: DynamicMarketHistory["candles"][number][] = [];
+        const oneDay = 86400000;
+        const endMs = Date.parse(endDate + "T00:00:00Z");
+        let cursor = Date.parse(startDate + "T00:00:00Z");
+        let providerCalls = 0;
+        let observedAt = "";
+        while (cursor <= endMs) {
+          // Max 366 calendar days per call; never exceed a parser's 1000 bars.
+          const chunkEndMs = Math.min(cursor + 365 * oneDay, endMs);
+          const first = new Date(cursor).toISOString().slice(0, 10);
+          const last = new Date(chunkEndMs).toISOString().slice(0, 10);
+          const series = await (input.fetchSeries ?? fetchPersonalPreviewDailySeries)({
+            env: input.env, instrument, outputSize: 1000, checkoutSha: sha,
+            startDate: first, endDate: last,
+            ...(input.transport ? { transport: input.transport } : {}),
+            ...(input.clock ? { clock: input.clock } : {}),
+            rights: { policyId: "preview-private-direct", display: true, retentionUntil: null },
+          });
+          providerCalls++;
+          if (series.provider !== "TWELVE_DATA" || series.instrument.key !== instrument.key ||
+              series.candles.length === 0) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+          for (const candle of series.candles) {
+            if (candle.marketDate < first || candle.marketDate > last ||
+                candle.marketDate < startDate || candle.marketDate > endDate ||
+                (candles.length > 0 && candle.marketDate <= candles[candles.length - 1].marketDate)) {
+              throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+            }
+            candles.push(candle);
+          }
+          observedAt = series.observedAtUtc;
+          cursor = chunkEndMs + oneDay;
+          if (providerCalls > 6) throw new MarketDataError("INVALID_REQUEST");
+        }
+        if (candles.length === 0) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+        const value: DynamicMarketHistory = Object.freeze({
+          status: "AVAILABLE", symbol: selected.symbol, name: selected.name,
+          mic: selected.mic, currency: selected.currency, kind: selected.kind,
+          interval: "1day", adjustment: "none",
+          startDate, endDate, observedAt,
+          candles: Object.freeze(candles), provider: "TWELVE_DATA",
+          source: "PROVIDER", providerCalls,
+        });
+        if (input.sharedCache) await input.sharedCache.write(storageKey, "DAILY_HISTORY", value);
+        if (historyCache.size >= MAX_CACHE_SIZE) historyCache.delete(historyCache.keys().next().value!);
+        if (!input.sharedCache) historyCache.set(cacheKey, { value, until: now() + QUOTE_TTL_MS });
+        return value;
+      })();
+      historyInflight.set(cacheKey, operation);
+      const pending = operation;
+      void pending.finally(() => {
+        if (historyInflight.get(cacheKey) === pending) historyInflight.delete(cacheKey);
+      }).catch(() => {});
+    }
+    return await operation;
+  }
+
+  async function historyToken(token: unknown, startDate: string, endDate: string): Promise<DynamicMarketHistory> {
+    const { key, sha } = keyForPreview(input.env);
+    return readHistory(readSelection(token, key, sha, now()), startDate, endDate);
+  }
+
+  async function quoteToken(token: unknown): Promise<DynamicMarketQuote> {
+    const { key, sha } = keyForPreview(input.env);
+    const selected = readSelection(token, key, sha, now());
+    return readInstrument(selected);
+  }
+
+  return { discover, quoteToken, readInstrument, readHistory, historyToken };
+}
+
+export function classifyDynamicMarketError(error: unknown): { status: number; error: string } {
+  if (error instanceof MarketDataError) {
+    if (error.code === "DISABLED") return { status: 423, error: "MARKET_CORE_DISABLED" };
+    if (error.code === "RATE_LIMITED") return { status: 429, error: "RATE_LIMITED" };
+    if (error.code === "INVALID_REQUEST" || error.code === "INVALID_INSTRUMENT") {
+      return { status: 400, error: "INVALID_MARKET_REQUEST" };
+    }
+    if (error.code === "PROVIDER_REJECTED") return { status: 502, error: "PROVIDER_REJECTED" };
+    if (error.code === "INVALID_PROVIDER_RESPONSE") return { status: 502, error: "INVALID_PROVIDER_RESPONSE" };
+    if (error.code === "PROVIDER_UNAVAILABLE") return { status: 503, error: "PROVIDER_UNAVAILABLE" };
+    return { status: 503, error: "MARKET_CORE_UNAVAILABLE" };
+  }
+  if (error instanceof CatalogConnectorError) {
+    if (error.code === "RATE_LIMITED") return { status: 429, error: "RATE_LIMITED" };
+    if (error.code === "INVALID_REQUEST") return { status: 400, error: "INVALID_MARKET_REQUEST" };
+    if (error.code === "PROVIDER_REJECTED") return { status: 502, error: "PROVIDER_REJECTED" };
+    if (error.code === "INVALID_PROVIDER_RESPONSE") return { status: 502, error: "INVALID_PROVIDER_RESPONSE" };
+    if (error.code === "PROVIDER_UNAVAILABLE") return { status: 503, error: "PROVIDER_UNAVAILABLE" };
+    if (error.code === "LICENSE_BLOCKED") return { status: 423, error: "LICENSE_BLOCKED" };
+    if (error.code === "NO_RESULTS") return { status: 404, error: "UNAVAILABLE" };
+  }
+  return { status: 503, error: "MARKET_CORE_UNAVAILABLE" };
+}

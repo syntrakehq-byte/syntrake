@@ -27,6 +27,7 @@ type Fetcher = (url: string, init: RequestInit) => Promise<Response>;
 type Clock = () => Date;
 export type ProviderUsageHeaders = Readonly<{ remaining: string | null; used: string | null }>;
 const R3E1_INTERNAL = Symbol("r3e1-once");
+const PERSONAL_PREVIEW_INTERNAL = Symbol("personal-dynamic-preview");
 let r3e1CallConsumed = false;
 function sanitizeCreditHeader(value: string | null): string | null {
   if (value === null || !/^\d{1,9}$/.test(value)) return null;
@@ -77,16 +78,36 @@ function candle(value: unknown): DailyCandle {
 
 function parseSeries(raw: unknown, instrument: InstrumentIdentity, observedAtUtc: string, providerReference: string): Omit<DailySeries, "envelope"> {
   const body = record(raw), meta = record(body?.meta), values = body?.values;
+  const invalid = (field: "BODY" | "SYMBOL" | "INTERVAL" | "CURRENCY" | "TIMEZONE" | "TYPE") =>
+    new MarketDataError("INVALID_PROVIDER_RESPONSE", null, null,
+      instrument.kind === "FX" ? "FX_META_" + field : null);
   if (!body || body.status !== "ok" || !meta || !Array.isArray(values) || values.length < 1 || values.length > 1000) {
-    throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+    throw invalid("BODY");
   }
-  if (meta.symbol !== providerReference || meta.interval !== "1day" ||
-      meta.currency !== instrument.currency || !validTimezone(meta.exchange_timezone)) {
-    throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+  if (meta.symbol !== providerReference) throw invalid("SYMBOL");
+  if (meta.interval !== "1day") throw invalid("INTERVAL");
+  const forexPair = instrument.kind === "FX"
+    ? /^([A-Z]{3})\/([A-Z]{3})$/.exec(providerReference)
+    : null;
+  // Twelve Data may describe FX using its base currency, its quote currency,
+  // or no currency metadata. The exact verified EUR/USD-style provider symbol
+  // establishes the quote denomination; never accept a third currency.
+  const fxCurrencyValid = forexPair !== null &&
+    instrument.currency === forexPair[2] &&
+    (meta.currency === forexPair[1] || meta.currency === forexPair[2] ||
+      meta.currency === null || meta.currency === undefined);
+  if (instrument.kind === "FX" ? !fxCurrencyValid : meta.currency !== instrument.currency) {
+    throw invalid("CURRENCY");
   }
+  // Twelve Data daily Forex candles use UTC. A missing exchange timezone
+  // is not evidence of a different timezone; explicit invalid values still fail.
+  const exchangeTimezone = instrument.kind === "FX" &&
+    (meta.exchange_timezone === undefined || meta.exchange_timezone === null ||
+      meta.exchange_timezone === "") ? "UTC" : meta.exchange_timezone;
+  if (!validTimezone(exchangeTimezone)) throw invalid("TIMEZONE");
   const expectedType = instrument.kind === "EQUITY" ? "Common Stock" :
     instrument.kind === "ETF" ? "ETF" : "Physical Currency";
-  if (meta.type !== expectedType) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+  if (meta.type !== expectedType) throw invalid("TYPE");
   if (instrument.mic !== null && meta.mic_code !== instrument.mic) {
     throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
   }
@@ -99,7 +120,7 @@ function parseSeries(raw: unknown, instrument: InstrumentIdentity, observedAtUtc
   }
   return Object.freeze({
     provider: "TWELVE_DATA" as const, instrument, interval: "1day" as const,
-    adjustment: "none" as const, exchangeTimezone: meta.exchange_timezone,
+    adjustment: "none" as const, exchangeTimezone,
     observedAtUtc, latency: "NOT_VERIFIED" as const,
     evidence: "PROVIDER_RESPONSE" as const,
     candles: Object.freeze(candles.reverse()),
@@ -126,6 +147,9 @@ export async function fetchDailySeries(input: Readonly<{
   sourceAlias?: AliasResolution;
   asOf?: string;
   outputSize: number;
+  /** Inclusive exchange-local dates for an explicit daily-history request. */
+  startDate?: string;
+  endDate?: string;
   transport?: Fetcher;
   clock?: Clock;
   onResponseHeaders?: (headers: ProviderUsageHeaders) => void;
@@ -136,12 +160,22 @@ export async function fetchDailySeries(input: Readonly<{
   // Fail BEFORE constructing URL or calling transport when not authorized.
   const apikey = input.internalAuthorization === R3E1_INTERNAL
     ? requireR3E1ProviderReadyOnce(input.env, input.checkoutSha)
-    : requirePreviewMarketProviderReady(input.env);
+    : input.internalAuthorization === PERSONAL_PREVIEW_INTERNAL
+      ? requireR3E1RealCallReady(input.env, input.checkoutSha ?? "")
+      : requirePreviewMarketProviderReady(input.env);
   const hint = instrumentIdentity({
     kind: input.instrument?.kind, symbol: input.instrument?.symbol,
     mic: input.instrument?.mic, currency: input.instrument?.currency,
   });
   if (!Number.isSafeInteger(input.outputSize) || input.outputSize < 1 || input.outputSize > 1000) {
+    throw new MarketDataError("INVALID_REQUEST");
+  }
+  const hasRange = input.startDate !== undefined || input.endDate !== undefined;
+  if (hasRange && (!input.startDate || !input.endDate ||
+      !validDate(input.startDate) || !validDate(input.endDate) ||
+      input.startDate > input.endDate ||
+      (Date.parse(input.endDate + "T00:00:00Z") -
+       Date.parse(input.startDate + "T00:00:00Z")) > 366 * 86400000)) {
     throw new MarketDataError("INVALID_REQUEST");
   }
 
@@ -180,6 +214,10 @@ export async function fetchDailySeries(input: Readonly<{
   url.searchParams.set("interval", "1day");
   url.searchParams.set("outputsize", String(input.outputSize));
   url.searchParams.set("adjust", "none"); // Explicit to prevent implicit corporate-action rewrites.
+  if (hasRange) {
+    url.searchParams.set("start_date", input.startDate!);
+    url.searchParams.set("end_date", input.endDate!);
+  }
   if (instrument.mic) url.searchParams.set("mic_code", instrument.mic);
 
   let response: Response;
@@ -188,8 +226,17 @@ export async function fetchDailySeries(input: Readonly<{
       method: "GET", headers: { Accept: "application/json", Authorization: `apikey ${apikey}` },
       cache: "no-store", redirect: "error", signal: AbortSignal.timeout(5000),
     });
-  } catch {
-    throw new MarketDataError("PROVIDER_UNAVAILABLE");
+  } catch (error) {
+    // Transport diagnostics are intentionally restricted to a finite enum:
+    // never log request URLs, user inputs, credential headers or error messages.
+    const kind = error instanceof Error && ["TypeError", "TimeoutError", "AbortError"].includes(error.name)
+      ? error.name : "OTHER";
+    const cause = error instanceof Error && error.cause && typeof error.cause === "object"
+      ? (error.cause as { code?: unknown }).code : null;
+    const allowedCodes = ["ECONNRESET", "ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "ETIMEDOUT", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT", "ERR_TLS_CERT_ALTNAME_INVALID"];
+    const safeCause = typeof cause === "string" && allowedCodes.includes(cause) ? cause : "OTHER";
+    const diagnostic = kind + ":" + safeCause;
+    throw new MarketDataError("PROVIDER_UNAVAILABLE", null, null, diagnostic);
   }
   if (response.status === 429) throw new MarketDataError("RATE_LIMITED", retryAfter(response), 429);
   if (response.status === 401 || response.status === 403) throw new MarketDataError("PROVIDER_REJECTED", null, response.status);
@@ -231,6 +278,10 @@ export async function fetchDailySeries(input: Readonly<{
   if (!(now instanceof Date) || Number.isNaN(now.valueOf())) throw new MarketDataError("INVALID_REQUEST");
   const series = parseSeries(body, instrument, now.toISOString(), providerReference);
   if (series.candles.length > input.outputSize) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+  if (hasRange && series.candles.some(c =>
+    c.marketDate < input.startDate! || c.marketDate > input.endDate!)) {
+    throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+  }
   if (resolved) {
     const alias = input.sourceAlias!.alias;
     if (series.candles.some(c => (alias.validFrom !== null && c.marketDate < alias.validFrom) ||
@@ -272,4 +323,9 @@ function requireR3E1ProviderReadyOnce(env: Env, checkoutSha: string | undefined)
 
 export async function fetchDailySeriesR3E1Once(input: Readonly<Parameters<typeof fetchDailySeries>[0] & { checkoutSha: string }>): Promise<DailySeries> {
   return fetchDailySeries({ ...input, internalAuthorization: R3E1_INTERNAL });
+}
+
+/** Shared Market Core daily-price adapter. Requires an authenticated server caller and a pinned personal Preview. */
+export async function fetchPersonalPreviewDailySeries(input: Readonly<Parameters<typeof fetchDailySeries>[0] & { checkoutSha: string }>): Promise<DailySeries> {
+  return fetchDailySeries({ ...input, internalAuthorization: PERSONAL_PREVIEW_INTERNAL });
 }

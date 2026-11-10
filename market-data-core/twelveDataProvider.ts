@@ -35,8 +35,8 @@ export function createTwelveDataOfflineProvider(input: Readonly<{
       sourceAlias: resolved.sourceAlias,
       asOf: resolved.asOf,
       outputSize: input.outputSize ?? 1,
-      transport: input.transport,
-      clock: input.clock,
+      ...(input.transport ? { transport: input.transport } : {}),
+      ...(input.clock ? { clock: input.clock } : {}),
     });
     const candle = series.candles[series.candles.length - 1];
     if (!candle) throw new Error("OFFLINE_PROVIDER_NOT_AVAILABLE");

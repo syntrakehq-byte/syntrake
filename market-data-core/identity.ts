@@ -44,12 +44,14 @@ export class MarketDataError extends Error {
   readonly code: MarketDataErrorCode;
   readonly retryAfterSeconds: number | null;
   readonly providerStatus: number | null;
-  constructor(code: MarketDataErrorCode, retryAfterSeconds: number | null = null, providerStatus: number | null = null) {
+  readonly transportDiagnostic: string | null;
+  constructor(code: MarketDataErrorCode, retryAfterSeconds: number | null = null, providerStatus: number | null = null, transportDiagnostic: string | null = null) {
     super(providerStatus === null ? code : `${code} HTTP_${providerStatus}`); // Only safe classification; no URL, key, headers or body.
     this.name = "MarketDataError";
     this.code = code;
     this.retryAfterSeconds = retryAfterSeconds;
     this.providerStatus = providerStatus;
+    this.transportDiagnostic = transportDiagnostic;
   }
 }
 function object(value: unknown): value is Record<string, unknown> {

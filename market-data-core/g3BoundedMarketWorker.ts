@@ -49,14 +49,14 @@ export function createG3BoundedMarketWorker(config: Readonly<{
       env: config.env,
       readerFactory: config.readerFactory,
       attestation: config.attestation,
-      transport: config.transport,
-      clock: config.clock,
+      ...(config.transport ? { transport: config.transport } : {}),
+      ...(config.clock ? { clock: config.clock } : {}),
     }),
     exchangeTimezone: config.exchangeTimezone,
     consumedCredits: "1",
     maxTasks: 1,
     maxPolls: 1,
     heartbeatIntervalMs: 5_000,
-    onEvent: config.onEvent,
+    ...(config.onEvent ? { onEvent: config.onEvent } : {}),
   });
 }
