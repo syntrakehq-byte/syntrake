@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createTwelveDataCatalogConnector } from "../twelveDataCatalog";
+import { CatalogConnectorError } from "../catalogConnector";
+import { classifyDynamicMarketError } from "../dynamicMarketGateway";
 
 const source = {
   providerKey: "TWELVE_DATA", snapshotId: "test-forex-provider", snapshotVersion: "1",
@@ -64,4 +66,11 @@ test("equity discovery still uses symbol_search",async()=>{
   const result=await client(calls).search({name:"Tesla"});
   assert.equal(result.candidates[0].descriptiveAssetClass,"EQUITY");
   assert.deepEqual(calls,["/symbol_search"]);
+});
+
+test("malformed provider FX catalog response is reported as provider error, not silent success",()=>{
+  assert.deepEqual(classifyDynamicMarketError(new CatalogConnectorError("INVALID_PROVIDER_RESPONSE")),
+    {status:502,error:"INVALID_PROVIDER_RESPONSE"});
+  assert.deepEqual(classifyDynamicMarketError(new CatalogConnectorError("RATE_LIMITED",429)),
+    {status:429,error:"RATE_LIMITED"});
 });
