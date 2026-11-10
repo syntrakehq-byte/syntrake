@@ -1,4 +1,5 @@
 import { createHash, timingSafeEqual } from "node:crypto";
+import { MarketDataError } from "./identity";
 import { classifyDynamicMarketError, type DynamicMarketHistory, type DynamicMarketQuote, type DynamicMarketCandidate } from "./dynamicMarketGateway";
 import { isG3HostedPreviewReady } from "./g3HostedPreviewExecutor";
 import { readMarketDataForCoreConsumer, type MarketConsumerQuotesResponse, type MarketConsumerInstrument } from "./consumerMarketService";
@@ -115,6 +116,12 @@ export async function handleMachineMarketCore(
       return response(400,{error:"INVALID_REQUEST"});
     }
     const status=classifyDynamicMarketError(error);
-    return response(status.status,{error:status.error});
+    // Return only sanitized numeric status to authenticated internal callers.
+    // Never expose a provider body, URL, key, headers or exception message.
+    const upstreamStatus=error instanceof MarketDataError ? error.providerStatus : null;
+    return response(status.status,{
+      error:status.error,
+      ...(upstreamStatus===null?{}:{upstreamStatus}),
+    });
   }
 }
