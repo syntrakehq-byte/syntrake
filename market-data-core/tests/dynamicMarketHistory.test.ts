@@ -151,3 +151,33 @@ test("currency pair uses explicit direction and daily FX history, not an inferre
   assert.equal(history.currency,"USD");
   assert.equal(calls,1);
 });
+
+test("FX daily history accepts provider base/quote/omitted metadata only, never third currency",async()=>{
+  for(const metaCurrency of ["EUR","USD",null,undefined,"JPY"] as const){
+    const transport=async(url:string):Promise<Response>=>{
+      const u=new URL(url);
+      if(u.pathname==="/forex_pairs"){
+        return Response.json({status:"ok",data:[{
+          symbol:"EUR/USD",currency_base:"Euro",currency_quote:"US Dollar",currency_group:"Major",
+        }]});
+      }
+      assert.equal(u.pathname,"/time_series");
+      assert.equal(u.searchParams.get("symbol"),"EUR/USD");
+      return Response.json({status:"ok",meta:{
+        symbol:"EUR/USD",interval:"1day",currency:metaCurrency,
+        type:"Physical Currency",exchange_timezone:"UTC",
+      },values:[{datetime:"2026-11-06",open:"1.10",high:"1.16",low:"1.09",close:"1.15"}]});
+    };
+    const core=createDynamicMarketGateway({env,transport,clock:()=>new Date("2026-11-09T12:00:00Z")});
+    const selected=(await core.discover("EUR/USD"))[0];
+    assert.ok(selected);
+    if(metaCurrency==="JPY"){
+      await assert.rejects(core.historyToken(selected.token,"2026-11-04","2026-11-09"),/INVALID_PROVIDER_RESPONSE/);
+    } else {
+      const h=await core.historyToken(selected.token,"2026-11-04","2026-11-09");
+      assert.equal(h.status,"AVAILABLE");
+      assert.equal(h.currency,"USD"); // quote currency from the validated pair, not the base metadata
+      assert.equal(h.candles[0].close,"1.15");
+    }
+  }
+});
