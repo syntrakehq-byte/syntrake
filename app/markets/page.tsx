@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
-import { UpcomingArea } from "@/components/workspace/UpcomingArea";
+import { MarketDataWorkspace } from "@/components/workspace/MarketDataWorkspace";
+import { WorkspaceShell } from "@/components/workspace/WorkspaceShell";
 import { resolveRequestSiteLang } from "@/lib/i18n/requestSiteLang";
 
 export const runtime = "nodejs";
@@ -18,6 +19,7 @@ export default async function Page({
   if (!session.userId || !session.sessionId) {
     redirect("/sign-in?redirect_url=%2Fmarkets");
   }
+  if (!process.env.SYNTRAKE_MARKET_OWNER_USER_ID || session.userId !== process.env.SYNTRAKE_MARKET_OWNER_USER_ID) redirect("/start");
   const lang = await resolveRequestSiteLang(await searchParams);
-  return <UpcomingArea lang={lang} area="markets" />;
+  return <WorkspaceShell lang={lang} area="markets"><MarketDataWorkspace lang={lang} /></WorkspaceShell>;
 }
