@@ -206,7 +206,18 @@ export async function fetchDailySeries(input: Readonly<{
       method: "GET", headers: { Accept: "application/json", Authorization: `apikey ${apikey}` },
       cache: "no-store", redirect: "error", signal: AbortSignal.timeout(5000),
     });
-  } catch {
+  } catch (error) {
+    // Transport diagnostics are intentionally restricted to a finite enum:
+    // never log request URLs, user inputs, credential headers or error messages.
+    const kind = error instanceof Error && ["TypeError", "TimeoutError", "AbortError"].includes(error.name)
+      ? error.name : "OTHER";
+    const cause = error instanceof Error && error.cause && typeof error.cause === "object"
+      ? (error.cause as { code?: unknown }).code : null;
+    const allowedCodes = ["ECONNRESET", "ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "ETIMEDOUT", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT", "ERR_TLS_CERT_ALTNAME_INVALID"];
+    const safeCause = typeof cause === "string" && allowedCodes.includes(cause) ? cause : "OTHER";
+    console.error("MARKET_CORE_PROVIDER_TRANSPORT_FAILURE", {
+      instrumentKind: instrument.kind, category: kind, cause: safeCause,
+    });
     throw new MarketDataError("PROVIDER_UNAVAILABLE");
   }
   if (response.status === 429) throw new MarketDataError("RATE_LIMITED", retryAfter(response), 429);
