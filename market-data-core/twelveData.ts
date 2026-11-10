@@ -78,16 +78,19 @@ function candle(value: unknown): DailyCandle {
 
 function parseSeries(raw: unknown, instrument: InstrumentIdentity, observedAtUtc: string, providerReference: string): Omit<DailySeries, "envelope"> {
   const body = record(raw), meta = record(body?.meta), values = body?.values;
+  const invalid = (field: "BODY" | "SYMBOL" | "INTERVAL" | "CURRENCY" | "TIMEZONE" | "TYPE") =>
+    new MarketDataError("INVALID_PROVIDER_RESPONSE", null, null,
+      instrument.kind === "FX" ? "FX_META_" + field : null);
   if (!body || body.status !== "ok" || !meta || !Array.isArray(values) || values.length < 1 || values.length > 1000) {
-    throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+    throw invalid("BODY");
   }
-  if (meta.symbol !== providerReference || meta.interval !== "1day" ||
-      meta.currency !== instrument.currency || !validTimezone(meta.exchange_timezone)) {
-    throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
-  }
+  if (meta.symbol !== providerReference) throw invalid("SYMBOL");
+  if (meta.interval !== "1day") throw invalid("INTERVAL");
+  if (meta.currency !== instrument.currency) throw invalid("CURRENCY");
+  if (!validTimezone(meta.exchange_timezone)) throw invalid("TIMEZONE");
   const expectedType = instrument.kind === "EQUITY" ? "Common Stock" :
     instrument.kind === "ETF" ? "ETF" : "Physical Currency";
-  if (meta.type !== expectedType) throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
+  if (meta.type !== expectedType) throw invalid("TYPE");
   if (instrument.mic !== null && meta.mic_code !== instrument.mic) {
     throw new MarketDataError("INVALID_PROVIDER_RESPONSE");
   }
