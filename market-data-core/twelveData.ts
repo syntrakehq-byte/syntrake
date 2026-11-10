@@ -86,7 +86,19 @@ function parseSeries(raw: unknown, instrument: InstrumentIdentity, observedAtUtc
   }
   if (meta.symbol !== providerReference) throw invalid("SYMBOL");
   if (meta.interval !== "1day") throw invalid("INTERVAL");
-  if (meta.currency !== instrument.currency) throw invalid("CURRENCY");
+  const forexPair = instrument.kind === "FX"
+    ? /^([A-Z]{3})\/([A-Z]{3})$/.exec(providerReference)
+    : null;
+  // Twelve Data may describe FX using its base currency, its quote currency,
+  // or no currency metadata. The exact verified EUR/USD-style provider symbol
+  // establishes the quote denomination; never accept a third currency.
+  const fxCurrencyValid = forexPair !== null &&
+    instrument.currency === forexPair[2] &&
+    (meta.currency === forexPair[1] || meta.currency === forexPair[2] ||
+      meta.currency === null || meta.currency === undefined);
+  if (instrument.kind === "FX" ? !fxCurrencyValid : meta.currency !== instrument.currency) {
+    throw invalid("CURRENCY");
+  }
   if (!validTimezone(meta.exchange_timezone)) throw invalid("TIMEZONE");
   const expectedType = instrument.kind === "EQUITY" ? "Common Stock" :
     instrument.kind === "ETF" ? "ETF" : "Physical Currency";
