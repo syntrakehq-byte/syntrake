@@ -133,7 +133,7 @@ test("authenticated provider failure includes only the safe upstream status",asy
   }),env,{...core,readHistory:async()=>{
     throw new MarketDataError("PROVIDER_UNAVAILABLE",null,503);
   }});
-  assert.equal(failure.status,502);
+  assert.equal(failure.status,503);
   assert.deepEqual(await failure.json(),{
     error:"PROVIDER_UNAVAILABLE",upstreamStatus:503,
   });
