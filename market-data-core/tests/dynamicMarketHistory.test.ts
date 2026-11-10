@@ -127,10 +127,11 @@ test("currency pair uses explicit direction and daily FX history, not an inferre
   let calls=0;
   const transport=async(url:string):Promise<Response>=>{
     const u=new URL(url);
-    if(u.pathname==="/symbol_search") {
-      return Response.json({status:"ok",data:[{
-        symbol:"EUR/USD",instrument_name:"Euro / US Dollar",
-        instrument_type:"Physical Currency",currency:"USD",
+    if(u.pathname==="/forex_pairs") {
+      assert.equal(u.searchParams.get("symbol"),"EUR/USD");
+      return Response.json({status:"ok",count:1,data:[{
+        symbol:"EUR/USD",currency_group:"Major",
+        currency_base:"Euro",currency_quote:"US Dollar",
       }]});
     }
     calls++;
