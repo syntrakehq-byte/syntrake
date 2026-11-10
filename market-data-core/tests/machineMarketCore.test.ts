@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {handleMachineMarketCore} from "../machineMarketCore";
+import { MarketDataError } from "../identity";
 import type { DynamicMarketQuote, DynamicMarketHistory, DynamicMarketCandidate } from "../dynamicMarketGateway";
 import type { MarketConsumerInstrument } from "../consumerMarketService";
 
@@ -124,4 +125,16 @@ test("unknown operations and intraday series cannot call a provider",async()=>{
     assert.equal(r.status,400);
   }
   assert.equal(JSON.stringify(calls),before);
+});
+
+test("authenticated provider failure includes only the safe upstream status",async()=>{
+  const failure=await handleMachineMarketCore(request({
+    operation:"history",instrument:apple,startDate:"2026-11-01",endDate:"2026-11-09",
+  }),env,{...core,readHistory:async()=>{
+    throw new MarketDataError("PROVIDER_UNAVAILABLE",null,503);
+  }});
+  assert.equal(failure.status,502);
+  assert.deepEqual(await failure.json(),{
+    error:"PROVIDER_UNAVAILABLE",upstreamStatus:503,
+  });
 });
