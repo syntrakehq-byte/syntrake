@@ -204,8 +204,7 @@ export async function fetchDailySeries(input: Readonly<{
   try {
     response = await (input.transport ?? fetch)(url.toString(), {
       method: "GET", headers: { Accept: "application/json", Authorization: `apikey ${apikey}` },
-      // Never follow supplier redirects; preserve a numeric 3xx for diagnosis.
-      cache: "no-store", redirect: "manual", signal: AbortSignal.timeout(5000),
+      cache: "no-store", redirect: "error", signal: AbortSignal.timeout(5000),
     });
   } catch (error) {
     // Transport diagnostics are intentionally restricted to a finite enum:
