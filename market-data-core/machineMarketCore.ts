@@ -119,9 +119,11 @@ export async function handleMachineMarketCore(
     // Return only sanitized numeric status to authenticated internal callers.
     // Never expose a provider body, URL, key, headers or exception message.
     const upstreamStatus=error instanceof MarketDataError ? error.providerStatus : null;
+    const diagnostic=error instanceof MarketDataError ? error.transportDiagnostic : null;
     return response(status.status,{
       error:status.error,
       ...(upstreamStatus===null?{}:{upstreamStatus}),
+      ...(diagnostic===null?{}:{transportDiagnostic:diagnostic}),
     });
   }
 }
