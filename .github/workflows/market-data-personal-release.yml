@@ -22,7 +22,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Provider discovery, daily price, FX, history and owner gate
-        run: npx tsx --test market-data-core/tests/dynamicMarketGateway.test.ts market-data-core/tests/dynamicMarketHistory.test.ts market-data-core/tests/twelveDataForexCatalog.test.ts market-data-core/tests/personalMarketGate.test.ts market-data-core/tests/machineMarketCore.test.ts
+        run: npx tsx --test market-data-core/tests/dynamicMarketGateway.test.ts market-data-core/tests/dynamicMarketHistory.test.ts market-data-core/tests/twelveDataForexCatalog.test.ts market-data-core/tests/personalMarketGate.test.ts market-data-core/tests/machineMarketCore.test.ts market-data-core/tests/marketActor.test.ts
       - run: npx tsc --noEmit
       - run: npm run lint
       - name: Next production build

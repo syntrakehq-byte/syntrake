@@ -5,9 +5,8 @@ import { createDynamicMarketGateway } from "../dynamicMarketGateway";
 const SHA = "f".repeat(40);
 const env = {
   VERCEL_ENV: "preview", VERCEL_GIT_COMMIT_SHA: SHA,
-  SYNTRAKE_MARKET_APPROVED_SHA: SHA, SYNTRAKE_MARKET_MODE: "personal",
-  SYNTRAKE_MARKET_VISIBILITY: "owner-only", SYNTRAKE_MARKET_PERSISTENCE: "disabled",
-  SYNTRAKE_MARKET_OWNER_USER_ID: "user_test_owner_123",
+  SYNTRAKE_MARKET_APPROVED_SHA: SHA, SYNTRAKE_MARKET_MODE: "on-demand",
+  SYNTRAKE_MARKET_VISIBILITY: "authenticated", SYNTRAKE_MARKET_PERSISTENCE: "disabled",
   SYNTRAKE_TWELVE_DATA_API_KEY: "fake_test_0123456789abcdefghijklmnopqrstuvwxyz",
 };
 function transportWith(counters: { searches: number; prices: number }) {

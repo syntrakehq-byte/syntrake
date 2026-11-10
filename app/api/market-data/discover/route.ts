@@ -1,4 +1,4 @@
-import { requirePersonalMarketActor } from "@/market-data-core/requirePersonalMarketActor";
+import { requireMarketActor } from "@/market-data-core/requireMarketActor";
 import { classifyDynamicMarketError } from "@/market-data-core/dynamicMarketGateway";
 import { getDynamicMarketCore } from "@/market-data-core/dynamicMarketServer";
 
@@ -14,7 +14,7 @@ const market = getDynamicMarketCore();
 
 export async function GET(request: Request): Promise<Response> {
   try {
-    await requirePersonalMarketActor();
+    await requireMarketActor();
   } catch {
     return Response.json({ error: "UNAUTHENTICATED" }, { status: 401, headers });
   }
