@@ -41,9 +41,11 @@ export function createTwelveDataCatalogConnector(input: Readonly<{
     try { body = JSON.parse(await response.text()) as unknown; } catch { throw new CatalogConnectorError("INVALID_PROVIDER_RESPONSE"); }
     const root = record(body);
     if (!root || root.status !== "ok" || !Array.isArray(root.data)) throw new CatalogConnectorError("INVALID_PROVIDER_RESPONSE");
+    const requestedPair = forexPair ? (query.ticker ?? query.name ?? "").trim().toUpperCase() : null;
     const candidates = root.data.map(item =>
       forexPair ? fromTwelveDataForexPair(item, input.source) : fromTwelveData(item, input.source)
-    ).filter((candidate): candidate is CatalogCandidate => candidate !== null);
+    ).filter((candidate): candidate is CatalogCandidate => candidate !== null)
+     .filter(candidate => requestedPair === null || candidate.listing?.ticker === requestedPair);
     if (lookupReference && !candidates.some(candidate => candidate.providerReference.providerReference === lookupReference)) throw new CatalogConnectorError("NO_RESULTS");
     return resultForCandidates(query, input.broadSearch ? candidates.slice(0, 30) : filterCatalogCandidates(query, candidates));
   };
