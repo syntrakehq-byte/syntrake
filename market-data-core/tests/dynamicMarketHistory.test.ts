@@ -181,3 +181,29 @@ test("FX daily history accepts provider base/quote/omitted metadata only, never 
     }
   }
 });
+
+test("FX daily candles use documented UTC only when timezone metadata is absent",async()=>{
+  for(const timezone of [undefined,null,"UTC","Invalid/Timezone"] as const){
+    const transport=async(url:string):Promise<Response>=>{
+      const u=new URL(url);
+      if(u.pathname==="/forex_pairs") return Response.json({status:"ok",data:[{
+        symbol:"GBP/CHF",currency_base:"Pound Sterling",currency_quote:"Swiss Franc",currency_group:"Minor",
+      }]});
+      return Response.json({status:"ok",meta:{
+        symbol:"GBP/CHF",interval:"1day",currency:"GBP",type:"Physical Currency",
+        exchange_timezone:timezone,
+      },values:[{datetime:"2026-11-06",open:"1.10",high:"1.16",low:"1.09",close:"1.15"}]});
+    };
+    const core=createDynamicMarketGateway({env,transport,clock:()=>new Date("2026-11-09T12:00:00Z")});
+    const item=(await core.discover("GBP/CHF"))[0];
+    assert.ok(item);
+    if(timezone==="Invalid/Timezone"){
+      await assert.rejects(core.historyToken(item.token,"2026-11-04","2026-11-09"),/INVALID_PROVIDER_RESPONSE/);
+    } else {
+      const h=await core.historyToken(item.token,"2026-11-04","2026-11-09");
+      assert.equal(h.status,"AVAILABLE");
+      assert.equal(h.currency,"CHF");
+      assert.equal(h.candles[0].marketDate,"2026-11-06");
+    }
+  }
+});
