@@ -2,6 +2,7 @@ import { filterCatalogCandidates, normalizeCatalogCandidate, type CatalogCandida
 import { CatalogConnectorError, classifyCatalogResponse, requireCatalogLicense, resultForCandidates, type CatalogConnector, type CatalogTransport } from "./catalogConnector";
 
 type JsonRecord = Record<string, unknown>;
+const FX_PAIR = /^[A-Z]{3}\/[A-Z]{3}$/;
 function record(value: unknown): JsonRecord | null { return value !== null && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : null; }
 function text(value: unknown, field: string): string { void field; if (typeof value !== "string" || value.trim().length === 0) throw new CatalogConnectorError("INVALID_PROVIDER_RESPONSE"); return value.trim(); }
 function optionalText(value: unknown): string | null { return typeof value === "string" && value.trim() ? value.trim() : null; }
@@ -23,10 +24,14 @@ export function createTwelveDataCatalogConnector(input: Readonly<{
   const endpoint = input.endpoint ?? "https://api.twelvedata.com/symbol_search";
   if (input.source.providerKey !== "TWELVE_DATA" || new URL(endpoint).origin !== "https://api.twelvedata.com") throw new CatalogConnectorError("INVALID_REQUEST");
   if (!input.readOnly) requireCatalogLicense(input.source);
-  const request = async (params: URLSearchParams, query: CatalogQuery, lookupReference?: string): Promise<ReturnType<typeof resultForCandidates>> => {
+  const request = async (params: URLSearchParams, query: CatalogQuery, lookupReference?: string, forexPair = false): Promise<ReturnType<typeof resultForCandidates>> => {
     const apiKey = input.env[input.apiKeyEnv ?? "TWELVE_DATA_API_KEY"];
     if (!apiKey) throw new CatalogConnectorError("PROVIDER_REJECTED", 401);
     const url = new URL(endpoint);
+    if (forexPair) {
+      url.pathname = "/forex_pairs";
+      url.search = "";
+    }
     for (const [key, value] of params) url.searchParams.set(key, value);
     let response: Response;
     try { response = await transport(url.toString(), { method: "GET", headers: { Accept: "application/json", Authorization: `apikey ${apiKey}` }, cache: "no-store", redirect: "error" }); }
@@ -36,7 +41,9 @@ export function createTwelveDataCatalogConnector(input: Readonly<{
     try { body = JSON.parse(await response.text()) as unknown; } catch { throw new CatalogConnectorError("INVALID_PROVIDER_RESPONSE"); }
     const root = record(body);
     if (!root || root.status !== "ok" || !Array.isArray(root.data)) throw new CatalogConnectorError("INVALID_PROVIDER_RESPONSE");
-    const candidates = root.data.map(item => fromTwelveData(item, input.source)).filter((candidate): candidate is CatalogCandidate => candidate !== null);
+    const candidates = root.data.map(item =>
+      forexPair ? fromTwelveDataForexPair(item, input.source) : fromTwelveData(item, input.source)
+    ).filter((candidate): candidate is CatalogCandidate => candidate !== null);
     if (lookupReference && !candidates.some(candidate => candidate.providerReference.providerReference === lookupReference)) throw new CatalogConnectorError("NO_RESULTS");
     return resultForCandidates(query, input.broadSearch ? candidates.slice(0, 30) : filterCatalogCandidates(query, candidates));
   };
@@ -49,10 +56,29 @@ export function createTwelveDataCatalogConnector(input: Readonly<{
       if (!searchTerm) throw new CatalogConnectorError("INVALID_REQUEST");
       params.set("symbol", searchTerm);
       params.set("outputsize", "100");
-      return request(params, normalized);
+      return request(params, normalized, undefined, FX_PAIR.test(searchTerm.trim().toUpperCase()));
     },
-    lookup: async (providerReference, scope = "LISTING") => request(new URLSearchParams({ symbol: providerReference }), { ticker: providerReference, identifiers: [{ type: "PROVIDER_NATIVE", value: providerReference, scope }] }, providerReference),
+    lookup: async (providerReference, scope = "LISTING") => request(new URLSearchParams({ symbol: providerReference }), { ticker: providerReference, identifiers: [{ type: "PROVIDER_NATIVE", value: providerReference, scope }] }, providerReference, FX_PAIR.test(providerReference.trim().toUpperCase())),
   };
+}
+
+/**
+ * Twelve Data /forex_pairs is a different catalog schema from /symbol_search.
+ * Resolve the direction from the provider's ISO-4217 symbol itself; never
+ * infer the inverse rate or use a manually seeded pair catalog.
+ */
+function fromTwelveDataForexPair(value: unknown, source: CatalogSource): CatalogCandidate | null {
+  const row = record(value);
+  if (!row) throw new CatalogConnectorError("INVALID_PROVIDER_RESPONSE");
+  const symbol = text(row.symbol, "symbol").toUpperCase();
+  if (!FX_PAIR.test(symbol)) return null;
+  const base = symbol.slice(0, 3);
+  const quote = symbol.slice(4);
+  const name = [optionalText(row.currency_base) ?? base, optionalText(row.currency_quote) ?? quote].join(" / ");
+  return fromTwelveData({
+    symbol, instrument_name: name, instrument_type: "Physical Currency",
+    currency: quote, mic_code: null,
+  }, source);
 }
 
 function fromTwelveData(value: unknown, source: CatalogSource): CatalogCandidate | null {
