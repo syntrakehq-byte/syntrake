@@ -19,7 +19,6 @@ export default async function Page({
   if (!session.userId || !session.sessionId) {
     redirect("/sign-in?redirect_url=%2Fmarkets");
   }
-  if (!process.env.SYNTRAKE_MARKET_OWNER_USER_ID || session.userId !== process.env.SYNTRAKE_MARKET_OWNER_USER_ID) redirect("/start");
   const lang = await resolveRequestSiteLang(await searchParams);
   return <WorkspaceShell lang={lang} area="markets"><MarketDataWorkspace lang={lang} /></WorkspaceShell>;
 }
