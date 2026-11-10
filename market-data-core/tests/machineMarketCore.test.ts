@@ -64,6 +64,36 @@ test("internal caller searches, reads batch and history without a Clerk session"
   assert.equal(search.headers.get("cache-control"),"private, no-store, max-age=0");
 });
 
+test("the same internal Market Core resolves only unique provider candidates",async()=>{
+  let calls=0;
+  const unique={
+    ...core,
+    discover:async()=>[candidate],
+    readInstrument:async(_item:MarketConsumerInstrument)=>{calls++;return q;},
+  };
+  const first=await handleMachineMarketCore(request({operation:"resolveQuote",query:"Apple"}),env,unique);
+  assert.equal(first.status,200);
+  assert.equal((await first.json()).price,"100.25");
+  assert.equal(calls,1);
+
+  const many={
+    ...unique,
+    discover:async()=>[candidate,{...candidate,mic:"XNAS",token:"other-provider-listing"}],
+  };
+  const ambiguous=await handleMachineMarketCore(request({operation:"resolveQuote",query:"Apple"}),env,many);
+  assert.equal(ambiguous.status,200);
+  const payload=await ambiguous.json();
+  assert.equal(payload.status,"AMBIGUOUS");
+  assert.equal(payload.candidates.length,2);
+  assert.equal(calls,1);
+
+  const none=await handleMachineMarketCore(request({operation:"resolveQuote",query:"Apple"}),env,{
+    ...unique,discover:async()=>[],
+  });
+  assert.equal((await none.json()).status,"UNAVAILABLE");
+  assert.equal(calls,1);
+});
+
 test("invalid token, disabled mode and production reject BEFORE work",async()=>{
   const before=JSON.stringify(calls);
   for(const [overrides,secret] of [
