@@ -65,6 +65,14 @@ export async function handleInternalMarketRequest(
       const candidates = await market.discover(fields.query);
       return json(200, { status: candidates.length ? "AVAILABLE" : "UNAVAILABLE", candidates });
     }
+    if (fields.action === "RESOLVE_QUOTE" && keys === "action,query" &&
+        typeof fields.query === "string") {
+      const candidates = await market.discover(fields.query);
+      if (candidates.length === 0) return json(200, { status: "UNAVAILABLE", candidates: [] });
+      if (candidates.length > 1) return json(200, { status: "AMBIGUOUS", candidates });
+      return json(200, await market.quoteToken(candidates[0].token));
+    }
+
     if (fields.action === "QUOTE" && keys === "action,token" &&
         typeof fields.token === "string") {
       return json(200, await market.quoteToken(fields.token));
