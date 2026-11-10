@@ -402,6 +402,10 @@ export function classifyDynamicMarketError(error: unknown): { status: number; er
     if (error.code === "RATE_LIMITED") return { status: 429, error: "RATE_LIMITED" };
     if (error.code === "INVALID_REQUEST") return { status: 400, error: "INVALID_MARKET_REQUEST" };
     if (error.code === "PROVIDER_REJECTED") return { status: 502, error: "PROVIDER_REJECTED" };
+    if (error.code === "INVALID_PROVIDER_RESPONSE") return { status: 502, error: "INVALID_PROVIDER_RESPONSE" };
+    if (error.code === "PROVIDER_UNAVAILABLE") return { status: 503, error: "PROVIDER_UNAVAILABLE" };
+    if (error.code === "LICENSE_BLOCKED") return { status: 423, error: "LICENSE_BLOCKED" };
+    if (error.code === "NO_RESULTS") return { status: 404, error: "UNAVAILABLE" };
   }
   return { status: 503, error: "MARKET_CORE_UNAVAILABLE" };
 }
