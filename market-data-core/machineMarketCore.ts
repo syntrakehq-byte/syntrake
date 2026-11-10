@@ -70,6 +70,19 @@ export async function handleMachineMarketCore(
       const candidates=await core.discover(body.query);
       return response(200,{status:candidates.length?"AVAILABLE":"UNAVAILABLE",candidates});
     }
+    // A single provider-discovered listing can be resolved without a hard-coded catalog.
+    // Multiple listings remain ambiguous; selecting one is the consumer's decision.
+    if(body.operation==="resolveQuote") {
+      if(!onlyKeys(body,["operation","query"])||typeof body.query!=="string")return response(400,{error:"INVALID_REQUEST"});
+      const candidates=await core.discover(body.query);
+      if(candidates.length===0)return response(200,{status:"UNAVAILABLE",candidates:[]});
+      if(candidates.length!==1)return response(200,{status:"AMBIGUOUS",candidates});
+      const first=candidates[0];
+      return response(200,await core.readInstrument({
+        kind:first.kind,symbol:first.symbol,mic:first.mic,
+        currency:first.currency,name:first.name,
+      }));
+    }
     if(body.operation==="quotes") {
       if(!onlyKeys(body,["operation","consumer","interval","instruments"])||
          (body.consumer!=="INVESTING"&&body.consumer!=="TRADING")||
