@@ -56,6 +56,6 @@ test("provider failure is redacted without exposing secrets or inventing quote",
  const res=await handleInvestingSelectionQuote(request({token}),actor,{
   quoteToken:async()=>{throw new MarketDataError("PROVIDER_UNAVAILABLE");}
  });
- assert.equal(res.status,502);
+ assert.equal(res.status,503);
  assert.deepEqual(await res.json(),{error:"PROVIDER_UNAVAILABLE"});
 });
