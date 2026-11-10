@@ -1,0 +1,33 @@
+name: market-data-personal-release
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "market-data-core/**"
+      - "app/markets/page.tsx"
+      - "app/api/market-data/**"
+      - "app/api/internal/market-core/**"
+      - "components/workspace/MarketDataWorkspace.tsx"
+      - ".github/workflows/market-data-personal-release.yml"
+permissions:
+  contents: read
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Provider discovery, daily price, FX, history and owner gate
+        run: npx tsx --test market-data-core/tests/dynamicMarketGateway.test.ts market-data-core/tests/dynamicMarketHistory.test.ts market-data-core/tests/twelveDataForexCatalog.test.ts market-data-core/tests/personalMarketGate.test.ts market-data-core/tests/machineMarketCore.test.ts
+      - run: npx tsc --noEmit
+      - run: npm run lint
+      - name: Next production build
+        env:
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+        run: |
+          if [ -z "$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" ]; then echo "::error::No Clerk test key"; exit 1; fi
+          npm run build
