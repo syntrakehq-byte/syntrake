@@ -216,10 +216,8 @@ export async function fetchDailySeries(input: Readonly<{
       ? (error.cause as { code?: unknown }).code : null;
     const allowedCodes = ["ECONNRESET", "ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "ETIMEDOUT", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT", "ERR_TLS_CERT_ALTNAME_INVALID"];
     const safeCause = typeof cause === "string" && allowedCodes.includes(cause) ? cause : "OTHER";
-    console.error("MARKET_CORE_PROVIDER_TRANSPORT_FAILURE", {
-      instrumentKind: instrument.kind, category: kind, cause: safeCause,
-    });
-    throw new MarketDataError("PROVIDER_UNAVAILABLE");
+    const diagnostic = kind + ":" + safeCause;
+    throw new MarketDataError("PROVIDER_UNAVAILABLE", null, null, diagnostic);
   }
   if (response.status === 429) throw new MarketDataError("RATE_LIMITED", retryAfter(response), 429);
   if (response.status === 401 || response.status === 403) throw new MarketDataError("PROVIDER_REJECTED", null, response.status);
