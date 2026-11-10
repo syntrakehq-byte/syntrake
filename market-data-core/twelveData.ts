@@ -99,7 +99,12 @@ function parseSeries(raw: unknown, instrument: InstrumentIdentity, observedAtUtc
   if (instrument.kind === "FX" ? !fxCurrencyValid : meta.currency !== instrument.currency) {
     throw invalid("CURRENCY");
   }
-  if (!validTimezone(meta.exchange_timezone)) throw invalid("TIMEZONE");
+  // Twelve Data daily Forex candles use UTC. A missing exchange timezone
+  // is not evidence of a different timezone; explicit invalid values still fail.
+  const exchangeTimezone = instrument.kind === "FX" &&
+    (meta.exchange_timezone === undefined || meta.exchange_timezone === null ||
+      meta.exchange_timezone === "") ? "UTC" : meta.exchange_timezone;
+  if (!validTimezone(exchangeTimezone)) throw invalid("TIMEZONE");
   const expectedType = instrument.kind === "EQUITY" ? "Common Stock" :
     instrument.kind === "ETF" ? "ETF" : "Physical Currency";
   if (meta.type !== expectedType) throw invalid("TYPE");
@@ -115,7 +120,7 @@ function parseSeries(raw: unknown, instrument: InstrumentIdentity, observedAtUtc
   }
   return Object.freeze({
     provider: "TWELVE_DATA" as const, instrument, interval: "1day" as const,
-    adjustment: "none" as const, exchangeTimezone: meta.exchange_timezone,
+    adjustment: "none" as const, exchangeTimezone,
     observedAtUtc, latency: "NOT_VERIFIED" as const,
     evidence: "PROVIDER_RESPONSE" as const,
     candles: Object.freeze(candles.reverse()),
