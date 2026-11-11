@@ -28,5 +28,5 @@ Implementação inicial preparada para auditoria. Este documento não declara o 
 - A suite JSON existente mantém-se intacta e passa 8/8.
 - A suite PG17 está em `news-core/tests/postgresNews.test.ts` e não usa mocks quando `NEWS_DATABASE_URL`/`TEST_DATABASE_URL` está definido; sem essa variável, fica explicitamente marcada como skipped. Cobre fencing entre dois pools, heartbeat longo, perda de lease, ACK tardio, crash de finalização, PIT durante commit atrasado, recovery após staging, VACUUM, permissões efetivas e executor→adaptador SEC→PostgreSQL com payload controlado.
 - O workflow `news-core` cria PostgreSQL 17 como service container e executa a migração no próprio teste, além de `test:news`, `test:news:pg17`, TypeScript e lint.
-- Nesta máquina não foi detetado um servidor PostgreSQL local, pelo que a execução PG17 local ainda não é prova operacional. A prova deverá ser o run do workflow no SHA deste branch.
+- A validação local usa PostgreSQL 17.11 isolado (`syntrake_news_fresh`/`syntrake_news_live`); o workflow `news-core` continua a ser a prova CI reproduzível. Esta validação local não é uma afirmação de produção nem de disponibilidade 24/7.
 - Continua pendente a validação de produção, observabilidade externa, configuração de credenciais reais e ensaio prolongado 24/7. O N1 não é declarado concluído.
