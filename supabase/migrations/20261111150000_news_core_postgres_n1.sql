@@ -12,7 +12,8 @@ do $$ begin
   end if;
 end $$;
 
--- The worker cannot disable the server-side finalization guard.
+-- Catalog SET privileges are not a security boundary for USERSET GUCs;
+-- the writer remains a private, trusted role and the executor invokes the guard.
 revoke set on parameter transaction_timeout from public;
 revoke set on parameter transaction_timeout from news_service;
 

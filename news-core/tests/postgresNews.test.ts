@@ -300,6 +300,16 @@ test("News Core PostgreSQL N1 real PG17 atomic/idempotent/leased path", { skip: 
       assert.deepEqual(privileges.rows[0], { public_select: false, reader_select: false, service_insert: true });
       const parameter = await admin.query<{ can_set: boolean }>("select has_parameter_privilege('news_service','transaction_timeout','SET') can_set");
       assert.equal(parameter.rows[0].can_set, false);
+      await admin.query("set role news_service");
+      try {
+        await admin.query("begin");
+        await admin.query("set local transaction_timeout='0'");
+        assert.equal((await admin.query("show transaction_timeout")).rows[0].transaction_timeout, "0");
+        await admin.query("rollback");
+        await admin.query("begin");
+        assert.equal((await admin.query("select set_config('transaction_timeout','0',true) as value")).rows[0].value, "0");
+        await admin.query("rollback");
+      } finally { await admin.query("reset role"); }
       await admin.query("set role news_reader");
       try {
         assert.equal((await admin.query("select * from news_core.read_publications_as_of($1::timestamptz)", [new Date(Date.now() + 2_000).toISOString()])).rowCount > 0, true);

@@ -50,13 +50,29 @@ export async function runNewsExecutorOnce(options: NewsExecutorOptions): Promise
   }
 }
 
+function waitForNextPoll(intervalMs: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.resolve();
+  return new Promise(resolve => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, intervalMs);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 export async function runNewsExecutorForever(options: NewsExecutorOptions & { intervalMs?: number }): Promise<void> {
   const intervalMs = options.intervalMs ?? 30_000;
   while (!options.signal?.aborted) {
     try { await runNewsExecutorOnce(options); }
     catch (error) { console.error(error instanceof Error ? error.message : "NEWS_EXECUTOR_FAILED"); }
     if (options.signal?.aborted) break;
-    await new Promise<void>(resolve => setTimeout(resolve, intervalMs));
+    await waitForNextPoll(intervalMs, options.signal);
   }
 }
 
