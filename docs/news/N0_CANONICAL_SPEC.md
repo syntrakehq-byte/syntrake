@@ -3,7 +3,7 @@
 
 **Data:** 2026-11-11
 **Base verificada:** `main` @ `47f68c2515611c8b5b458a19a31f232ab4b35383`
-**Estado:** `N0_CANDIDATE_FROZEN` — aguardando auditoria independente; **não** é `N0_APPROVED`
+**Estado:** `N0_REVIEW_READY` — revisão técnica adversarial e correções internas concluídas; aprovação por revisor independente ainda pendente, **não** é `N0_APPROVED`
 **Âmbito:** especificação, sem implementação, deploy, alteração de base de dados ou alterações aos motores existentes.
 
 ### 0. Bases confirmadas e limites de integração
@@ -13,6 +13,7 @@
 - `market-data-core/consumerMarketService.ts` estabelece a separação entre consumidores INVESTING/TRADING e serviço de mercado. O News Core mantém uma fronteira equivalente, mas **não** modifica nem usa indevidamente a API de preços.
 - Os contratos avançados do resolver/warehouse/workers em branches Draft não são dependência obrigatória desta fase nem podem ser considerados integrados na `main`. A integração futura exige uma ponte versionada e provas de compatibilidade.
 - O N0 não declara qualquer fornecedor operacional, infraestrutura de vigilância ativa ou comportamento 24/7 já comprovado.
+- **Incompatibilidade de contrato temporal:** `validateEnvelope()` no Market Core atual exige `asKnownAt <= ingestedAt`. O News Core especifica `ingestedAt <= asKnownAt`, após compromisso durável e validação. Não reutilizar `DataEnvelope<T>` ou `validateEnvelope()` diretamente para notícias; criar `NewsEnvelope` e adaptador versionado, mantendo o Market Core intacto.
 
 ### 1. Mandato e invariantes
 
@@ -41,6 +42,7 @@ Os identificadores internos são opacos, imutáveis e não derivados de tickers.
 | `NewsSource` | `sourceId`, `providerKey`, `sourceType`, `retrievalMode`, `enabled` | `publisherKey`, `canonicalDomain`; distinguir fornecedor de publicador |
 | `NewsPublication` | `publicationId`, `sourceId`, `originFingerprint`, `firstSeenAt` | `externalId`, `originalUrl` |
 | `NewsPublicationRevision` | `publicationRevisionId`, `publicationId`, `revisionNo`, `ingestedAt`, `asKnownAt`, `sourceRefs` | `title`, `language`, `publishedAt`, `contentFingerprint`, `supersedesRevisionId`, `qualityFlags` |
+| `NewsProviderObservation` | `observationId`, `providerKey`, `providerObservationKey`, `observedAt`, `retrievedAt`, `publicationId` | `providerRevision`, `publisherKey`, `originalUrl`, `sourceRefs`, `qualityFlags`; uma publicação pode ser descoberta por vários agregadores |
 | `NewsEvent` | `eventId` | Identidade persistente do acontecimento; não equivale a uma publicação |
 | `NewsEventRevision` | `eventRevisionId`, `eventId`, `eventType`, `statement`, `confirmationStatus`, `lifecycleStatus`, `asKnownAt`, `evidenceIds` | `occurredAt`, `scheduledFor`, `supersedesRevisionId`, `qualityFlags` |
 | `NewsEvidence` | `evidenceId`, `publicationRevisionId`, `claimRef`, `evidenceType`, `independenceGroup`, `asKnownAt` | `sourceDocumentRef`, `verificationStatus`, `qualityFlags` |
@@ -50,6 +52,8 @@ Os identificadores internos são opacos, imutáveis e não derivados de tickers.
 | `NewsJobExecution` | `executionId`, `jobKey`, `state`, `attempt`, `startedAt` | `finishedAt`, `failureCode`, `lastHeartbeatAt`; sem payloads sensíveis nos logs |
 
 Campos textuais publicados não são tratados como instruções executáveis. Armazenamento concreto (tabelas, constraints, índices) fica para desenho N1, preservando estas invariantes.
+
+**Identidade de publicações e integridade:** `NewsProviderObservation` preserva cada descoberta por fornecedor; `NewsPublication` identifica o artigo/documento editorial original, e só pode ser unificada entre agregadores com evidência de origem comum. `originFingerprint` usa identificadores editoriais ou URL original normalizado com namespace; título ou hash da manchete isolados não bastam. Na ausência de prova, manter publicações separadas. Eventos e ligações apenas podem referir revisões e evidências previamente persistidas e historicamente visíveis. Para `identityStatus=EXACT`, exigir ID canónico válido para `targetScope` e evidência correspondente; setor, país e macro precisam de vocabulários controlados.
 
 **Categorias iniciais:** `EARNINGS`, `GUIDANCE_CHANGE`, `DIVIDEND_ANNOUNCEMENT`, `MERGER_ACQUISITION`, `MANAGEMENT_CHANGE`, `LEGAL_REGULATORY`, `CENTRAL_BANK_DECISION`, `MACROECONOMIC_RELEASE`, `ETF_FUND_CHANGE`, `OPERATIONAL_DISRUPTION`, `GEOPOLITICAL_EVENT`, `OTHER_REPORTED_EVENT`.
 
@@ -70,7 +74,7 @@ Usar instantes UTC ISO 8601 com timezone explícito e precisão consistente. Dis
 - `ingestedAt`: quando esta revisão foi recebida e registada de forma durável;
 - `asKnownAt`: quando a revisão/associação passou a estar disponível depois de persistida/validada.
 
-**Regra temporal:** para cada revisão, `asKnownAt >= ingestedAt` e nunca se antecipa `asKnownAt` para a data alegada de publicação. `firstSeenAt <= ingestedAt` para a primeira observação. Os relógios externos podem estar incorretos: uma data de publicação futura ou incongruente gera `qualityFlags`/revisão de qualidade, em vez de ser silenciosamente corrigida.
+**Regra temporal:** para cada revisão de notícias, `firstSeenAt <= ingestedAt <= asKnownAt` quando aplicáveis. `asKnownAt` é o momento de publicação interna após gravação durável e validação, não a data alegada pela fonte. **Revisões derivadas nunca podem anteceder temporalmente as suas dependências:** `asKnownAt(derivado) >= max(asKnownAt(evidências/publicações/relações usadas))`. Um reprocessamento posterior não retrocede este instante. Relógios externos incongruentes geram `qualityFlags`, não correções silenciosas. Esta semântica não deve ser forçada para o `DataEnvelope` atual do Market Core, que verifica a ordem temporal inversa: a ponte será explícita e testada.
 
 **Consulta PIT:** selecionar a última revisão **conhecida** de cada objeto no cutoff `asOf`, aplicar também cutoff a evidências, classificações, links e operações de fusão/separação, devolver informação insuficiente quando só haja dados posteriores. Reprocessar arquivo antigo não altera o conhecimento passado. Qualquer backtest distingue `ocorreu`, `foi publicado`, `ficou acessível ao SYNTRAKE`.
 
@@ -102,7 +106,7 @@ Tratamento explícito de: resposta vazia válida, indisponibilidade, throttling,
 
 ### 7. API interna canónica
 
-**Envelope comum:** `schemaVersion`, `requestId`, `status`, `asOf`, `servedAt`, `data`, `sourceRefs`, `qualityFlags`, `nextCursor|null`. Separar erro operacional de consulta bem-sucedida sem resultados. Nunca devolver uma identidade resolvida se o estado não for `EXACT`.
+**Envelope comum `NewsEnvelope` próprio:** `schemaVersion`, `requestId`, `status`, `asOf`, `servedAt`, `data`, `sourceRefs`, `qualityFlags`, `nextCursor|null`. Validação runtime de todos os itens e campos, `schemaVersion=1.0` inicialmente. Separar erro operacional de consulta bem-sucedida sem resultados (`AVAILABLE` com `data=[]`). `PARTIAL` ou `STALE` devem indicar incompletude ou atraso. Nunca devolver uma identidade resolvida se o estado não for `EXACT`. Não importar diretamente o validador `DataEnvelope` de preços.
 
 Operações:
 1. `discoverNews({query, filters, asOf, limit, cursor})`: publicações e descoberta; fonte de entrada não precisa ser holding do utilizador.
@@ -110,7 +114,7 @@ Operações:
 3. `getEventEvidence({eventId, asOf})`: versões e evidências disponíveis no cutoff.
 4. `getNewsHistory({targets, from, to, asOf, limit, cursor})`: histórico de eventos e revisões historicamente visíveis.
 
-**Regras:** paginação estável com chave de ordenação e `asOf` fixados no cursor; `asOf` fornecido pelo servidor quando não indicado; limites definidos por operação em N1, nunca paginação ilimitada; filtros validados em runtime; autenticação de serviço independente de cookies; isolamento de dados privados de contas; mensagens de erro sem credenciais, corpos externos ou detalhes internos.
+**Regras:** paginação estável com chave e `asOf` fixados em cursor verificável e resistente à adulteração; `asOf` definido pelo servidor quando omitido e recusado se futuro/inválido; limite inicial 1–100 (predefinido 20, podendo haver teto menor por operação); filtros validados em runtime; autenticação de serviço independente de cookies; isolamento de contas; erros estáveis sem segredos, corpos externos ou detalhes internos. Histórico PIT consulta apenas informação já persistida, nunca faz uma recolha nova para fingir conhecimento passado.
 
 ### 8. N0-AUT-001 — AUTONOMIA 24/7 OBRIGATÓRIA
 
@@ -119,6 +123,8 @@ O News Core **tem de trabalhar sem ninguém no site**, mesmo durante horas ou di
 A arquitetura exige:
 - executor/scheduler independente de sessões web, com ciclos e intervalos por fonte;
 - recolha incremental por checkpoint durável, backfill após paragens e tolerância a falhas de fontes;
+- scheduler, executor e armazenamento durável são componentes distintos do ciclo HTTP; o cache regional de mercado não é um executor nem um histórico persistente;
+- processamento de tarefas `at-least-once` com gravações idempotentes; checkpoint só avança após o compromisso durável dos itens até essa posição, ou através de dead-letter recuperável sem perder lacunas;
 - leasing/idempotência por tarefa, retomada após crash e limites de repetição/backoff;
 - supervisor ou equivalente com heartbeat, métricas de último sucesso, atraso, número de novas publicações, erros e trabalho pendente;
 - vigilância configurável para fontes macroeconómicas e entidades/instrumentos/temas acompanhados, sem varrer indiscriminadamente todo o mundo em cada ciclo;
@@ -126,7 +132,7 @@ A arquitetura exige:
 
 **24/7 designa independência de utilizadores e operação contínua do serviço quando a infraestrutura está disponível; não implica latência zero nem promessas absolutas de uptime dos fornecedores.** As metas exatas de latência serão estabelecidas por medição real em N1/N4.
 
-**Prova obrigatória de aceitação:** com **zero sessões**, executar pelo menos dois ciclos de recolha e provar que uma publicação real nova é recolhida, processada, persistida e consultável pela API interna. Interromper deliberadamente um executor entre descoberta e persistência, reiniciar, recuperar a tarefa, não criar duplicados e recuperar o intervalo perdido. Falhar o teste impede o encerramento operacional do News Core.
+**Prova obrigatória de aceitação:** com **zero sessões**, executar dois ciclos de recolha real, incluindo um ciclo sem novas publicações se for o caso, e provar ingestão de pelo menos uma publicação genuína verificável, que poderá ser reproduzida de modo controlado para garantir um teste determinístico. Provar persistência e leitura posterior. Interromper o executor entre descoberta e persistência, reiniciar, recuperar o trabalho sem duplicação e completar o intervalo perdido. O teste não depende de um jornal publicar precisamente durante o ensaio. Falhar qualquer prova impede encerrar o News Core.
 
 **Roadmap:** N0 define a obrigação; N1 implementa a primeira recolha sem sessão; N2/N3 completam tratamento e histórico; N4 audita provas; N5 valida ponta a ponta a operação autónoma com consumidores. Vigilância 24/7 **não é opcional**.
 
@@ -167,7 +173,7 @@ A arquitetura exige:
 | N0-T22 | Paginação + PIT | Sem omissões, duplicados ou informação futura |
 | N0-T23 | Classificação sem evidência | Não confirmar sem suporte |
 | N0-T24 | Falha transacional de revisão | Sem metade do estado gravado |
-| N0-T25 | Zero sessões, dois ciclos | Recolha e consulta reais provadas |
+| N0-T25 | Zero sessões, dois ciclos | Dois polls reais e ingestão verificável de publicação genuína, com ensaio determinístico |
 | N0-T26 | Crash entre fetch e persistência | Recovery sem duplicação |
 | N0-T27 | Período de indisponibilidade | Backfill/checkpoint correto |
 | N0-T28 | Conflito de relógio do fornecedor | Flag, sem falsificar `asKnownAt` |
@@ -175,6 +181,11 @@ A arquitetura exige:
 | N0-T30 | Lista vazia com fonte funcional | `AVAILABLE` com `data=[]`, não erro |
 | N0-T31 | Evento futuro agendado | `scheduledFor` não é `occurredAt` |
 | N0-T32 | Recuo temporal de evidência derivada | Consulta PIT exclui classificação futura |
+| N0-T33 | Envelope temporal de mercado vs notícias | Semânticas incompatíveis não são confundidas; Market Core intacto |
+| N0-T34 | Dois agregadores recebem o mesmo artigo | Observações separadas, unificação somente com prova editorial |
+| N0-T35 | Evento derivado de evidência posterior | `asKnownAt` da derivação >= dependências |
+| N0-T36 | Falha parcial antes do checkpoint | Sem perda de publicações pendentes |
+| N0-T37 | Cursor adulterado ou cutoff futuro | Pedido recusado sem exposição de dados |
 
 N0 valida a **definição e consistência** dos testes; N1–N5 executam as provas conforme o alcance de cada fase. Não reportar `PASS` sem execução concreta.
 
@@ -202,9 +213,14 @@ Sem novas subfases por defeito. Alterações ao contrato exigem revisão explíc
 | Consulta sem resultados confundida com falha | `AVAILABLE` com lista vazia | Resolvido na especificação |
 | Fontes externas como instruções/URLs de confiança | Fronteira SSRF e prompt injection | Resolvido na especificação |
 | Compatibilidade com PRs Draft presumida | Integração apenas com contrato comprovadamente disponível | Resolvido na especificação |
-| Auditoria independente executada | Ainda não existe validação externa independente | **Pendente** |
+| Semântica de PIT não compatível com `DataEnvelope` do Market Core | Contrato `NewsEnvelope` autónomo e ponte testável | Resolvido na especificação |
+| Dois fornecedores reportam a mesma publicação | `NewsProviderObservation` separada da identidade da publicação | Resolvido na especificação |
+| Falta de PIT nas dependências das classificações | Derivação só é conhecida depois de todas as evidências | Resolvido na especificação |
+| Recuperação com checkpoint ambíguo | `at-least-once` e idempotência antes de avanço do cursor | Resolvido na especificação |
+| Ensaio dependia de notícia nova em tempo real | Recolha real + repetição controlada de publicação genuína | Resolvido na especificação |
+| Auditoria independente executada | Ainda não há revisão de outro revisor registada no PR | **Pendente** |
 
-**Gate:** esta versão fica congelada **como candidata**; `N0_APPROVED` requer auditoria independente da especificação e correção de eventuais bloqueios. Nenhum teste N1–N5 foi executado, nenhum feed foi integrado e não se pode declarar News Core funcional ou 24/7 neste momento.
+**Gate:** esta versão fica pronta para revisão independente; `N0_APPROVED` exige revisão registada por outro revisor e correção dos bloqueios que este eventualmente encontrar. Nenhum teste N1–N5 foi executado, nenhum feed foi integrado e não se pode declarar News Core funcional ou 24/7 neste momento.
 
 ### Fontes de compatibilidade no repositório
 - `market-data-core/identity.ts` (main);
