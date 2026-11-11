@@ -3,7 +3,7 @@
 
 **Data:** 2026-11-11
 **Base verificada:** `main` @ `47f68c2515611c8b5b458a19a31f232ab4b35383`
-**Estado:** `N0_REVIEW_READY` — revisão técnica adversarial e correções internas concluídas; aprovação por revisor independente ainda pendente, **não** é `N0_APPROVED`
+**Estado:** `N0_REVIEW_READY` — revisão cruzada independente do conteúdo concluída; correções documentais aplicadas nesta branch; aprovação formal por outro revisor ainda pendente, **não** é `N0_APPROVED`
 **Âmbito:** especificação, sem implementação, deploy, alteração de base de dados ou alterações aos motores existentes.
 
 ### 0. Bases confirmadas e limites de integração
@@ -76,6 +76,8 @@ Usar instantes UTC ISO 8601 com timezone explícito e precisão consistente. Dis
 
 **Regra temporal:** para cada revisão de notícias, `firstSeenAt <= ingestedAt <= asKnownAt` quando aplicáveis. `asKnownAt` é o momento de publicação interna após gravação durável e validação, não a data alegada pela fonte. **Revisões derivadas nunca podem anteceder temporalmente as suas dependências:** `asKnownAt(derivado) >= max(asKnownAt(evidências/publicações/relações usadas))`. Um reprocessamento posterior não retrocede este instante. Relógios externos incongruentes geram `qualityFlags`, não correções silenciosas. Esta semântica não deve ser forçada para o `DataEnvelope` atual do Market Core, que verifica a ordem temporal inversa: a ponte será explícita e testada.
 
+Regras adicionais obrigatórias: `publishedAt`, quando presente, é apenas uma afirmação da fonte e não pode substituir `firstSeenAt`, `ingestedAt` ou `asKnownAt`. Se `publishedAt > ingestedAt`, a revisão pode ser conservada como observação com `qualityFlags` de relógio incoerente, mas não pode ser usada para alegar conhecimento anterior nem para ordenar um resultado PIT. `servedAt` é o instante da resposta e não faz parte do estado histórico; o servidor deve rejeitar `asOf > servedAt` após normalização UTC. Todos os instantes persistidos devem ser obtidos pelo serviço de ingestão (ou por uma fonte de tempo monotónica/autoridade definida), nunca pelo cliente.
+
 **Consulta PIT:** selecionar a última revisão **conhecida** de cada objeto no cutoff `asOf`, aplicar também cutoff a evidências, classificações, links e operações de fusão/separação, devolver informação insuficiente quando só haja dados posteriores. Reprocessar arquivo antigo não altera o conhecimento passado. Qualquer backtest distingue `ocorreu`, `foi publicado`, `ficou acessível ao SYNTRAKE`.
 
 **Exemplo:** fonte publica 14:00, sistema recebe 14:05, classificou 14:07, correção chega 14:20. Em 14:03 nada é conhecido; em 14:10 apenas versão/etiquetas já existentes; em 14:30 correção aparece, sem apagar versões anteriores.
@@ -104,6 +106,8 @@ Tratamento explícito de: resposta vazia válida, indisponibilidade, throttling,
 - Fusões, separações, correções, contestações e retrações são revisões e relações temporais, nunca operações destrutivas sobre o passado.
 - As gravações e checkpoints devem ser transacionais e idempotentes; em concorrência, apenas um resultado lógico.
 
+O limite transacional é normativo: uma unidade de ingestão deve gravar as observações, a publicação/revisão deduplicada, as referências de proveniência e o resultado de processamento antes de avançar `NewsCollectionCursor`. O cursor só pode avançar na mesma transação que o compromisso durável de todos os itens até à posição, ou ficar no ponto anterior com uma tarefa recuperável. Uma falha antes do commit deixa o cursor inalterado; uma falha depois do commit pode repetir a leitura, mas constraints únicas em `(sourceId, originFingerprint)`, `(providerKey, providerObservationKey)` e `(publicationId, revisionNo)` tornam a repetição sem efeitos lógicos adicionais. O checkpoint não pode ser usado como substituto da chave de idempotência.
+
 ### 7. API interna canónica
 
 **Envelope comum `NewsEnvelope` próprio:** `schemaVersion`, `requestId`, `status`, `asOf`, `servedAt`, `data`, `sourceRefs`, `qualityFlags`, `nextCursor|null`. Validação runtime de todos os itens e campos, `schemaVersion=1.0` inicialmente. Separar erro operacional de consulta bem-sucedida sem resultados (`AVAILABLE` com `data=[]`). `PARTIAL` ou `STALE` devem indicar incompletude ou atraso. Nunca devolver uma identidade resolvida se o estado não for `EXACT`. Não importar diretamente o validador `DataEnvelope` de preços.
@@ -114,7 +118,7 @@ Operações:
 3. `getEventEvidence({eventId, asOf})`: versões e evidências disponíveis no cutoff.
 4. `getNewsHistory({targets, from, to, asOf, limit, cursor})`: histórico de eventos e revisões historicamente visíveis.
 
-**Regras:** paginação estável com chave e `asOf` fixados em cursor verificável e resistente à adulteração; `asOf` definido pelo servidor quando omitido e recusado se futuro/inválido; limite inicial 1–100 (predefinido 20, podendo haver teto menor por operação); filtros validados em runtime; autenticação de serviço independente de cookies; isolamento de contas; erros estáveis sem segredos, corpos externos ou detalhes internos. Histórico PIT consulta apenas informação já persistida, nunca faz uma recolha nova para fingir conhecimento passado.
+**Regras:** paginação estável com chave e `asOf` fixados em cursor verificável e resistente à adulteração; `asOf` definido pelo servidor quando omitido e recusado se futuro/inválido; limite inicial 1–100 (predefinido 20, podendo haver teto menor por operação); filtros validados em runtime; autenticação de serviço independente de cookies; isolamento de contas; erros estáveis sem segredos, corpos externos ou detalhes internos. Histórico PIT consulta apenas informação já persistida, nunca faz uma recolha nova para fingir conhecimento passado. A autenticação de serviço autoriza apenas o namespace global de notícias e a operação solicitada; qualquer watchlist, preferência ou alvo privado deve entrar como `accountId`/escopo explicitamente autorizado, ser filtrado no servidor e nunca ser enviado ao fornecedor. Uma resposta global não pode ser usada para inferir a existência de uma watchlist privada.
 
 ### 8. N0-AUT-001 — AUTONOMIA 24/7 OBRIGATÓRIA
 
@@ -133,6 +137,8 @@ A arquitetura exige:
 **24/7 designa independência de utilizadores e operação contínua do serviço quando a infraestrutura está disponível; não implica latência zero nem promessas absolutas de uptime dos fornecedores.** As metas exatas de latência serão estabelecidas por medição real em N1/N4.
 
 **Prova obrigatória de aceitação:** com **zero sessões**, executar dois ciclos de recolha real, incluindo um ciclo sem novas publicações se for o caso, e provar ingestão de pelo menos uma publicação genuína verificável, que poderá ser reproduzida de modo controlado para garantir um teste determinístico. Provar persistência e leitura posterior. Interromper o executor entre descoberta e persistência, reiniciar, recuperar o trabalho sem duplicação e completar o intervalo perdido. O teste não depende de um jornal publicar precisamente durante o ensaio. Falhar qualquer prova impede encerrar o News Core.
+
+Os 37 IDs abaixo são critérios de aceitação, não são por si só testes executados. Antes de `N0_APPROVED`, cada ID deve apontar para um teste automatizado ou para um ensaio reproduzível com fixture/artefacto de evidência, declarar pré-condições, observações e resultado esperado, e distinguir claramente simulação, teste contra fixture e operação contra fonte real. A matriz não pode ser contada como cobertura só por estar escrita.
 
 **Roadmap:** N0 define a obrigação; N1 implementa a primeira recolha sem sessão; N2/N3 completam tratamento e histórico; N4 audita provas; N5 valida ponta a ponta a operação autónoma com consumidores. Vigilância 24/7 **não é opcional**.
 
