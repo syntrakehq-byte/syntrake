@@ -26,10 +26,10 @@ export async function runNewsExecutorOnce(options: NewsExecutorOptions): Promise
   if (!target) return { claimed: false, ingested: 0 };
   try {
     const ingested = await runTarget(options.store, target, options);
-    await options.store.finish(target.collectionScopeKey, options.workerId, true);
+    await options.store.finish(target.executionId, target.collectionScopeKey, options.workerId, true);
     return { claimed: true, ingested };
   } catch (error) {
-    await options.store.finish(target.collectionScopeKey, options.workerId, false, error);
+    await options.store.finish(target.executionId, target.collectionScopeKey, options.workerId, false, error);
     throw error;
   }
 }

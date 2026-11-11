@@ -63,7 +63,7 @@ test("News Core PostgreSQL N1 real PG17 atomic/idempotent/leased path", { skip: 
       const second = await storeB.claimNext("worker-b", 60);
       assert.equal(second, null);
       assert.equal(await storeA.heartbeat(first!.collectionScopeKey, "worker-a"), true);
-      await storeA.finish(first!.collectionScopeKey, "worker-a", true);
+      await storeA.finish(first!.executionId, first!.collectionScopeKey, "worker-a", true);
       const recoverScope = `lease-recover-${suffix}`;
       await storeA.upsertTarget({ collectionScopeKey: recoverScope, sourceId: "sec-edgar", providerKey: "sec", entityKey: "0000000002", parameters: {} });
       const abandoned = await storeA.claimNext("worker-abandoned", 60);
@@ -71,7 +71,10 @@ test("News Core PostgreSQL N1 real PG17 atomic/idempotent/leased path", { skip: 
       await admin.query("update news_core.collection_targets set lease_until=clock_timestamp()-interval '1 second' where collection_scope_key=$1", [recoverScope]);
       const recovered = await storeB.claimNext("worker-recovered", 60);
       assert.equal(recovered?.collectionScopeKey, recoverScope);
-      await storeB.finish(recoverScope, "worker-recovered", true);
+      await storeA.finish(abandoned!.executionId, recoverScope, "worker-abandoned", true);
+      const stillRunning = await admin.query<{ state: string }>("select state from news_core.executions where execution_id=$1", [recovered!.executionId]);
+      assert.equal(stillRunning.rows[0].state, "RUNNING");
+      await storeB.finish(recovered!.executionId, recoverScope, "worker-recovered", true);
     });
 
     await t.test("least privilege grants are not public", async () => {

@@ -6,7 +6,7 @@ export type NewsTarget = Readonly<{
   parameters: Record<string, unknown>; nextRunAt?: string;
 }>;
 
-export type ClaimedTarget = NewsTarget & Readonly<{ attempt: number }>;
+export type ClaimedTarget = NewsTarget & Readonly<{ attempt: number; executionId: string }>;
 
 function watermarkKey(batch: NewsBatch): string | null {
   const cursor = batch.checkpoint.cursor;
@@ -127,12 +127,12 @@ export class PostgresNewsStore {
          attempt_count=attempt_count+1,updated_at=clock_timestamp() where collection_scope_key=$3 returning attempt_count`,
         [workerId, leaseSeconds, row.collectionScopeKey],
       );
-      await client.query(
-        `insert into news_core.executions(collection_scope_key,worker_id,state,attempt) values ($1,$2,'RUNNING',$3)`,
+      const execution = await client.query<{ execution_id: string }>(
+        `insert into news_core.executions(collection_scope_key,worker_id,state,attempt) values ($1,$2,'RUNNING',$3) returning execution_id`,
         [row.collectionScopeKey, workerId, updated.rows[0].attempt_count],
       );
       await client.query("commit");
-      return { collectionScopeKey: row.collectionScopeKey, sourceId: row.sourceId, providerKey: row.providerKey, entityKey: row.entityKey, parameters: row.parameters, attempt: updated.rows[0].attempt_count };
+      return { collectionScopeKey: row.collectionScopeKey, sourceId: row.sourceId, providerKey: row.providerKey, entityKey: row.entityKey, parameters: row.parameters, attempt: updated.rows[0].attempt_count, executionId: execution.rows[0].execution_id };
     } catch (error) { await client.query("rollback").catch(() => undefined); throw error; }
     finally { client.release(); }
   }
@@ -145,12 +145,12 @@ export class PostgresNewsStore {
     return (result.rowCount ?? 0) === 1;
   }
 
-  async finish(scope: string, workerId: string, success: boolean, error?: unknown): Promise<void> {
+  async finish(executionId: string, scope: string, workerId: string, success: boolean, error?: unknown): Promise<void> {
     const message = error instanceof Error ? error.message.slice(0, 1000) : undefined;
     await this.pool.query(
       `update news_core.executions set state=$1,finished_at=clock_timestamp(),heartbeat_at=clock_timestamp(),error_code=$2,error_message=$3
-       where execution_id=(select execution_id from news_core.executions where collection_scope_key=$4 and worker_id=$5 and state='RUNNING' order by started_at desc limit 1)`,
-      [success ? "SUCCEEDED" : "FAILED", success ? null : "NEWS_COLLECTION_FAILED", success ? null : message, scope, workerId],
+       where execution_id=$4 and worker_id=$5 and state='RUNNING'`,
+      [success ? "SUCCEEDED" : "FAILED", success ? null : "NEWS_COLLECTION_FAILED", success ? null : message, executionId, workerId],
     );
     await this.pool.query(
       `update news_core.collection_targets set lease_owner=null,lease_until=null,next_run_at=clock_timestamp()+

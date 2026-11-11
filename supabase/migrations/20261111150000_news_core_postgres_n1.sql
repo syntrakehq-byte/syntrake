@@ -96,5 +96,7 @@ revoke all on schema news_core from public;
 revoke all on all tables in schema news_core from public;
 grant usage on schema news_core to news_service, news_reader;
 grant select on news_core.sources, news_core.publications, news_core.observations, news_core.checkpoints to news_reader;
-grant select, insert, update on all tables in schema news_core to news_service;
+grant select, insert, update on news_core.sources to news_service;
+grant select, insert on news_core.publications, news_core.observations to news_service;
+grant select, insert, update on news_core.checkpoints, news_core.collection_targets, news_core.executions to news_service;
 grant usage, select on all sequences in schema news_core to news_service;
