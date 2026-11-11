@@ -24,6 +24,7 @@ function secResponse(cik: string, accession = "0000000001-00-000001"): Response 
   } } }), { status: 200, headers: { "content-type": "application/json" } });
 }
 const wait = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+const testCik = (suffix: string, offset: number) => String((parseInt(suffix.slice(0, 8), 16) + offset) % 10_000_000_000).padStart(10, "0");
 
 test("News Core PostgreSQL N1 real PG17 atomic/idempotent/leased path", { skip: !DB_URL && "NEWS_DATABASE_URL or TEST_DATABASE_URL required: no mocked PG test" }, async (t) => {
   const admin = new Client({ connectionString: DB_URL });
@@ -32,8 +33,6 @@ test("News Core PostgreSQL N1 real PG17 atomic/idempotent/leased path", { skip: 
   const poolB = new Pool({ connectionString: DB_URL, max: 4 });
   const servicePool = new Pool({ connectionString: DB_URL, max: 1 });
   const storeA = new PostgresNewsStore(poolA); const storeB = new PostgresNewsStore(poolB);
-  const serviceConnection = await servicePool.connect();
-  await serviceConnection.query("set role news_service"); serviceConnection.release();
   const serviceStore = new PostgresNewsStore(servicePool);
   const suffix = randomUUID().replaceAll("-", "");
   const scopeA = `pg-test-a-${suffix}`; const scopeB = `pg-test-b-${suffix}`;
@@ -41,6 +40,8 @@ test("News Core PostgreSQL N1 real PG17 atomic/idempotent/leased path", { skip: 
     const version = await admin.query<{ v: string }>("select current_setting('server_version') v");
     assert.match(version.rows[0].v, /^17\./);
     await admin.query(await readFile(migration, "utf8"));
+    const serviceConnection = await servicePool.connect();
+    await serviceConnection.query("set role news_service"); serviceConnection.release();
     await storeA.ensureSource("sec-edgar", "sec");
 
     await t.test("independent scopes and rollback before commit", async () => {
@@ -83,9 +84,9 @@ test("News Core PostgreSQL N1 real PG17 atomic/idempotent/leased path", { skip: 
     await t.test("expired worker is fenced before data/checkpoint commit", async () => {
       const scope = `fence-${suffix}`;
       await storeA.upsertTarget({ collectionScopeKey: scope, sourceId: "sec-edgar", providerKey: "sec", entityKey: "0000000005", parameters: {}, nextRunAt: new Date(0).toISOString() });
-      const old = await storeA.claimNext("worker-old", 1); assert.ok(old);
+      const old = await storeA.claimNext("worker-old", 1, scope); assert.ok(old);
       await wait(1_100);
-      const fresh = await storeB.claimNext("worker-new", 60); assert.ok(fresh);
+      const fresh = await storeB.claimNext("worker-new", 60, scope); assert.ok(fresh);
       const oldLease = { executionId: old!.executionId, collectionScopeKey: scope, workerId: "worker-old", leaseSeconds: 1 } as const;
       await assert.rejects(storeA.ingest(batch(scope, "fenced", "2026-01-04:0000000001"), { lease: oldLease }), /NEWS_LEASE_LOST/);
       assert.equal(await storeA.getCheckpoint(scope), null);
@@ -95,26 +96,27 @@ test("News Core PostgreSQL N1 real PG17 atomic/idempotent/leased path", { skip: 
     });
 
     await t.test("executor uses the real SEC adapter, heartbeat and timeout cancellation", async () => {
-      const cik = "0000000006";
+      const cik = testCik(suffix, 6);
       const scope = await registerSecTarget(storeA, cik);
       await storeA.upsertTarget({ collectionScopeKey: scope, sourceId: "sec-edgar", providerKey: "sec", entityKey: cik, parameters: {}, nextRunAt: new Date(0).toISOString() });
       const result = await runNewsExecutorOnce({
         store: storeA, workerId: `long-${suffix}`, secUserAgent: "SYNTRAKE test operator test@example.invalid", leaseSeconds: 1,
+        collectionScopeKey: scope,
         heartbeatIntervalMs: 150, fetchTimeoutMs: 5000,
         fetchImpl: async (_input, init) => { await new Promise<void>((resolve, reject) => { const timer = setTimeout(resolve, 1_500); init?.signal?.addEventListener("abort", () => { clearTimeout(timer); reject(new Error("ABORTED")); }, { once: true }); }); return secResponse(cik); },
       });
       assert.equal(result.ingested, 1);
       const rows = await storeA.readAsOf(new Date(Date.now() + 2_000).toISOString());
-      assert.ok(rows.some(row => row.externalId === "0000000001-00-000001"));
+      assert.ok(rows.some(row => row.externalId === "0000000001-00-000001" && row.originFingerprint.includes(cik)));
     });
 
     await t.test("heartbeat loss aborts the SEC call and does not ACK a takeover", async () => {
-      const cik = "0000000007";
+      const cik = testCik(suffix, 7);
       const scope = await registerSecTarget(storeA, cik);
       await storeA.upsertTarget({ collectionScopeKey: scope, sourceId: "sec-edgar", providerKey: "sec", entityKey: cik, parameters: {}, nextRunAt: new Date(0).toISOString() });
       let takeover: Awaited<ReturnType<PostgresNewsStore["claimNext"]>> = null;
       const result = runNewsExecutorOnce({
-        store: storeA, workerId: "reused-worker", secUserAgent: "SYNTRAKE test operator test@example.invalid", leaseSeconds: 1,
+        store: storeA, workerId: "reused-worker", secUserAgent: "SYNTRAKE test operator test@example.invalid", leaseSeconds: 1, collectionScopeKey: scope,
         heartbeatIntervalMs: 150, fetchTimeoutMs: 5000,
         fetchImpl: async (_input, init) => { await wait(350); await admin.query("update news_core.collection_targets set lease_until=clock_timestamp()-interval '1 second' where collection_scope_key=$1", [scope]); takeover = await storeB.claimNext("reused-worker", 60); await new Promise<void>((resolve, reject) => { const timer = setTimeout(resolve, 1_500); init?.signal?.addEventListener("abort", () => { clearTimeout(timer); reject(new Error("ABORTED")); }, { once: true }); }); return secResponse(cik, "0000000001-00-000002"); },
       });
@@ -127,11 +129,11 @@ test("News Core PostgreSQL N1 real PG17 atomic/idempotent/leased path", { skip: 
     await t.test("finish is one transaction and crash recovery cannot touch a new lease", async () => {
       const scope = `finish-${suffix}`;
       await storeA.upsertTarget({ collectionScopeKey: scope, sourceId: "sec-edgar", providerKey: "sec", entityKey: "0000000008", parameters: {}, nextRunAt: new Date(0).toISOString() });
-      const old = await storeA.claimNext("finish-worker", 1); assert.ok(old);
+      const old = await storeA.claimNext("finish-worker", 1, scope); assert.ok(old);
       const oldLease = { executionId: old!.executionId, collectionScopeKey: scope, workerId: "finish-worker", leaseSeconds: 1 } as const;
       await assert.rejects(storeA.finish(oldLease, true, undefined, "after-execution-update"), /INJECTED_FAILURE_DURING_FINISH/);
       await admin.query("update news_core.collection_targets set lease_until=clock_timestamp()-interval '1 second' where collection_scope_key=$1", [scope]);
-      const fresh = await storeB.claimNext("finish-worker", 60); assert.ok(fresh);
+      const fresh = await storeB.claimNext("finish-worker", 60, scope); assert.ok(fresh);
       assert.deepEqual(await storeA.finish(oldLease, true), { status: "STALE" });
       const state = await admin.query<{ state: string }>("select state from news_core.executions where execution_id=$1", [fresh!.executionId]);
       assert.equal(state.rows[0].state, "RUNNING");
@@ -139,52 +141,56 @@ test("News Core PostgreSQL N1 real PG17 atomic/idempotent/leased path", { skip: 
     });
 
     await t.test("PIT cutoff between insert and commit cannot see pending data", async () => {
-      const scope = `pit-delay-${suffix}`;
+      const scope = `pit-delay-${suffix}`; const delayedId = `delayed-${suffix}`;
       const cutoff = new Date().toISOString();
-      const pending = storeA.ingestAdministrative(batch(scope, "delayed", "2026-01-05:0000000001"), { failurePoint: "delay-before-commit", delayBeforeCommitMs: 350 });
-      await wait(80);
-      assert.equal((await storeB.readAsOf(cutoff)).some(row => row.externalId === "delayed"), false);
-      await pending;
-      assert.equal((await storeB.readAsOf(cutoff)).some(row => row.externalId === "delayed"), false);
-      assert.equal((await storeB.readAsOf(new Date(Date.now() + 2_000).toISOString())).filter(row => row.externalId === "delayed").length, 1);
+      const pendingBatch = batch(scope, delayedId, "2026-01-05:0000000001");
+      const pending = storeA.ingestAdministrative(pendingBatch, { failurePoint: "delay-before-commit", delayBeforeCommitMs: 350 });
+      try {
+        await wait(80);
+        assert.equal((await storeB.readAsOf(cutoff)).some(row => row.externalId === delayedId), false);
+        await pending;
+        assert.equal((await storeB.readAsOf(cutoff)).some(row => row.externalId === delayedId), false);
+        assert.equal((await storeB.readAsOf(new Date(Date.now() + 2_000).toISOString())).filter(row => row.externalId === delayedId).length, 1);
+      } finally { await pending.catch(() => undefined); }
     });
 
     await t.test("crash after durable staging recovers as service and VACUUM preserves PIT", async () => {
       const scope = `recover-pit-${suffix}`;
-      const staged = batch(scope, "recover", "2026-01-06:0000000001");
+      const recoveredId = `recover-${suffix}`;
+      const staged = batch(scope, recoveredId, "2026-01-06:0000000001");
       await assert.rejects(storeA.ingestAdministrative(staged, { failurePoint: "after-commit-before-finalize" }), /INJECTED_FAILURE_AFTER_COMMIT_BEFORE_FINALIZE/);
       const future = new Date(Date.now() + 2_000).toISOString();
       await admin.query("set role news_reader");
       try {
         await assert.rejects(admin.query("select * from news_core.publications"), /permission denied/);
-        assert.equal((await admin.query("select * from news_core.read_publications_as_of($1::timestamptz)", [future])).rowCount, 0);
+        assert.equal((await admin.query("select * from news_core.read_publications_as_of($1::timestamptz)", [future])).rows.some(row => row.externalId === recoveredId), false);
       } finally { await admin.query("reset role"); }
       await serviceStore.getCheckpoint(scope);
       const replay = await serviceStore.ingestAdministrative(staged);
       assert.deepEqual(replay, { insertedPublications: 0, insertedObservations: 0 });
       const beforeVacuum = await serviceStore.readAsOf(future);
-      assert.equal(beforeVacuum.filter(row => row.externalId === "recover").length, 1);
+      assert.equal(beforeVacuum.filter(row => row.externalId === recoveredId).length, 1);
       await admin.query("vacuum (analyze) news_core.publications");
       await admin.query("vacuum (analyze) news_core.visibility_frontiers");
       const afterVacuum = await serviceStore.readAsOf(future);
-      assert.deepEqual(afterVacuum.filter(row => row.externalId === "recover"), beforeVacuum.filter(row => row.externalId === "recover"));
+      assert.deepEqual(afterVacuum.filter(row => row.externalId === recoveredId), beforeVacuum.filter(row => row.externalId === recoveredId));
     });
 
     await t.test("two instances serialize leases and expired lease recovers", async () => {
       await storeA.upsertTarget({ collectionScopeKey: `lease-${suffix}`, sourceId: "sec-edgar", providerKey: "sec", entityKey: "0000000001", parameters: {} });
-      const first = await storeA.claimNext("worker-a", 60);
+      const first = await storeA.claimNext("worker-a", 60, `lease-${suffix}`);
       assert.ok(first);
-      const second = await storeB.claimNext("worker-b", 60);
+      const second = await storeB.claimNext("worker-b", 60, `lease-${suffix}`);
       assert.equal(second, null);
       const firstLease = { executionId: first!.executionId, collectionScopeKey: first!.collectionScopeKey, workerId: "worker-a", leaseSeconds: 60 } as const;
       assert.equal(await storeA.heartbeat(firstLease), true);
       await storeA.finish(firstLease, true);
       const recoverScope = `lease-recover-${suffix}`;
       await storeA.upsertTarget({ collectionScopeKey: recoverScope, sourceId: "sec-edgar", providerKey: "sec", entityKey: "0000000002", parameters: {} });
-      const abandoned = await storeA.claimNext("worker-abandoned", 60);
+      const abandoned = await storeA.claimNext("worker-abandoned", 60, recoverScope);
       assert.ok(abandoned);
       await admin.query("update news_core.collection_targets set lease_until=clock_timestamp()-interval '1 second' where collection_scope_key=$1", [recoverScope]);
-      const recovered = await storeB.claimNext("worker-recovered", 60);
+      const recovered = await storeB.claimNext("worker-recovered", 60, recoverScope);
       assert.equal(recovered?.collectionScopeKey, recoverScope);
       const abandonedLease = { executionId: abandoned!.executionId, collectionScopeKey: recoverScope, workerId: "worker-abandoned", leaseSeconds: 60 } as const;
       await storeA.finish(abandonedLease, true);

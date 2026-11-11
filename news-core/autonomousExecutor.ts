@@ -4,7 +4,7 @@ import { PostgresNewsStore, type ClaimedTarget, type ExecutionLease } from "./po
 
 export type NewsExecutorOptions = Readonly<{
   store: PostgresNewsStore; workerId: string; secUserAgent: string; leaseSeconds?: number;
-  heartbeatIntervalMs?: number; fetchTimeoutMs?: number; fetchImpl?: typeof fetch; now?: Date; signal?: AbortSignal;
+  collectionScopeKey?: string; heartbeatIntervalMs?: number; fetchTimeoutMs?: number; fetchImpl?: typeof fetch; now?: Date; signal?: AbortSignal;
 }>;
 
 async function runTarget(store: PostgresNewsStore, target: ClaimedTarget, options: NewsExecutorOptions, signal: AbortSignal, lease: ExecutionLease): Promise<number> {
@@ -21,7 +21,7 @@ async function runTarget(store: PostgresNewsStore, target: ClaimedTarget, option
 }
 
 export async function runNewsExecutorOnce(options: NewsExecutorOptions): Promise<{ claimed: boolean; ingested: number }> {
-  const target = await options.store.claimNext(options.workerId, options.leaseSeconds ?? 60);
+  const target = await options.store.claimNext(options.workerId, options.leaseSeconds ?? 60, options.collectionScopeKey);
   if (!target) return { claimed: false, ingested: 0 };
   const lease: ExecutionLease = { executionId: target.executionId, collectionScopeKey: target.collectionScopeKey, workerId: options.workerId, leaseSeconds: options.leaseSeconds ?? 60 };
   const controller = new AbortController();

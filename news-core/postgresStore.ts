@@ -174,14 +174,12 @@ export class PostgresNewsStore {
 
   async readAsOf(asOf: string): Promise<NewsPublication[]> {
     const result = await this.pool.query<NewsPublication>(
-      `select publication_id as "publicationId",source_id as "sourceId",origin_fingerprint as "originFingerprint",external_id as "externalId",
-       original_url as "originalUrl",title,published_at as "publishedAt",first_seen_at as "firstSeenAt",ingested_at as "ingestedAt",
-       as_known_at as "asKnownAt",form from news_core.read_publications_as_of($1::timestamptz)`, [asOf],
+      `select * from news_core.read_publications_as_of($1::timestamptz)`, [asOf],
     );
     return result.rows;
   }
 
-  async claimNext(workerId: string, leaseSeconds = 60): Promise<ClaimedTarget | null> {
+  async claimNext(workerId: string, leaseSeconds = 60, collectionScopeKey?: string): Promise<ClaimedTarget | null> {
     await this.recoverPending(); const client = await this.pool.connect();
     try {
       await client.query("begin");
@@ -191,8 +189,9 @@ export class PostgresNewsStore {
       );
       const result = await client.query<NewsTarget & { parameters: Record<string, unknown>; attempt_count: number }>(
         `select collection_scope_key as "collectionScopeKey",source_id as "sourceId",provider_key as "providerKey",entity_key as "entityKey",parameters,attempt_count
-         from news_core.collection_targets where enabled and next_run_at <= clock_timestamp() and (lease_until is null or lease_until < clock_timestamp())
+         from news_core.collection_targets where enabled and ($1::text is null or collection_scope_key=$1) and next_run_at <= clock_timestamp() and (lease_until is null or lease_until < clock_timestamp())
          order by next_run_at,collection_scope_key for update skip locked limit 1`,
+        [collectionScopeKey ?? null],
       );
       const row = result.rows[0]; if (!row) { await client.query("commit"); return null; }
       const updated = await client.query<{ attempt_count: number }>(
