@@ -5,6 +5,8 @@ on:
     paths:
       - "news-core/**"
       - "scripts/news-poll.ts"
+      - "scripts/news-postgres-worker.ts"
+      - "supabase/migrations/*_news_core_postgres_n1.sql"
       - "docs/news/**"
       - "package.json"
       - "package-lock.json"
@@ -13,6 +15,8 @@ on:
     paths:
       - "news-core/**"
       - "scripts/news-poll.ts"
+      - "scripts/news-postgres-worker.ts"
+      - "supabase/migrations/*_news_core_postgres_n1.sql"
       - "docs/news/**"
       - "package.json"
       - "package-lock.json"
@@ -22,6 +26,21 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        options: >-
+          --health-cmd "pg_isready -U postgres -d syntrake_news_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: syntrake_news_ci
+        ports:
+          - 5432:5432
+    env:
+      NEWS_DATABASE_URL: postgres://postgres:postgres@localhost:5432/syntrake_news_ci
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -30,4 +49,6 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run test:news
+      - run: npm run test:news:pg17
       - run: npx tsc --noEmit
+      - run: npm run lint -- --quiet

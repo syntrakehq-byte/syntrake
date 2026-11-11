@@ -1,0 +1,17 @@
+2026-11-11T21:24:27.0122022+01:00 START pid=23716 restart=0
+2026-11-11T21:24:27.5604171+01:00 CRASH_INJECTED pid=23716
+2026-11-11T21:24:27.5737967+01:00 EXIT pid=23716 code=
+2026-11-11T21:24:27.5967084+01:00 START pid=6468 restart=1
+2026-11-11T21:24:35.0948592+01:00 COOPERATIVE_SHUTDOWN_REQUESTED pid=6468
+2026-11-11T21:24:35.2373684+01:00 WORKER_STORE_CLOSED pid=6468
+2026-11-11T21:24:35.2373684+01:00 EXIT pid=6468 code=
+2026-11-11T21:24:35.2464801+01:00 SUPERVISOR_STOP restarts=1 crashInjected=True
+
+Worker output:
+NEWS_SHUTDOWN_REQUESTED reason=COOPERATIVE_FILE
+NEWS_STORE_CLOSED
+
+PostgreSQL verification (isolated database; credentials omitted):
+{"target":{"lease_owner":null,"lease_until":null,"active_execution_id":null,"consecutive_failures":0},"counts":{"publications":147,"distinct_publications":147},"checkpoint":{"watermark_key":"2026-11-09:0001354457-26-001062","visibility_state":"COMMITTED"}}
+
+Duration: 8.2342789 seconds from first START to SUPERVISOR_STOP.
