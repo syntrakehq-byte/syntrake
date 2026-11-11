@@ -29,16 +29,16 @@ jobs:
     services:
       postgres:
         image: postgres:17
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: syntrake_news_ci
-        ports:
-          - 5432:5432
         options: >-
           --health-cmd "pg_isready -U postgres -d syntrake_news_ci"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: syntrake_news_ci
+        ports:
+          - 5432:5432
     env:
       NEWS_DATABASE_URL: postgres://postgres:postgres@localhost:5432/syntrake_news_ci
     steps:
@@ -48,6 +48,13 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
+      - name: Enable PostgreSQL commit timestamps
+        shell: bash
+        run: |
+          container_id=$(docker ps --filter ancestor=postgres:17 --format '{{.ID}}' | head -n 1)
+          docker exec "$container_id" psql -U postgres -d syntrake_news_ci -c "alter system set track_commit_timestamp = 'on'"
+          docker restart "$container_id"
+          until pg_isready -h 127.0.0.1 -p 5432 -U postgres -d syntrake_news_ci; do sleep 1; done
       - run: npm run test:news
       - run: npm run test:news:pg17
       - run: npx tsc --noEmit

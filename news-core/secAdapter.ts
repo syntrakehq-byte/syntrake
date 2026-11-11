@@ -16,9 +16,9 @@ function parseCursor(value: string | null | undefined): SecCursor | null {
   if (!value) return null; try { const parsed = JSON.parse(value) as SecCursor; if (typeof parsed.watermark !== "string" || !/^\d{4}-\d{2}-\d{2}:\d{10}-\d{2}-\d{6}$/.test(parsed.watermark) || parsed.overlapDays !== 7) throw new Error(); return parsed; } catch { throw new Error("INVALID_SEC_CURSOR"); }
 }
 export function secCollectionScopeKey(cik: string): string { return `sec-edgar|sec|cik=${cik}|forms=10-K,10-Q,8-K,20-F,6-K|overlap=7|v=2`; }
-export async function fetchSecFilings(options: Readonly<{ cik: string; userAgent: string; now?: Date; fetchImpl?: typeof fetch; cursor?: string | null }>): Promise<SecResult> {
+export async function fetchSecFilings(options: Readonly<{ cik: string; userAgent: string; now?: Date; fetchImpl?: typeof fetch; cursor?: string | null; signal?: AbortSignal }>): Promise<SecResult> {
   if (!/^\d{10}$/.test(options.cik) || !options.userAgent.trim()) throw new Error("INVALID_SEC_CONFIG");
-  const previous = parseCursor(options.cursor), response = await (options.fetchImpl ?? fetch)(`https://data.sec.gov/submissions/CIK${options.cik}.json`, { headers: { "User-Agent": options.userAgent, Accept: "application/json" } });
+  const previous = parseCursor(options.cursor), response = await (options.fetchImpl ?? fetch)(`https://data.sec.gov/submissions/CIK${options.cik}.json`, { headers: { "User-Agent": options.userAgent, Accept: "application/json" }, signal: options.signal });
   if (!response.ok) throw new Error(`SEC_UNAVAILABLE:${response.status}`);
   let payload: SecPayload; try { payload = await response.json() as SecPayload; } catch { throw new Error("INVALID_SEC_RESPONSE:json"); }
   if (payload.cik !== options.cik) throw new Error("INVALID_SEC_RESPONSE:cik");

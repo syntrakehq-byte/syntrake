@@ -1,12 +1,19 @@
-import type { Pool } from "pg";
-import type { NewsBatch, NewsPublication, NewsProviderObservation } from "./contracts";
+import type { Pool, PoolClient } from "pg";
+import type { NewsBatch, NewsPublication } from "./contracts";
 
 export type NewsTarget = Readonly<{
   collectionScopeKey: string; sourceId: string; providerKey: string; entityKey: string;
   parameters: Record<string, unknown>; nextRunAt?: string;
 }>;
-
+export type ExecutionLease = Readonly<{
+  executionId: string; collectionScopeKey: string; workerId: string; leaseSeconds: number;
+}>;
 export type ClaimedTarget = NewsTarget & Readonly<{ attempt: number; executionId: string }>;
+export type FinishResult = Readonly<{ status: "FINISHED" | "STALE" }>;
+export type IngestOptions = Readonly<{
+  failurePoint?: "none" | "before-commit" | "delay-before-commit";
+  delayBeforeCommitMs?: number; lease?: ExecutionLease;
+}>;
 
 function watermarkKey(batch: NewsBatch): string | null {
   const cursor = batch.checkpoint.cursor;
@@ -16,54 +23,109 @@ function watermarkKey(batch: NewsBatch): string | null {
     return typeof parsed.watermark === "string" ? parsed.watermark : null;
   } catch { return null; }
 }
+function iso(value: unknown): string {
+  const date = value instanceof Date ? value : new Date(String(value));
+  if (!Number.isFinite(date.valueOf())) throw new Error("NEWS_COMMIT_TIMESTAMP_UNAVAILABLE");
+  return date.toISOString();
+}
 
 export class PostgresNewsStore {
   constructor(private readonly pool: Pool) {}
-
   async close(): Promise<void> { await this.pool.end(); }
 
-  async ensureSource(sourceId: string, providerKey: string, sourceType = "SEC_EDGAR"): Promise<void> {
-    await this.pool.query(
-      `insert into news_core.sources(source_id,provider_key,source_type)
-       values ($1,$2,$3) on conflict (source_id) do update set provider_key=excluded.provider_key`,
-      [sourceId, providerKey, sourceType],
+  private async commitTimestamp(txid: string): Promise<string> {
+    const result = await this.pool.query<{ committed_at: Date | string | null }>(
+      "select pg_xact_commit_timestamp($1::text::xid) as committed_at", [txid],
     );
+    const value = result.rows[0]?.committed_at;
+    if (!value) throw new Error("NEWS_COMMIT_TIMESTAMP_UNAVAILABLE");
+    return iso(value);
   }
 
-  async upsertTarget(target: NewsTarget): Promise<void> {
-    await this.pool.query(
-      `insert into news_core.collection_targets(collection_scope_key,source_id,provider_key,entity_key,parameters,next_run_at)
-       values ($1,$2,$3,$4,$5,coalesce($6::timestamptz,clock_timestamp()))
-       on conflict (collection_scope_key) do update set parameters=excluded.parameters, enabled=true, updated_at=clock_timestamp()`,
-      [target.collectionScopeKey, target.sourceId, target.providerKey, target.entityKey, target.parameters, target.nextRunAt ?? null],
-    );
-  }
-
-  async getCheckpoint(scope: string): Promise<{ cursor: string | null; updatedAt: string } | null> {
-    const result = await this.pool.query<{ cursor: string | null; updated_at: Date }>(
-      "select cursor,updated_at from news_core.checkpoints where collection_scope_key=$1", [scope],
-    );
-    const row = result.rows[0];
-    return row ? { cursor: row.cursor, updatedAt: row.updated_at.toISOString() } : null;
-  }
-
-  async ingest(batch: NewsBatch, failurePoint: "none" | "before-commit" = "none"): Promise<{ insertedPublications: number; insertedObservations: number }> {
+  private async finalizePending(txid: string): Promise<void> {
+    const committedAt = await this.commitTimestamp(txid);
     const client = await this.pool.connect();
     try {
       await client.query("begin");
       await client.query(
-        "insert into news_core.sources(source_id,provider_key,source_type) values ($1,$2,'SEC_EDGAR') on conflict (source_id) do nothing",
+        `update news_core.publications set ingested_at=$1::timestamptz,as_known_at=$1::timestamptz,
+         visibility_state='COMMITTED',pending_transaction_id=null
+         where pending_transaction_id=$2 and visibility_state='PENDING'`, [committedAt, txid],
+      );
+      await client.query(
+        `update news_core.observations set visibility_state='COMMITTED',pending_transaction_id=null
+         where pending_transaction_id=$1 and visibility_state='PENDING'`, [txid],
+      );
+      await client.query(
+        `update news_core.checkpoints set visibility_state='COMMITTED',pending_transaction_id=null
+         where pending_transaction_id=$1 and visibility_state='PENDING'`, [txid],
+      );
+      await client.query("commit");
+    } catch (error) { await client.query("rollback").catch(() => undefined); throw error; }
+    finally { client.release(); }
+  }
+
+  private async recoverPending(): Promise<void> {
+    const pending = await this.pool.query<{ txid: string }>(
+      `select distinct pending_transaction_id::text as txid from news_core.publications where visibility_state='PENDING' and pending_transaction_id is not null
+       union select distinct pending_transaction_id::text from news_core.observations where visibility_state='PENDING' and pending_transaction_id is not null
+       union select distinct pending_transaction_id::text from news_core.checkpoints where visibility_state='PENDING' and pending_transaction_id is not null`,
+    );
+    for (const row of pending.rows) await this.finalizePending(row.txid);
+  }
+
+  async ensureSource(sourceId: string, providerKey: string, sourceType = "SEC_EDGAR"): Promise<void> {
+    await this.pool.query(
+      `insert into news_core.sources(source_id,provider_key,source_type) values ($1,$2,$3)
+       on conflict (source_id) do update set provider_key=excluded.provider_key`, [sourceId, providerKey, sourceType],
+    );
+  }
+  async upsertTarget(target: NewsTarget): Promise<void> {
+    await this.pool.query(
+      `insert into news_core.collection_targets(collection_scope_key,source_id,provider_key,entity_key,parameters,next_run_at)
+       values ($1,$2,$3,$4,$5,coalesce($6::timestamptz,clock_timestamp()))
+       on conflict (collection_scope_key) do update set parameters=excluded.parameters,enabled=true,updated_at=clock_timestamp()`,
+      [target.collectionScopeKey, target.sourceId, target.providerKey, target.entityKey, target.parameters, target.nextRunAt ?? null],
+    );
+  }
+  async getCheckpoint(scope: string): Promise<{ cursor: string | null; updatedAt: string } | null> {
+    await this.recoverPending();
+    const result = await this.pool.query<{ cursor: string | null; updated_at: Date }>(
+      `select cursor,updated_at from news_core.checkpoints where collection_scope_key=$1 and visibility_state='COMMITTED'`, [scope],
+    );
+    const row = result.rows[0]; return row ? { cursor: row.cursor, updatedAt: row.updated_at.toISOString() } : null;
+  }
+
+  private async assertLease(client: PoolClient, lease: ExecutionLease): Promise<void> {
+    const result = await client.query(
+      `update news_core.collection_targets t set lease_until=clock_timestamp()+($1::int * interval '1 second'),updated_at=clock_timestamp()
+       from news_core.executions e
+       where t.collection_scope_key=$2 and t.active_execution_id=e.execution_id and e.execution_id=$3 and e.worker_id=$4
+         and e.state='RUNNING' and t.lease_owner=$4 and t.lease_until > clock_timestamp()
+       returning t.collection_scope_key`, [lease.leaseSeconds, lease.collectionScopeKey, lease.executionId, lease.workerId],
+    );
+    if ((result.rowCount ?? 0) !== 1) throw new Error("NEWS_LEASE_LOST");
+  }
+
+  private async ingestInternal(batch: NewsBatch, options: IngestOptions, lease?: ExecutionLease): Promise<{ insertedPublications: number; insertedObservations: number }> {
+    const client = await this.pool.connect(); let committed = false;
+    try {
+      await client.query("begin");
+      if (lease) await this.assertLease(client, lease);
+      const tx = await client.query<{ txid: string }>("select txid_current()::text as txid");
+      const txid = tx.rows[0].txid;
+      await client.query(
+        `insert into news_core.sources(source_id,provider_key,source_type) values ($1,$2,'SEC_EDGAR') on conflict (source_id) do nothing`,
         [batch.checkpoint.sourceId, batch.observations[0]?.providerKey ?? "sec"],
       );
       let insertedPublications = 0;
       for (const publication of batch.publications) {
         const result = await client.query(
           `insert into news_core.publications
-           (publication_id,source_id,origin_fingerprint,external_id,original_url,title,published_at,first_seen_at,ingested_at,as_known_at,form)
-           values ($1,$2,$3,$4,$5,$6,$7::timestamptz,$8::timestamptz,clock_timestamp(),clock_timestamp(),$9)
+           (publication_id,source_id,origin_fingerprint,external_id,original_url,title,published_at,first_seen_at,ingested_at,as_known_at,form,visibility_state,pending_transaction_id)
+           values ($1,$2,$3,$4,$5,$6,$7::timestamptz,$8::timestamptz,null,null,$9,'PENDING',$10)
            on conflict (publication_id) do nothing`,
-          [publication.publicationId, publication.sourceId, publication.originFingerprint, publication.externalId,
-            publication.originalUrl, publication.title, publication.publishedAt, publication.firstSeenAt, publication.form],
+          [publication.publicationId, publication.sourceId, publication.originFingerprint, publication.externalId, publication.originalUrl, publication.title, publication.publishedAt, publication.firstSeenAt, publication.form, txid],
         );
         insertedPublications += result.rowCount ?? 0;
       }
@@ -71,94 +133,123 @@ export class PostgresNewsStore {
       for (const observation of batch.observations) {
         const result = await client.query(
           `insert into news_core.observations
-           (observation_id,provider_key,provider_observation_key,publication_id,observed_at,retrieved_at,publisher_key)
-           values ($1,$2,$3,$4,$5::timestamptz,$6::timestamptz,$7) on conflict (provider_key,provider_observation_key) do nothing`,
-          [observation.observationId, observation.providerKey, observation.providerObservationKey, observation.publicationId,
-            observation.observedAt, observation.retrievedAt, observation.publisherKey],
+           (observation_id,provider_key,provider_observation_key,publication_id,observed_at,retrieved_at,publisher_key,visibility_state,pending_transaction_id)
+           values ($1,$2,$3,$4,$5::timestamptz,$6::timestamptz,$7,'PENDING',$8)
+           on conflict (provider_key,provider_observation_key) do nothing`,
+          [observation.observationId, observation.providerKey, observation.providerObservationKey, observation.publicationId, observation.observedAt, observation.retrievedAt, observation.publisherKey, txid],
         );
         insertedObservations += result.rowCount ?? 0;
       }
       const key = watermarkKey(batch);
       await client.query(
-        `insert into news_core.checkpoints(collection_scope_key,source_id,cursor,watermark_key,updated_at)
-         values ($1,$2,$3,$4,$5::timestamptz)
-         on conflict (collection_scope_key) do update set cursor=excluded.cursor,watermark_key=excluded.watermark_key,updated_at=excluded.updated_at
-         where excluded.watermark_key is not null and
-           (news_core.checkpoints.watermark_key is null or excluded.watermark_key > news_core.checkpoints.watermark_key)`,
-        [batch.checkpoint.collectionScopeKey, batch.checkpoint.sourceId, batch.checkpoint.cursor, key, batch.checkpoint.updatedAt],
+        `insert into news_core.checkpoints(collection_scope_key,source_id,cursor,watermark_key,updated_at,visibility_state,pending_transaction_id)
+         values ($1,$2,$3,$4,$5::timestamptz,'PENDING',$6)
+         on conflict (collection_scope_key) do update set cursor=excluded.cursor,watermark_key=excluded.watermark_key,updated_at=excluded.updated_at,visibility_state='PENDING',pending_transaction_id=excluded.pending_transaction_id
+         where excluded.watermark_key is not null and (news_core.checkpoints.watermark_key is null or excluded.watermark_key > news_core.checkpoints.watermark_key)`,
+        [batch.checkpoint.collectionScopeKey, batch.checkpoint.sourceId, batch.checkpoint.cursor, key, batch.checkpoint.updatedAt, txid],
       );
-      if (failurePoint === "before-commit") throw new Error("INJECTED_FAILURE_BEFORE_COMMIT");
-      await client.query("commit");
+      if (options.failurePoint === "delay-before-commit") await new Promise(resolve => setTimeout(resolve, options.delayBeforeCommitMs ?? 150));
+      if (options.failurePoint === "before-commit") throw new Error("INJECTED_FAILURE_BEFORE_COMMIT");
+      if (lease) await this.assertLease(client, lease);
+      await client.query("commit"); committed = true; client.release();
+      await this.finalizePending(txid);
       return { insertedPublications, insertedObservations };
     } catch (error) {
-      await client.query("rollback").catch(() => undefined);
+      if (!committed) await client.query("rollback").catch(() => undefined);
       throw error;
-    } finally { client.release(); }
+    } finally { if (!committed) client.release(); }
+  }
+
+  /** Executor writes must always use the lease-fenced API. */
+  async ingest(batch: NewsBatch, options: IngestOptions & { lease: ExecutionLease }): Promise<{ insertedPublications: number; insertedObservations: number }> {
+    await this.recoverPending(); return this.ingestInternal(batch, options, options.lease);
+  }
+  /** Bootstrap/recovery API for controlled administrative use, never used by the executor. */
+  async ingestAdministrative(batch: NewsBatch, options: IngestOptions = {}): Promise<{ insertedPublications: number; insertedObservations: number }> {
+    await this.recoverPending(); return this.ingestInternal(batch, options);
   }
 
   async readAsOf(asOf: string): Promise<NewsPublication[]> {
     const result = await this.pool.query<NewsPublication>(
-      `select publication_id as "publicationId",source_id as "sourceId",origin_fingerprint as "originFingerprint",
-       external_id as "externalId",original_url as "originalUrl",title,published_at as "publishedAt",
-       first_seen_at as "firstSeenAt",ingested_at as "ingestedAt",as_known_at as "asKnownAt",form
-       from news_core.publications where as_known_at <= $1::timestamptz order by as_known_at,publication_id`, [asOf],
+      `select publication_id as "publicationId",source_id as "sourceId",origin_fingerprint as "originFingerprint",external_id as "externalId",
+       original_url as "originalUrl",title,published_at as "publishedAt",first_seen_at as "firstSeenAt",ingested_at as "ingestedAt",
+       as_known_at as "asKnownAt",form from news_core.publications where visibility_state='COMMITTED' and as_known_at is not null
+       and as_known_at <= $1::timestamptz and coalesce(pg_xact_commit_timestamp(xmin),as_known_at) <= $1::timestamptz
+       order by as_known_at,publication_id`, [asOf],
     );
     return result.rows;
   }
 
   async claimNext(workerId: string, leaseSeconds = 60): Promise<ClaimedTarget | null> {
-    const client = await this.pool.connect();
+    await this.recoverPending(); const client = await this.pool.connect();
     try {
       await client.query("begin");
       await client.query(
         `update news_core.executions e set state='FAILED',finished_at=clock_timestamp(),error_code='LEASE_EXPIRED',error_message='worker lease expired'
-         where e.state='RUNNING' and exists (select 1 from news_core.collection_targets t
-         where t.collection_scope_key=e.collection_scope_key and t.lease_until < clock_timestamp())`,
+         where e.state='RUNNING' and exists (select 1 from news_core.collection_targets t where t.active_execution_id=e.execution_id and t.lease_until < clock_timestamp())`,
       );
       const result = await client.query<NewsTarget & { parameters: Record<string, unknown>; attempt_count: number }>(
-        `select collection_scope_key as "collectionScopeKey",source_id as "sourceId",provider_key as "providerKey",
-         entity_key as "entityKey",parameters,attempt_count from news_core.collection_targets
-         where enabled and next_run_at <= clock_timestamp() and (lease_until is null or lease_until < clock_timestamp())
+        `select collection_scope_key as "collectionScopeKey",source_id as "sourceId",provider_key as "providerKey",entity_key as "entityKey",parameters,attempt_count
+         from news_core.collection_targets where enabled and next_run_at <= clock_timestamp() and (lease_until is null or lease_until < clock_timestamp())
          order by next_run_at,collection_scope_key for update skip locked limit 1`,
       );
       const row = result.rows[0]; if (!row) { await client.query("commit"); return null; }
       const updated = await client.query<{ attempt_count: number }>(
-        `update news_core.collection_targets set lease_owner=$1,lease_until=clock_timestamp()+($2::int * interval '1 second'),
-         attempt_count=attempt_count+1,updated_at=clock_timestamp() where collection_scope_key=$3 returning attempt_count`,
-        [workerId, leaseSeconds, row.collectionScopeKey],
+        `update news_core.collection_targets set lease_owner=$1,lease_until=clock_timestamp()+($2::int * interval '1 second'),active_execution_id=null,attempt_count=attempt_count+1,updated_at=clock_timestamp()
+         where collection_scope_key=$3 returning attempt_count`, [workerId, leaseSeconds, row.collectionScopeKey],
       );
       const execution = await client.query<{ execution_id: string }>(
-        `insert into news_core.executions(collection_scope_key,worker_id,state,attempt) values ($1,$2,'RUNNING',$3) returning execution_id`,
-        [row.collectionScopeKey, workerId, updated.rows[0].attempt_count],
+        `insert into news_core.executions(collection_scope_key,worker_id,state,attempt) values ($1,$2,'RUNNING',$3) returning execution_id`, [row.collectionScopeKey, workerId, updated.rows[0].attempt_count],
       );
+      await client.query("update news_core.collection_targets set active_execution_id=$1 where collection_scope_key=$2", [execution.rows[0].execution_id, row.collectionScopeKey]);
       await client.query("commit");
       return { collectionScopeKey: row.collectionScopeKey, sourceId: row.sourceId, providerKey: row.providerKey, entityKey: row.entityKey, parameters: row.parameters, attempt: updated.rows[0].attempt_count, executionId: execution.rows[0].execution_id };
     } catch (error) { await client.query("rollback").catch(() => undefined); throw error; }
     finally { client.release(); }
   }
 
-  async heartbeat(scope: string, workerId: string, leaseSeconds = 60): Promise<boolean> {
-    const result = await this.pool.query(
-      `update news_core.collection_targets set lease_until=clock_timestamp()+($1::int * interval '1 second'),updated_at=clock_timestamp()
-       where collection_scope_key=$2 and lease_owner=$3 and lease_until >= clock_timestamp()`, [leaseSeconds, scope, workerId],
-    );
-    return (result.rowCount ?? 0) === 1;
+  async heartbeat(lease: ExecutionLease): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("begin");
+      const target = await client.query(
+        `update news_core.collection_targets set lease_until=clock_timestamp()+($1::int * interval '1 second'),updated_at=clock_timestamp()
+         where collection_scope_key=$2 and active_execution_id=$3 and lease_owner=$4 and lease_until > clock_timestamp() returning collection_scope_key`, [lease.leaseSeconds, lease.collectionScopeKey, lease.executionId, lease.workerId],
+      );
+      const execution = await client.query(
+        `update news_core.executions set heartbeat_at=clock_timestamp() where execution_id=$1 and collection_scope_key=$2 and worker_id=$3 and state='RUNNING' returning execution_id`, [lease.executionId, lease.collectionScopeKey, lease.workerId],
+      );
+      if ((target.rowCount ?? 0) !== 1 || (execution.rowCount ?? 0) !== 1) { await client.query("rollback"); return false; }
+      await client.query("commit"); return true;
+    } catch (error) { await client.query("rollback").catch(() => undefined); throw error; }
+    finally { client.release(); }
   }
 
-  async finish(executionId: string, scope: string, workerId: string, success: boolean, error?: unknown): Promise<void> {
-    const message = error instanceof Error ? error.message.slice(0, 1000) : undefined;
-    await this.pool.query(
-      `update news_core.executions set state=$1,finished_at=clock_timestamp(),heartbeat_at=clock_timestamp(),error_code=$2,error_message=$3
-       where execution_id=$4 and worker_id=$5 and state='RUNNING'`,
-      [success ? "SUCCEEDED" : "FAILED", success ? null : "NEWS_COLLECTION_FAILED", success ? null : message, executionId, workerId],
-    );
-    await this.pool.query(
-      `update news_core.collection_targets set lease_owner=null,lease_until=null,next_run_at=clock_timestamp()+
-       (case when $1 then interval '60 seconds' else least(interval '1 hour', interval '5 seconds' * greatest(attempt_count,1)) end),
-       last_success_at=case when $1 then clock_timestamp() else last_success_at end,
-       last_error_at=case when $1 then last_error_at else clock_timestamp() end,
-       last_error=case when $1 then null else $2 end,updated_at=clock_timestamp() where collection_scope_key=$3 and lease_owner=$4`,
-      [success, message ?? null, scope, workerId],
-    );
+  async finish(lease: ExecutionLease, success: boolean, error?: unknown, failurePoint: "none" | "after-execution-update" = "none"): Promise<FinishResult> {
+    const message = error instanceof Error ? error.message.slice(0, 1000) : undefined; const client = await this.pool.connect();
+    try {
+      await client.query("begin");
+      const valid = await client.query(
+        `select 1 from news_core.executions e join news_core.collection_targets t on t.active_execution_id=e.execution_id
+         where e.execution_id=$1 and e.collection_scope_key=$2 and e.worker_id=$3 and e.state='RUNNING' and t.lease_owner=$3 and t.collection_scope_key=$2 and t.lease_until > clock_timestamp() for update`, [lease.executionId, lease.collectionScopeKey, lease.workerId],
+      );
+      if ((valid.rowCount ?? 0) !== 1) { await client.query("rollback"); return { status: "STALE" }; }
+      await client.query(
+        `update news_core.executions set state=$1,finished_at=clock_timestamp(),heartbeat_at=clock_timestamp(),error_code=$2,error_message=$3
+         where execution_id=$4 and collection_scope_key=$5 and worker_id=$6 and state='RUNNING'`, [success ? "SUCCEEDED" : "FAILED", success ? null : "NEWS_COLLECTION_FAILED", success ? null : message, lease.executionId, lease.collectionScopeKey, lease.workerId],
+      );
+      if (failurePoint === "after-execution-update") throw new Error("INJECTED_FAILURE_DURING_FINISH");
+      const target = await client.query(
+        `update news_core.collection_targets set lease_owner=null,lease_until=null,active_execution_id=null,
+         next_run_at=clock_timestamp()+(case when $1 then interval '60 seconds' else least(interval '1 hour',interval '5 seconds' * greatest(consecutive_failures+1,1)) end),
+         consecutive_failures=case when $1 then 0 else consecutive_failures+1 end,
+         last_success_at=case when $1 then clock_timestamp() else last_success_at end,last_error_at=case when $1 then last_error_at else clock_timestamp() end,
+         last_error=case when $1 then null else $2 end,updated_at=clock_timestamp()
+         where collection_scope_key=$3 and active_execution_id=$4 and lease_owner=$5 and lease_until > clock_timestamp()`, [success, message ?? null, lease.collectionScopeKey, lease.executionId, lease.workerId],
+      );
+      if ((target.rowCount ?? 0) !== 1) throw new Error("NEWS_LEASE_LOST");
+      await client.query("commit"); return { status: "FINISHED" };
+    } catch (error) { await client.query("rollback").catch(() => undefined); throw error; }
+    finally { client.release(); }
   }
 }
