@@ -103,31 +103,35 @@ drop trigger if exists publication_revision_provenance_append_only on news_core.
 create trigger publication_revision_provenance_append_only before update on news_core.publication_revision_provenance
 for each row execute function news_core.reject_committed_provenance_mutation();
 
--- Compatibility for N1 rows: create only a truthful revision-1 record from
--- timestamps already persisted by N1. No historical timestamp is invented.
+-- Compatibility for N1 rows: create a truthful revision-1 record from
+-- timestamps already persisted by N1. Pending rows remain pending and keep
+-- their original transaction id so normal recovery/finalization completes
+-- them. No later observation is promoted into this record.
 insert into news_core.publication_revisions
   (publication_revision_id, publication_id, revision_no, title, published_at, form,
-   source_document_ref, ingested_at, as_known_at, visibility_state, visibility_frontier_id)
+   source_document_ref, ingested_at, as_known_at, visibility_state,
+   pending_transaction_id, visibility_frontier_id)
 select p.publication_id || ':revision:1', p.publication_id, 1, p.title, p.published_at, p.form,
-       p.original_url, p.ingested_at, p.as_known_at, p.visibility_state, p.visibility_frontier_id
+       p.original_url, p.ingested_at, p.as_known_at, p.visibility_state,
+       p.pending_transaction_id,
+       case when p.visibility_state='COMMITTED' then p.visibility_frontier_id end
   from news_core.publications p
- where p.visibility_state='COMMITTED'
+ where p.visibility_state in ('PENDING','COMMITTED')
 on conflict (publication_revision_id) do nothing;
 
 insert into news_core.publication_revision_provenance
   (provenance_id, publication_revision_id, source_id, provider_key, provider_observation_key,
    original_url, source_document_ref, retrieved_at, ingested_at, as_known_at,
-   visibility_state, visibility_frontier_id)
-select p.publication_id || ':provenance:' || coalesce(o.observation_id, 'publication'),
-       p.publication_id || ':revision:1', p.source_id, coalesce(o.provider_key, s.provider_key),
-       o.provider_observation_key, p.original_url, p.original_url,
-       coalesce(o.retrieved_at, p.ingested_at), p.ingested_at, p.as_known_at,
-       p.visibility_state, p.visibility_frontier_id
+   visibility_state, pending_transaction_id, visibility_frontier_id)
+select p.publication_id || ':provenance:publication',
+       p.publication_id || ':revision:1', p.source_id, s.provider_key,
+       null, p.original_url, p.original_url, p.created_at,
+       p.ingested_at, p.as_known_at, p.visibility_state,
+       p.pending_transaction_id,
+       case when p.visibility_state='COMMITTED' then p.visibility_frontier_id end
   from news_core.publications p
   join news_core.sources s on s.source_id=p.source_id
-  left join news_core.observations o on o.publication_id=p.publication_id
- where p.visibility_state='COMMITTED'
-   and coalesce(o.retrieved_at, p.ingested_at) is not null
+ where p.visibility_state in ('PENDING','COMMITTED')
 on conflict (provenance_id) do nothing;
 
 revoke all on news_core.publication_revisions, news_core.publication_revision_provenance from public, news_reader;

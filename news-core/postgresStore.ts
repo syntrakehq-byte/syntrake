@@ -35,6 +35,17 @@ function iso(value: unknown): string {
   if (!Number.isFinite(date.valueOf())) throw new Error("NEWS_COMMIT_TIMESTAMP_UNAVAILABLE");
   return date.toISOString();
 }
+function optionalIso(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  return iso(value);
+}
+function flags(value: unknown): string[] {
+  if (!Array.isArray(value) || value.some(item => typeof item !== "string")) throw new Error("NEWS_REVISION_FLAGS_INVALID");
+  return [...new Set(value)].sort();
+}
+function sameJsonFlags(left: unknown, right: unknown): boolean {
+  return JSON.stringify(flags(left)) === JSON.stringify(flags(right));
+}
 
 export class PostgresNewsStore {
   constructor(private readonly pool: Pool) {}
@@ -199,6 +210,9 @@ export class PostgresNewsStore {
         );
         insertedObservations += result.rowCount ?? 0;
       }
+      for (const publication of batch.publications) {
+        await this.ensureInitialRevision(client, publication, batch.observations.find(observation => observation.publicationId === publication.publicationId), txid);
+      }
       const key = watermarkKey(batch);
       await client.query(
         `insert into news_core.checkpoints(collection_scope_key,source_id,cursor,watermark_key,updated_at,visibility_state,pending_transaction_id)
@@ -234,6 +248,28 @@ export class PostgresNewsStore {
     await this.recoverPending(); return this.ingestInternal(batch, options);
   }
 
+  private async ensureInitialRevision(client: PoolClient, publication: NewsPublication, observation: NewsBatch["observations"][number] | undefined, txid: string): Promise<void> {
+    const source = await client.query<{ provider_key: string }>("select provider_key from news_core.sources where source_id=$1", [publication.sourceId]);
+    if (source.rowCount !== 1) throw new Error("NEWS_REVISION_SOURCE_NOT_FOUND");
+    const retrievedAt = observation?.retrievedAt ?? publication.firstSeenAt;
+    const qualityFlags = publication.publishedAt && Date.parse(publication.publishedAt) > Date.parse(retrievedAt) ? ["SOURCE_CLOCK_CONFLICT"] : [];
+    const revisionId = `${publication.publicationId}:revision:1`;
+    await client.query(
+      `insert into news_core.publication_revisions
+        (publication_revision_id,publication_id,revision_no,title,published_at,form,content_fingerprint,source_document_ref,quality_flags,pending_transaction_id)
+       values ($1,$2,1,$3,$4::timestamptz,$5,null,$6,$7::jsonb,$8)
+       on conflict (publication_revision_id) do nothing`,
+      [revisionId, publication.publicationId, publication.title, publication.publishedAt, publication.form, publication.originalUrl, JSON.stringify(qualityFlags), txid],
+    );
+    await client.query(
+      `insert into news_core.publication_revision_provenance
+        (provenance_id,publication_revision_id,source_id,provider_key,provider_observation_key,original_url,source_document_ref,retrieved_at,quality_flags,pending_transaction_id)
+       values ($1,$2,$3,$4,$5,$6,$7,$8::timestamptz,$9::jsonb,$10)
+       on conflict do nothing`,
+      [`${publication.publicationId}:provenance:${observation?.observationId ?? "publication"}`, revisionId, publication.sourceId, observation?.providerKey ?? source.rows[0].provider_key, observation?.providerObservationKey ?? null, publication.originalUrl, publication.originalUrl, retrievedAt, JSON.stringify(qualityFlags), txid],
+    );
+  }
+
   /**
    * Store one immutable publication revision.  The publication itself must
    * already be committed by N1; this operation only appends a new revision
@@ -241,7 +277,16 @@ export class PostgresNewsStore {
    */
   async ingestPublicationRevision(input: NewsRevisionInput, options: IngestOptions = {}): Promise<NewsRevisionIngestResult> {
     await this.recoverPending();
-    const { revision, provenance } = input;
+    const revision = {
+      ...input.revision,
+      qualityFlags: flags(input.revision.qualityFlags),
+    };
+    const provenance = {
+      ...input.provenance,
+      qualityFlags: flags(input.provenance.qualityFlags),
+    };
+    if (revision.publishedAt !== null && !Number.isFinite(Date.parse(revision.publishedAt))) throw new Error("INVALID_NEWS_REVISION");
+    if (revision.publishedAt && Number.isFinite(Date.parse(provenance.retrievedAt)) && Date.parse(revision.publishedAt) > Date.parse(provenance.retrievedAt) && !revision.qualityFlags.includes("SOURCE_CLOCK_CONFLICT")) revision.qualityFlags = [...revision.qualityFlags, "SOURCE_CLOCK_CONFLICT"].sort();
     if (!revision.publicationRevisionId || !revision.publicationId || revision.revisionNo < 1 || !revision.title || !revision.form || !revision.sourceDocumentRef) throw new Error("INVALID_NEWS_REVISION");
     if (revision.revisionNo === 1 && revision.supersedesRevisionId !== null) throw new Error("NEWS_REVISION_DEPENDENCY_INVALID");
     if (revision.revisionNo > 1 && !revision.supersedesRevisionId) throw new Error("NEWS_REVISION_DEPENDENCY_INVALID");
@@ -270,11 +315,12 @@ export class PostgresNewsStore {
         [revision.publicationRevisionId, revision.publicationId, revision.revisionNo, revision.title, revision.publishedAt, revision.form, revision.contentFingerprint, revision.sourceDocumentRef, JSON.stringify(revision.qualityFlags), revision.supersedesRevisionId, txid],
       );
       if ((inserted.rowCount ?? 0) === 0) {
-        const existing = await client.query<{ publication_revision_id: string; title: string; source_document_ref: string; content_fingerprint: string | null; supersedes_revision_id: string | null }>(
-          "select publication_revision_id,title,source_document_ref,content_fingerprint,supersedes_revision_id from news_core.publication_revisions where publication_id=$1 and revision_no=$2", [revision.publicationId, revision.revisionNo],
+        const existing = await client.query(
+          "select publication_revision_id,publication_id,revision_no,title,published_at,form,content_fingerprint,source_document_ref,quality_flags,supersedes_revision_id from news_core.publication_revisions where publication_id=$1 and revision_no=$2", [revision.publicationId, revision.revisionNo],
         );
         const row = existing.rows[0];
-        if (!row || row.publication_revision_id !== revision.publicationRevisionId || row.title !== revision.title || row.source_document_ref !== revision.sourceDocumentRef || row.content_fingerprint !== revision.contentFingerprint || row.supersedes_revision_id !== revision.supersedesRevisionId) throw new Error("NEWS_REVISION_CONFLICT");
+        if (!row || row.publication_revision_id !== revision.publicationRevisionId || row.publication_id !== revision.publicationId || row.revision_no !== revision.revisionNo || row.title !== revision.title || optionalIso(row.published_at) !== optionalIso(revision.publishedAt) || row.form !== revision.form || row.content_fingerprint !== revision.contentFingerprint || row.source_document_ref !== revision.sourceDocumentRef || !sameJsonFlags(row.quality_flags, revision.qualityFlags) || row.supersedes_revision_id !== revision.supersedesRevisionId) throw new Error("NEWS_REVISION_CONFLICT");
+        await this.assertRevisionProvenance(client, revision, provenance);
         await client.query("commit"); committed = true;
         return { inserted: false, publicationRevisionId: revision.publicationRevisionId };
       }
@@ -286,6 +332,7 @@ export class PostgresNewsStore {
         [provenance.provenanceId, provenance.publicationRevisionId, provenance.sourceId, provenance.providerKey, provenance.providerObservationKey, provenance.originalUrl, provenance.sourceDocumentRef, provenance.retrievedAt, JSON.stringify(provenance.qualityFlags), txid],
       );
       if (options.failurePoint === "delay-before-commit") await new Promise(resolve => setTimeout(resolve, options.delayBeforeCommitMs ?? 150));
+      await this.assertRevisionProvenance(client, revision, provenance);
       if (options.failurePoint === "before-commit") throw new Error("INJECTED_FAILURE_BEFORE_COMMIT");
       await client.query("commit"); committed = true; client.release();
       if (options.failurePoint === "after-commit-before-finalize") throw new Error("INJECTED_FAILURE_AFTER_COMMIT_BEFORE_FINALIZE");
@@ -297,11 +344,23 @@ export class PostgresNewsStore {
     } finally { if (!committed) client.release(); }
   }
 
+  private async assertRevisionProvenance(client: PoolClient, revision: NewsRevisionInput["revision"], provenance: NewsRevisionInput["provenance"]): Promise<void> {
+    const rows = await client.query("select provenance_id,publication_revision_id,source_id,provider_key,provider_observation_key,original_url,source_document_ref,retrieved_at,quality_flags from news_core.publication_revision_provenance where publication_revision_id=$1 order by provenance_id", [revision.publicationRevisionId]);
+    const row = rows.rows.find(candidate => candidate.provenance_id === provenance.provenanceId);
+    if (rows.rowCount !== 1 || !row || row.publication_revision_id !== revision.publicationRevisionId || row.source_id !== provenance.sourceId || row.provider_key !== provenance.providerKey || row.provider_observation_key !== provenance.providerObservationKey || row.original_url !== provenance.originalUrl || row.source_document_ref !== provenance.sourceDocumentRef || optionalIso(row.retrieved_at) !== optionalIso(provenance.retrievedAt) || !sameJsonFlags(row.quality_flags, provenance.qualityFlags)) throw new Error("NEWS_REVISION_PROVENANCE_CONFLICT");
+  }
+
   async readPublicationRevisionsAsOf(asOf: string, publicationId?: string): Promise<NewsPublicationRevision[]> {
     const result = await this.pool.query<NewsPublicationRevision>(
       "select * from news_core.read_publication_revisions_as_of($1::timestamptz,$2::text)", [asOf, publicationId ?? null],
     );
-    return result.rows;
+    return result.rows.map(row => ({
+      ...row,
+      publishedAt: optionalIso(row.publishedAt),
+      ingestedAt: optionalIso(row.ingestedAt),
+      asKnownAt: optionalIso(row.asKnownAt),
+      qualityFlags: flags(row.qualityFlags),
+    }));
   }
 
   async readAsOf(asOf: string): Promise<NewsPublication[]> {
