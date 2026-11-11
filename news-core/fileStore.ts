@@ -1,13 +1,15 @@
 import { open, mkdir, readFile, rename, unlink } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import type { NewsBatch, NewsCheckpoint, NewsPublication, NewsProviderObservation } from "./contracts";
 import { assertNewsCheckpoint, assertNewsObservation, assertNewsPublication } from "./contracts";
 
-type State = { publications: NewsPublication[]; observations: NewsProviderObservation[]; checkpoints: NewsCheckpoint[] };
-const EMPTY: State = { publications: [], observations: [], checkpoints: [] };
+type State = { transactionId: string | null; publications: NewsPublication[]; observations: NewsProviderObservation[]; checkpoints: NewsCheckpoint[] };
+type Staged = { transactionId: string; previousTransactionId: string | null; candidate: State };
+const EMPTY: State = { transactionId: null, publications: [], observations: [], checkpoints: [] };
 const locks = new Map<string, Promise<void>>();
 
-async function atomicWrite(path: string, value: State): Promise<void> {
+async function atomicWrite(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const temp = join(dirname(path), `.${path.split(/[\\/]/).pop()}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`);
   const handle = await open(temp, "w");
@@ -27,6 +29,8 @@ async function exclusive<T>(path: string, work: () => Promise<T>): Promise<T> {
 async function readState(path: string, allowPending: boolean): Promise<State> {
   try {
     const parsed = JSON.parse(await readFile(path, "utf8")) as State;
+    if (parsed.transactionId !== undefined && parsed.transactionId !== null && typeof parsed.transactionId !== "string") throw new Error("INVALID_NEWS_TRANSACTION");
+    parsed.transactionId ??= null;
     parsed.publications.forEach(item => { assertNewsPublication(item); if (!allowPending && (item.ingestedAt === null || item.asKnownAt === null)) throw new Error("UNCOMMITTED_NEWS_STATE"); });
     parsed.observations.forEach(assertNewsObservation); parsed.checkpoints.forEach(assertNewsCheckpoint);
     const publicationIds = new Set(parsed.publications.map(item => item.publicationId));
@@ -37,17 +41,22 @@ async function readState(path: string, allowPending: boolean): Promise<State> {
 
 export class FileNewsStore {
   private readonly stagingPath: string;
-  constructor(private readonly path: string, private readonly failure: "none" | "before-staging" | "after-staging" = "none") { this.stagingPath = `${path}.staging`; }
+  constructor(private readonly path: string, private readonly failure: "none" | "before-staging" | "after-staging" | "after-final" = "none") { this.stagingPath = `${path}.staging`; }
 
   /** Public readers see only the committed main file; staging is never part of this read path. */
   async read(): Promise<State> { return readState(this.path, false); }
 
   private async recoverStaging(): Promise<void> {
     try {
-      const candidate = JSON.parse(await readFile(this.stagingPath, "utf8")) as State;
+      const staged = JSON.parse(await readFile(this.stagingPath, "utf8")) as Staged;
+      if (typeof staged.transactionId !== "string" || (staged.previousTransactionId !== null && typeof staged.previousTransactionId !== "string")) throw new Error("INVALID_NEWS_STAGING");
+      const main = await this.read();
+      if (main.transactionId === staged.transactionId) { await unlink(this.stagingPath); return; }
+      if (main.transactionId !== staged.previousTransactionId) { await unlink(this.stagingPath); return; }
+      const candidate = staged.candidate;
       candidate.publications.forEach(assertNewsPublication); candidate.observations.forEach(assertNewsObservation); candidate.checkpoints.forEach(assertNewsCheckpoint);
       const committedAt = new Date().toISOString();
-      const finalized: State = { publications: candidate.publications.map(item => item.ingestedAt === null || item.asKnownAt === null ? { ...item, ingestedAt: committedAt, asKnownAt: committedAt } : item), observations: candidate.observations, checkpoints: candidate.checkpoints.map(item => ({ ...item, updatedAt: committedAt })) };
+      const finalized: State = { transactionId: staged.transactionId, publications: candidate.publications.map(item => item.ingestedAt === null || item.asKnownAt === null ? { ...item, ingestedAt: committedAt, asKnownAt: committedAt } : item), observations: candidate.observations, checkpoints: candidate.checkpoints.map(item => ({ ...item, updatedAt: committedAt })) };
       await atomicWrite(this.path, finalized); await unlink(this.stagingPath);
     } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   }
@@ -61,13 +70,16 @@ export class FileNewsStore {
       for (const observation of batch.observations) { assertNewsObservation(observation); if (!observations.has(observation.providerObservationKey)) { observations.set(observation.providerObservationKey, observation); insertedObservations++; } }
       assertNewsCheckpoint(batch.checkpoint);
       const previous = state.checkpoints.filter(item => item.collectionScopeKey !== batch.checkpoint.collectionScopeKey);
-      const candidate: State = { publications: [...publications.values()], observations: [...observations.values()], checkpoints: [...previous, batch.checkpoint] };
+      const existing = state.checkpoints.find(item => item.collectionScopeKey === batch.checkpoint.collectionScopeKey);
+      if (insertedPublications === 0 && insertedObservations === 0 && existing?.cursor === batch.checkpoint.cursor) return { insertedPublications: 0, insertedObservations: 0 };
+      const transactionId = randomUUID();
+      const candidate: State = { transactionId, publications: [...publications.values()], observations: [...observations.values()], checkpoints: [...previous, batch.checkpoint] };
       if (this.failure === "before-staging") throw new Error("INJECTED_PRE_COMMIT_FAILURE");
-      await atomicWrite(this.stagingPath, candidate);
+      await atomicWrite(this.stagingPath, { transactionId, previousTransactionId: state.transactionId, candidate } satisfies Staged);
       if (this.failure === "after-staging") throw new Error("INJECTED_POST_STAGING_FAILURE");
       const committedAt = new Date().toISOString();
-      const finalized: State = { publications: candidate.publications.map(item => item.ingestedAt === null || item.asKnownAt === null ? { ...item, ingestedAt: committedAt, asKnownAt: committedAt } : item), observations: candidate.observations, checkpoints: candidate.checkpoints.map(item => ({ ...item, updatedAt: committedAt })) };
-      await atomicWrite(this.path, finalized); await unlink(this.stagingPath);
+      const finalized: State = { transactionId, publications: candidate.publications.map(item => item.ingestedAt === null || item.asKnownAt === null ? { ...item, ingestedAt: committedAt, asKnownAt: committedAt } : item), observations: candidate.observations, checkpoints: candidate.checkpoints.map(item => ({ ...item, updatedAt: committedAt })) };
+      await atomicWrite(this.path, finalized); if (this.failure === "after-final") throw new Error("INJECTED_POST_COMMIT_FAILURE"); await unlink(this.stagingPath);
       return { insertedPublications, insertedObservations };
     });
   }

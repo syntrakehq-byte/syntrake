@@ -68,3 +68,14 @@ test("recovery after staging crash commits timestamps and checkpoint exactly onc
   const replay = await runSecPoll({ store: new FileNewsStore(path), cik: A, userAgent: "test", fetchImpl: async () => response(payload(A)) }); assert.equal(replay.ingested, 0); const afterReplay = await new FileNewsStore(path).read(); assert.equal(afterReplay.publications.length, 1); assert.equal(afterReplay.checkpoints.length, 1);
   await rm(directory, { recursive: true, force: true });
 });
+
+test("recovery after final commit preserves the exact committed state and only cleans staging", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "syntrake-news-post-commit-")), path = join(directory, "store.json");
+  await assert.rejects(() => runSecPoll({ store: new FileNewsStore(path, "after-final"), cik: A, userAgent: "test", fetchImpl: async () => response(payload(A)) }), /INJECTED_POST_COMMIT_FAILURE/);
+  const committedBeforeRecovery = await new FileNewsStore(path).read(); const committedJson = JSON.stringify(committedBeforeRecovery);
+  assert.ok(committedBeforeRecovery.transactionId); assert.equal(committedBeforeRecovery.publications.length, 1); assert.equal(committedBeforeRecovery.observations.length, 1); assert.equal(committedBeforeRecovery.checkpoints.length, 1);
+  const replay = await runSecPoll({ store: new FileNewsStore(path), cik: A, userAgent: "test", fetchImpl: async () => response(payload(A)) }); assert.equal(replay.ingested, 0);
+  const afterRecovery = await new FileNewsStore(path).read(); assert.equal(JSON.stringify(afterRecovery), committedJson); await assert.rejects(() => readFile(`${path}.staging`, "utf8"), /ENOENT/);
+  assert.equal(afterRecovery.publications[0].ingestedAt, committedBeforeRecovery.publications[0].ingestedAt); assert.equal(afterRecovery.publications[0].asKnownAt, committedBeforeRecovery.publications[0].asKnownAt); assert.equal(afterRecovery.checkpoints[0].cursor, committedBeforeRecovery.checkpoints[0].cursor);
+  await rm(directory, { recursive: true, force: true });
+});
