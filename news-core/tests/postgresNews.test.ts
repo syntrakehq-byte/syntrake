@@ -200,7 +200,7 @@ test("News Core PostgreSQL N1 real PG17 atomic/idempotent/leased path", { skip: 
          has_table_privilege('news_reader','news_core.publications','select') reader_select,
          has_table_privilege('news_service','news_core.publications','insert') service_insert`,
       );
-      assert.deepEqual(privileges.rows[0], { public_select: false, reader_select: true, service_insert: true });
+      assert.deepEqual(privileges.rows[0], { public_select: false, reader_select: false, service_insert: true });
       await admin.query("set role news_reader");
       try {
         assert.equal((await admin.query("select * from news_core.read_publications_as_of($1::timestamptz)", [new Date(Date.now() + 2_000).toISOString()])).rowCount > 0, true);
