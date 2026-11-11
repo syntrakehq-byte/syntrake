@@ -154,6 +154,56 @@ test("News Core PostgreSQL N1 real PG17 atomic/idempotent/leased path", { skip: 
       } finally { await pending.catch(() => undefined); }
     });
 
+    await t.test("PIT frontier is assigned at the finalization boundary", async () => {
+      const scope = `pit-finalize-${suffix}`; const delayedId = `finalize-${suffix}`;
+      let cutoff = ""; let frontierCreated!: () => void;
+      const frontierCreatedPromise = new Promise<void>(resolve => { frontierCreated = resolve; });
+      const pending = storeA.ingestAdministrative(batch(scope, delayedId, "2026-01-06:0000000001"), {
+        failurePoint: "delay-before-finalize-commit", delayBeforeCommitMs: 350,
+        onFinalizeFrontierCreated: async () => { cutoff = new Date().toISOString(); frontierCreated(); },
+      });
+      try {
+        await frontierCreatedPromise;
+        assert.equal((await storeB.readAsOf(cutoff)).some(row => row.externalId === delayedId), false);
+        await pending;
+        assert.equal((await storeB.readAsOf(cutoff)).some(row => row.externalId === delayedId), false);
+        assert.equal((await storeB.readAsOf(new Date(Date.now() + 2_000).toISOString())).filter(row => row.externalId === delayedId).length, 1);
+      } finally { await pending.catch(() => undefined); }
+    });
+
+    await t.test("observation PIT uses both publication and observation frontiers", async () => {
+      const scope = `pit-observation-${suffix}`; const publicationSuffix = `observation-${suffix}`;
+      const first = batch(scope, publicationSuffix, "2026-01-07:0000000001");
+      await storeA.ingestAdministrative(first);
+      const firstFrontier = await admin.query<{ published_at: Date }>(
+        `select f.published_at from news_core.observations o
+         join news_core.visibility_frontiers f on f.frontier_id=o.visibility_frontier_id
+         where o.provider_observation_key=$1`, [`${scope}:${publicationSuffix}`],
+      );
+      assert.equal(firstFrontier.rowCount, 1);
+      const second = batch(scope, publicationSuffix, "2026-01-08:0000000001");
+      second.observations[0].observationId = `obs-2-${scope}`;
+      second.observations[0].providerObservationKey = `${scope}:${publicationSuffix}:second`;
+      second.observations[0].observedAt = new Date(Date.now() + 10).toISOString();
+      second.observations[0].retrievedAt = second.observations[0].observedAt;
+      await storeA.ingestAdministrative(second, { failurePoint: "delay-before-finalize-commit", delayBeforeCommitMs: 250 });
+      const secondFrontier = await admin.query<{ published_at: Date }>(
+        `select f.published_at from news_core.observations o
+         join news_core.visibility_frontiers f on f.frontier_id=o.visibility_frontier_id
+         where o.provider_observation_key=$1`, [`${scope}:${publicationSuffix}:second`],
+      );
+      assert.equal(secondFrontier.rowCount, 1);
+      const t1 = firstFrontier.rows[0].published_at.getTime();
+      const t2 = secondFrontier.rows[0].published_at.getTime();
+      assert.ok(t2 > t1);
+      const between = new Date(t1 + Math.max(1, Math.floor((t2 - t1) / 2))).toISOString();
+      const historical = await admin.query<{ "observationId": string }>("select * from news_core.read_observations_as_of($1::timestamptz)", [between]);
+      const expectedIds = [first.observations[0].observationId, second.observations[0].observationId];
+      assert.deepEqual(historical.rows.map(row => row.observationId).filter(id => expectedIds.includes(id)), [first.observations[0].observationId]);
+      const current = await admin.query<{ "observationId": string }>("select * from news_core.read_observations_as_of($1::timestamptz)", [new Date(t2 + 1).toISOString()]);
+      assert.deepEqual(current.rows.map(row => row.observationId).filter(id => expectedIds.includes(id)).sort(), expectedIds.sort());
+    });
+
     await t.test("crash after durable staging recovers as service and VACUUM preserves PIT", async () => {
       const scope = `recover-pit-${suffix}`;
       const recoveredId = `recover-${suffix}`;

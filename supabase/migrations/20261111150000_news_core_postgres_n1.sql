@@ -136,6 +136,27 @@ grant select, insert, update on news_core.sources to news_service;
 grant select, insert, update on news_core.publications, news_core.observations to news_service;
 grant select, insert, update on news_core.checkpoints, news_core.collection_targets, news_core.executions to news_service;
 grant select, insert on news_core.visibility_frontiers to news_service;
+revoke update on news_core.visibility_frontiers from news_service;
+revoke update (published_at) on news_core.visibility_frontiers from news_service;
+
+create or replace function news_core.seal_visibility_frontier(p_frontier_id bigint)
+returns timestamptz
+language sql volatile security definer
+set search_path = pg_catalog, news_core
+as $$
+  update news_core.visibility_frontiers f
+     set published_at=clock_timestamp()
+   where f.frontier_id=p_frontier_id
+     and (
+       exists (select 1 from news_core.publications p where p.visibility_frontier_id=f.frontier_id and p.visibility_state='PENDING')
+       or exists (select 1 from news_core.observations o where o.visibility_frontier_id=f.frontier_id and o.visibility_state='PENDING')
+       or exists (select 1 from news_core.checkpoints c where c.visibility_frontier_id=f.frontier_id and c.visibility_state='PENDING')
+     )
+  returning f.published_at
+$$;
+
+revoke all on function news_core.seal_visibility_frontier(bigint) from public;
+grant execute on function news_core.seal_visibility_frontier(bigint) to news_service;
 grant usage, select on all sequences in schema news_core to news_service;
 
 create or replace function news_core.read_publications_as_of(p_as_of timestamptz)
@@ -167,9 +188,11 @@ as $$
   select o.observation_id,o.provider_key,o.provider_observation_key,o.publication_id,o.observed_at,o.retrieved_at,o.publisher_key
     from news_core.observations o
     join news_core.publications p on p.publication_id=o.publication_id
-    join news_core.visibility_frontiers f on f.frontier_id=p.visibility_frontier_id
-   where o.visibility_state='COMMITTED' and p.visibility_state='COMMITTED' and f.published_at <= p_as_of
-   order by f.published_at,o.observation_id
+    join news_core.visibility_frontiers pf on pf.frontier_id=p.visibility_frontier_id
+    join news_core.visibility_frontiers of on of.frontier_id=o.visibility_frontier_id
+   where o.visibility_state='COMMITTED' and p.visibility_state='COMMITTED'
+     and pf.published_at <= p_as_of and of.published_at <= p_as_of
+   order by of.published_at,o.observation_id
 $$;
 
 revoke all on function news_core.read_publications_as_of(timestamptz) from public;

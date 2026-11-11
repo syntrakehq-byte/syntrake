@@ -11,8 +11,9 @@ export type ExecutionLease = Readonly<{
 export type ClaimedTarget = NewsTarget & Readonly<{ attempt: number; executionId: string }>;
 export type FinishResult = Readonly<{ status: "FINISHED" | "STALE" }>;
 export type IngestOptions = Readonly<{
-  failurePoint?: "none" | "before-commit" | "delay-before-commit" | "after-commit-before-finalize";
+  failurePoint?: "none" | "before-commit" | "delay-before-commit" | "delay-before-finalize-commit" | "after-commit-before-finalize";
   delayBeforeCommitMs?: number; lease?: ExecutionLease;
+  onFinalizeFrontierCreated?: () => Promise<void>;
 }>;
 
 function watermarkKey(batch: NewsBatch): string | null {
@@ -33,7 +34,7 @@ export class PostgresNewsStore {
   constructor(private readonly pool: Pool) {}
   async close(): Promise<void> { await this.pool.end(); }
 
-  private async finalizePending(txid: string): Promise<void> {
+  private async finalizePending(txid: string, delayBeforeCommitMs = 0, onFrontierCreated?: () => Promise<void>): Promise<void> {
     const client = await this.pool.connect();
     try {
       await client.query("begin");
@@ -44,23 +45,41 @@ export class PostgresNewsStore {
          or exists(select 1 from news_core.checkpoints where pending_transaction_id=$1 and visibility_state='PENDING') as present`, [txid],
       );
       if (!pending.rows[0].present) { await client.query("commit"); return; }
-      const frontier = await client.query<{ frontier_id: string; published_at: Date | string }>(
-        "insert into news_core.visibility_frontiers default values returning frontier_id,published_at",
+      const frontier = await client.query<{ frontier_id: string }>(
+        "insert into news_core.visibility_frontiers default values returning frontier_id",
       );
       const frontierId = frontier.rows[0].frontier_id;
-      const publishedAt = iso(frontier.rows[0].published_at);
+      await client.query(
+        "update news_core.publications set visibility_frontier_id=$2 where pending_transaction_id=$1 and visibility_state='PENDING'",
+        [txid, frontierId],
+      );
+      await client.query(
+        "update news_core.observations set visibility_frontier_id=$2 where pending_transaction_id=$1 and visibility_state='PENDING'",
+        [txid, frontierId],
+      );
+      await client.query(
+        "update news_core.checkpoints set visibility_frontier_id=$2 where pending_transaction_id=$1 and visibility_state='PENDING'",
+        [txid, frontierId],
+      );
+      if (onFrontierCreated) await onFrontierCreated();
+      if (delayBeforeCommitMs > 0) await new Promise(resolve => setTimeout(resolve, delayBeforeCommitMs));
+      const published = await client.query<{ published_at: Date | string }>(
+        "select news_core.seal_visibility_frontier($1::bigint) as published_at",
+        [frontierId],
+      );
+      const publishedAt = iso(published.rows[0].published_at);
       await client.query(
         `update news_core.publications set ingested_at=$1::timestamptz,as_known_at=$1::timestamptz,
-         visibility_state='COMMITTED',pending_transaction_id=null,visibility_frontier_id=$3
-         where pending_transaction_id=$2 and visibility_state='PENDING'`, [publishedAt, txid, frontierId],
+         visibility_state='COMMITTED',pending_transaction_id=null
+         where pending_transaction_id=$2 and visibility_state='PENDING'`, [publishedAt, txid],
       );
       await client.query(
-        `update news_core.observations set visibility_state='COMMITTED',pending_transaction_id=null,visibility_frontier_id=$2
-         where pending_transaction_id=$1 and visibility_state='PENDING'`, [txid, frontierId],
+        `update news_core.observations set visibility_state='COMMITTED',pending_transaction_id=null
+         where pending_transaction_id=$1 and visibility_state='PENDING'`, [txid],
       );
       await client.query(
-        `update news_core.checkpoints set visibility_state='COMMITTED',pending_transaction_id=null,visibility_frontier_id=$2
-         where pending_transaction_id=$1 and visibility_state='PENDING'`, [txid, frontierId],
+        `update news_core.checkpoints set visibility_state='COMMITTED',pending_transaction_id=null
+         where pending_transaction_id=$1 and visibility_state='PENDING'`, [txid],
       );
       await client.query("commit");
     } catch (error) { await client.query("rollback").catch(() => undefined); throw error; }
@@ -155,7 +174,11 @@ export class PostgresNewsStore {
       if (lease) await this.assertLease(client, lease);
       await client.query("commit"); committed = true; client.release();
       if (options.failurePoint === "after-commit-before-finalize") throw new Error("INJECTED_FAILURE_AFTER_COMMIT_BEFORE_FINALIZE");
-      await this.finalizePending(txid);
+      await this.finalizePending(
+        txid,
+        options.failurePoint === "delay-before-finalize-commit" ? options.delayBeforeCommitMs ?? 150 : 0,
+        options.onFinalizeFrontierCreated,
+      );
       return { insertedPublications, insertedObservations };
     } catch (error) {
       if (!committed) await client.query("rollback").catch(() => undefined);
