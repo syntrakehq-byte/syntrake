@@ -10,6 +10,7 @@ const n1Migration = new URL("../../supabase/migrations/20261111150000_news_core_
 const n2Migration = new URL("../../supabase/migrations/20261111170000_news_core_n2a_revisions.sql", import.meta.url);
 
 test("News Core N2-A PostgreSQL 17 immutable revisions/PIT/concurrency", { skip: !DB_URL && "NEWS_DATABASE_URL or TEST_DATABASE_URL required: real PG17 only" }, async () => {
+  const stage = (name: string) => console.log(`[N2A stage] ${name}`);
   const admin = new Client({ connectionString: DB_URL });
   const pool = new Pool({ connectionString: DB_URL, max: 8 });
   const store = new PostgresNewsStore(pool);
@@ -21,10 +22,13 @@ test("News Core N2-A PostgreSQL 17 immutable revisions/PIT/concurrency", { skip:
   const pendingScope = `n2a-pending-scope-${suffix}`;
   const sourceId = `n2a-source-${suffix}`;
   try {
+    stage("connect");
     await admin.connect();
     const version = await admin.query<{ v: string }>("select current_setting('server_version') v");
     assert.match(version.rows[0].v, /^17\./);
+    stage("N1 migration");
     await admin.query(await readFile(n1Migration, "utf8"));
+    stage("seed committed publication");
     const now = new Date().toISOString();
     await admin.query("insert into news_core.sources(source_id,provider_key,source_type) values ($1,'n2a-provider','SEC_EDGAR') on conflict do nothing", [sourceId]);
     const frontier = await admin.query<{ frontier_id: string; published_at: Date }>("insert into news_core.visibility_frontiers default values returning frontier_id,published_at");
@@ -37,7 +41,9 @@ test("News Core N2-A PostgreSQL 17 immutable revisions/PIT/concurrency", { skip:
     await admin.query("insert into news_core.publications(publication_id,source_id,origin_fingerprint,external_id,original_url,title,first_seen_at,form,visibility_state,pending_transaction_id) values ($1,$2,$3,$4,$5,$6,$7,'8-K','PENDING',$8)", [pendingPublicationId, sourceId, `origin-${pendingPublicationId}`, pendingPublicationId, "https://www.sec.gov/Archives/edgar/data/1/n2a-pending.htm", "Pending filing", now, pendingTx]);
     await admin.query("insert into news_core.observations(observation_id,provider_key,provider_observation_key,publication_id,observed_at,retrieved_at,publisher_key,visibility_state,pending_transaction_id) values ($1,'n2a-provider',$2,$3,$4,$4,'n2a','PENDING',$5)", [`observation-${pendingPublicationId}`, `observation-${pendingPublicationId}`, pendingPublicationId, now, pendingTx]);
     await admin.query("commit");
+    stage("N2 migration");
     await admin.query(await readFile(n2Migration, "utf8"));
+    stage("N2 migration complete");
     await store.ensureSource(sourceId, "n2a-provider");
 
     const backfilledProvenance = await admin.query<{ provider_observation_key: string | null; visibility_frontier_id: string; visibility_state: string }>("select provider_observation_key,visibility_frontier_id::text,visibility_state from news_core.publication_revision_provenance where publication_revision_id=$1", [`${publicationId}:revision:1`]);
@@ -46,7 +52,9 @@ test("News Core N2-A PostgreSQL 17 immutable revisions/PIT/concurrency", { skip:
 
     const pendingRaw = await admin.query<{ visibility_state: string; as_known_at: Date | null }>("select visibility_state,as_known_at from news_core.publication_revisions where publication_id=$1", [pendingPublicationId]);
     assert.deepEqual(pendingRaw.rows[0], { visibility_state: "PENDING", as_known_at: null }, "pending backfill is not promoted by migration");
+    stage("recover pending publication");
     await store.getCheckpoint(pendingScope);
+    stage("pending publication recovered");
     const recoveredPending = await store.readPublicationRevisionsAsOf(new Date(Date.now() + 5_000).toISOString(), pendingPublicationId);
     assert.deepEqual(recoveredPending.map(row => row.revisionNo), [1], "pending publication receives and recovers revision 1");
 
@@ -55,6 +63,7 @@ test("News Core N2-A PostgreSQL 17 immutable revisions/PIT/concurrency", { skip:
       observations: [{ observationId: `observation-${newPublicationId}`, providerKey: "n2a-provider", providerObservationKey: `observation-${newPublicationId}`, publicationId: newPublicationId, observedAt: now, retrievedAt: now, publisherKey: "n2a" }],
       checkpoint: { sourceId, collectionScopeKey: scope, cursor: JSON.stringify({ watermark: `2026-01-01:${suffix}` }), updatedAt: now },
     });
+    stage("new publication persisted");
     assert.deepEqual((await store.readPublicationRevisionsAsOf(new Date(Date.now() + 5_000).toISOString(), newPublicationId)).map(row => row.revisionNo), [1], "post-migration publication receives revision 1");
 
     const original = await store.readPublicationRevisionsAsOf(new Date(Date.now() + 5_000).toISOString(), publicationId);
