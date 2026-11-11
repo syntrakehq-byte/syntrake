@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from "pg";
-import type { NewsBatch, NewsPublication } from "./contracts";
+import type { NewsBatch, NewsPublication, NewsPublicationRevision, NewsRevisionProvenance } from "./contracts";
 
 export type NewsTarget = Readonly<{
   collectionScopeKey: string; sourceId: string; providerKey: string; entityKey: string;
@@ -16,6 +16,11 @@ export type IngestOptions = Readonly<{
   onFinalizeFrontierCreated?: () => Promise<void>;
   onFinalizeSealedBeforeCommit?: (publishedAt: string) => Promise<void>;
 }>;
+export type NewsRevisionInput = Readonly<{
+  revision: Omit<NewsPublicationRevision, "ingestedAt" | "asKnownAt">;
+  provenance: Omit<NewsRevisionProvenance, "ingestedAt" | "asKnownAt">;
+}>;
+export type NewsRevisionIngestResult = Readonly<{ inserted: boolean; publicationRevisionId: string }>;
 
 function watermarkKey(batch: NewsBatch): string | null {
   const cursor = batch.checkpoint.cursor;
@@ -52,7 +57,9 @@ export class PostgresNewsStore {
       const pending = await client.query<{ present: boolean }>(
         `select exists(select 1 from news_core.publications where pending_transaction_id=$1 and visibility_state='PENDING')
          or exists(select 1 from news_core.observations where pending_transaction_id=$1 and visibility_state='PENDING')
-         or exists(select 1 from news_core.checkpoints where pending_transaction_id=$1 and visibility_state='PENDING') as present`, [txid],
+         or exists(select 1 from news_core.checkpoints where pending_transaction_id=$1 and visibility_state='PENDING')
+         or exists(select 1 from news_core.publication_revisions where pending_transaction_id=$1 and visibility_state='PENDING')
+         or exists(select 1 from news_core.publication_revision_provenance where pending_transaction_id=$1 and visibility_state='PENDING') as present`, [txid],
       );
       if (!pending.rows[0].present) { await client.query("commit"); return; }
       const frontier = await client.query<{ frontier_id: string }>(
@@ -69,6 +76,14 @@ export class PostgresNewsStore {
       );
       await client.query(
         "update news_core.checkpoints set visibility_frontier_id=$2 where pending_transaction_id=$1 and visibility_state='PENDING'",
+        [txid, frontierId],
+      );
+      await client.query(
+        "update news_core.publication_revisions set visibility_frontier_id=$2 where pending_transaction_id=$1 and visibility_state='PENDING'",
+        [txid, frontierId],
+      );
+      await client.query(
+        "update news_core.publication_revision_provenance set visibility_frontier_id=$2 where pending_transaction_id=$1 and visibility_state='PENDING'",
         [txid, frontierId],
       );
       if (onFrontierCreated) await onFrontierCreated();
@@ -91,6 +106,16 @@ export class PostgresNewsStore {
         `update news_core.checkpoints set visibility_state='COMMITTED',pending_transaction_id=null
          where pending_transaction_id=$1 and visibility_state='PENDING'`, [txid],
       );
+      await client.query(
+        `update news_core.publication_revisions set ingested_at=$1::timestamptz,as_known_at=$1::timestamptz,
+         visibility_state='COMMITTED',pending_transaction_id=null
+         where pending_transaction_id=$2 and visibility_state='PENDING'`, [publishedAt, txid],
+      );
+      await client.query(
+        `update news_core.publication_revision_provenance set ingested_at=$1::timestamptz,as_known_at=$1::timestamptz,
+         visibility_state='COMMITTED',pending_transaction_id=null
+         where pending_transaction_id=$2 and visibility_state='PENDING'`, [publishedAt, txid],
+      );
       if (onSealedBeforeCommit) await onSealedBeforeCommit(publishedAt);
       await client.query("commit");
     } catch (error) { await client.query("rollback").catch(() => undefined); throw error; }
@@ -101,7 +126,9 @@ export class PostgresNewsStore {
     const pending = await this.pool.query<{ txid: string }>(
       `select distinct pending_transaction_id::text as txid from news_core.publications where visibility_state='PENDING' and pending_transaction_id is not null
        union select distinct pending_transaction_id::text from news_core.observations where visibility_state='PENDING' and pending_transaction_id is not null
-       union select distinct pending_transaction_id::text from news_core.checkpoints where visibility_state='PENDING' and pending_transaction_id is not null`,
+       union select distinct pending_transaction_id::text from news_core.checkpoints where visibility_state='PENDING' and pending_transaction_id is not null
+       union select distinct pending_transaction_id::text from news_core.publication_revisions where visibility_state='PENDING' and pending_transaction_id is not null
+       union select distinct pending_transaction_id::text from news_core.publication_revision_provenance where visibility_state='PENDING' and pending_transaction_id is not null`,
     );
     for (const row of pending.rows) await this.finalizePending(row.txid);
   }
@@ -205,6 +232,76 @@ export class PostgresNewsStore {
   /** Bootstrap/recovery API for controlled administrative use, never used by the executor. */
   async ingestAdministrative(batch: NewsBatch, options: IngestOptions = {}): Promise<{ insertedPublications: number; insertedObservations: number }> {
     await this.recoverPending(); return this.ingestInternal(batch, options);
+  }
+
+  /**
+   * Store one immutable publication revision.  The publication itself must
+   * already be committed by N1; this operation only appends a new revision
+   * and its provenance in one transaction.
+   */
+  async ingestPublicationRevision(input: NewsRevisionInput, options: IngestOptions = {}): Promise<NewsRevisionIngestResult> {
+    await this.recoverPending();
+    const { revision, provenance } = input;
+    if (!revision.publicationRevisionId || !revision.publicationId || revision.revisionNo < 1 || !revision.title || !revision.form || !revision.sourceDocumentRef) throw new Error("INVALID_NEWS_REVISION");
+    if (revision.revisionNo === 1 && revision.supersedesRevisionId !== null) throw new Error("NEWS_REVISION_DEPENDENCY_INVALID");
+    if (revision.revisionNo > 1 && !revision.supersedesRevisionId) throw new Error("NEWS_REVISION_DEPENDENCY_INVALID");
+    if (provenance.publicationRevisionId !== revision.publicationRevisionId || provenance.sourceDocumentRef !== revision.sourceDocumentRef || !provenance.sourceId || !provenance.providerKey || !provenance.retrievedAt || !Number.isFinite(Date.parse(provenance.retrievedAt))) throw new Error("INVALID_NEWS_REVISION_PROVENANCE");
+    const client = await this.pool.connect(); let committed = false;
+    try {
+      await client.query("begin");
+      const tx = await client.query<{ txid: string }>("select txid_current()::text as txid");
+      const txid = tx.rows[0].txid;
+      const publication = await client.query<{ source_id: string; visibility_state: string; as_known_at: Date | null }>(
+        "select source_id,visibility_state,as_known_at from news_core.publications where publication_id=$1 for share", [revision.publicationId],
+      );
+      if (publication.rowCount !== 1 || publication.rows[0].visibility_state !== "COMMITTED" || !publication.rows[0].as_known_at) throw new Error("NEWS_REVISION_PARENT_NOT_COMMITTED");
+      if (publication.rows[0].source_id !== provenance.sourceId) throw new Error("NEWS_REVISION_SOURCE_MISMATCH");
+      if (revision.revisionNo > 1) {
+        const prior = await client.query<{ publication_id: string; visibility_state: string; as_known_at: Date | null }>(
+          "select publication_id,visibility_state,as_known_at from news_core.publication_revisions where publication_revision_id=$1 for share", [revision.supersedesRevisionId],
+        );
+        if (prior.rowCount !== 1 || prior.rows[0].publication_id !== revision.publicationId || prior.rows[0].visibility_state !== "COMMITTED" || !prior.rows[0].as_known_at || prior.rows[0].as_known_at.getTime() > Date.now()) throw new Error("NEWS_REVISION_DEPENDENCY_INVALID");
+      }
+      const inserted = await client.query(
+        `insert into news_core.publication_revisions
+          (publication_revision_id,publication_id,revision_no,title,published_at,form,content_fingerprint,source_document_ref,quality_flags,supersedes_revision_id,pending_transaction_id)
+         values ($1,$2,$3,$4,$5::timestamptz,$6,$7,$8,$9::jsonb,$10,$11)
+         on conflict (publication_id,revision_no) do nothing`,
+        [revision.publicationRevisionId, revision.publicationId, revision.revisionNo, revision.title, revision.publishedAt, revision.form, revision.contentFingerprint, revision.sourceDocumentRef, JSON.stringify(revision.qualityFlags), revision.supersedesRevisionId, txid],
+      );
+      if ((inserted.rowCount ?? 0) === 0) {
+        const existing = await client.query<{ publication_revision_id: string; title: string; source_document_ref: string; content_fingerprint: string | null; supersedes_revision_id: string | null }>(
+          "select publication_revision_id,title,source_document_ref,content_fingerprint,supersedes_revision_id from news_core.publication_revisions where publication_id=$1 and revision_no=$2", [revision.publicationId, revision.revisionNo],
+        );
+        const row = existing.rows[0];
+        if (!row || row.publication_revision_id !== revision.publicationRevisionId || row.title !== revision.title || row.source_document_ref !== revision.sourceDocumentRef || row.content_fingerprint !== revision.contentFingerprint || row.supersedes_revision_id !== revision.supersedesRevisionId) throw new Error("NEWS_REVISION_CONFLICT");
+        await client.query("commit"); committed = true;
+        return { inserted: false, publicationRevisionId: revision.publicationRevisionId };
+      }
+      await client.query(
+        `insert into news_core.publication_revision_provenance
+          (provenance_id,publication_revision_id,source_id,provider_key,provider_observation_key,original_url,source_document_ref,retrieved_at,quality_flags,pending_transaction_id)
+         values ($1,$2,$3,$4,$5,$6,$7,$8::timestamptz,$9::jsonb,$10)
+         on conflict do nothing`,
+        [provenance.provenanceId, provenance.publicationRevisionId, provenance.sourceId, provenance.providerKey, provenance.providerObservationKey, provenance.originalUrl, provenance.sourceDocumentRef, provenance.retrievedAt, JSON.stringify(provenance.qualityFlags), txid],
+      );
+      if (options.failurePoint === "delay-before-commit") await new Promise(resolve => setTimeout(resolve, options.delayBeforeCommitMs ?? 150));
+      if (options.failurePoint === "before-commit") throw new Error("INJECTED_FAILURE_BEFORE_COMMIT");
+      await client.query("commit"); committed = true; client.release();
+      if (options.failurePoint === "after-commit-before-finalize") throw new Error("INJECTED_FAILURE_AFTER_COMMIT_BEFORE_FINALIZE");
+      await this.finalizePending(txid, options.failurePoint === "delay-before-finalize-commit" ? options.delayBeforeCommitMs ?? 150 : 0, options.onFinalizeFrontierCreated, options.onFinalizeSealedBeforeCommit);
+      return { inserted: true, publicationRevisionId: revision.publicationRevisionId };
+    } catch (error) {
+      if (!committed) await client.query("rollback").catch(() => undefined);
+      throw error;
+    } finally { if (!committed) client.release(); }
+  }
+
+  async readPublicationRevisionsAsOf(asOf: string, publicationId?: string): Promise<NewsPublicationRevision[]> {
+    const result = await this.pool.query<NewsPublicationRevision>(
+      "select * from news_core.read_publication_revisions_as_of($1::timestamptz,$2::text)", [asOf, publicationId ?? null],
+    );
+    return result.rows;
   }
 
   async readAsOf(asOf: string): Promise<NewsPublication[]> {

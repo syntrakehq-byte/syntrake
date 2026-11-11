@@ -9,6 +9,17 @@ export type NewsProviderObservation = Readonly<{
 }>;
 export type NewsCheckpoint = Readonly<{ sourceId: string; collectionScopeKey: string; cursor: string | null; updatedAt: string }>;
 export type NewsBatch = Readonly<{ publications: readonly NewsPublication[]; observations: readonly NewsProviderObservation[]; checkpoint: NewsCheckpoint }>;
+export type NewsPublicationRevision = Readonly<{
+  publicationRevisionId: string; publicationId: string; revisionNo: number; title: string;
+  publishedAt: string | null; form: string; contentFingerprint: string | null;
+  sourceDocumentRef: string; qualityFlags: readonly string[]; supersedesRevisionId: string | null;
+  ingestedAt: string | null; asKnownAt: string | null;
+}>;
+export type NewsRevisionProvenance = Readonly<{
+  provenanceId: string; publicationRevisionId: string; sourceId: string; providerKey: string;
+  providerObservationKey: string | null; originalUrl: string | null; sourceDocumentRef: string;
+  retrievedAt: string; qualityFlags: readonly string[];
+}>;
 const iso = (value: unknown): value is string => typeof value === "string" && !Number.isNaN(Date.parse(value));
 export function assertNewsPublication(value: unknown): asserts value is NewsPublication {
   if (!value || typeof value !== "object") throw new Error("INVALID_NEWS_PUBLICATION");
