@@ -32,8 +32,13 @@ test("News Core PostgreSQL N1 real PG17 atomic/idempotent/leased path", { skip: 
   const poolA = new Pool({ connectionString: DB_URL, max: 4 });
   const poolB = new Pool({ connectionString: DB_URL, max: 4 });
   const servicePool = new Pool({ connectionString: DB_URL, max: 1 });
+  const timeoutPool = new Pool({ connectionString: DB_URL, max: 1 });
+  poolA.on("error", () => undefined);
+  timeoutPool.on("error", () => undefined);
+  timeoutPool.on("connect", client => client.on("error", () => undefined));
   const storeA = new PostgresNewsStore(poolA); const storeB = new PostgresNewsStore(poolB);
   const serviceStore = new PostgresNewsStore(servicePool);
+  const timeoutStore = new PostgresNewsStore(timeoutPool);
   const suffix = randomUUID().replaceAll("-", "");
   const scopeA = `pg-test-a-${suffix}`; const scopeB = `pg-test-b-${suffix}`;
   try {
@@ -63,7 +68,7 @@ test("News Core PostgreSQL N1 real PG17 atomic/idempotent/leased path", { skip: 
       const after = new Date().toISOString();
       const visible = await storeA.readAsOf(before);
       assert.equal(visible.some(row => row.externalId === "ack-loss"), false);
-      assert.equal((await storeA.readAsOf(after)).filter(row => row.externalId === "ack-loss").length, 1);
+      assert.equal((await storeA.readAsOf(new Date(Date.parse(after) + 1_500).toISOString())).filter(row => row.externalId === "ack-loss").length, 1);
       const count = await admin.query("select count(*)::int n from news_core.observations where provider_observation_key=$1", [`${scopeA}:ack-loss`]);
       assert.equal(count.rows[0].n, 1);
     });
@@ -171,7 +176,7 @@ test("News Core PostgreSQL N1 real PG17 atomic/idempotent/leased path", { skip: 
       } finally { await pending.catch(() => undefined); }
     });
 
-    await t.test("PG17 demonstrates look-ahead when paused after seal before commit", async () => {
+    await t.test("PG17 proves no look-ahead with a conservative frontier after seal pause", async () => {
       const scope = `pit-seal-gap-${suffix}`; const delayedId = `seal-gap-${suffix}`;
       let releaseCommit!: () => void;
       const commitReleased = new Promise<void>(resolve => { releaseCommit = resolve; });
@@ -180,17 +185,31 @@ test("News Core PostgreSQL N1 real PG17 atomic/idempotent/leased path", { skip: 
       const pending = storeA.ingestAdministrative(batch(scope, delayedId, "2026-01-06:0000000002"), {
         onFinalizeSealedBeforeCommit: async publishedAt => { sealed(publishedAt); await commitReleased; },
       });
-      const sealedAt = await sealedPromise;
-      const cutoff = new Date(Date.parse(sealedAt) + 1).toISOString();
+      const conservativeFrontier = await sealedPromise;
+      const cutoff = new Date().toISOString();
       try {
+        assert.ok(Date.parse(conservativeFrontier) > Date.parse(cutoff));
         assert.equal((await storeB.readAsOf(cutoff)).some(row => row.externalId === delayedId), false);
         releaseCommit();
         await pending;
-        assert.equal((await storeB.readAsOf(cutoff)).some(row => row.externalId === delayedId), true);
+        assert.equal((await storeB.readAsOf(cutoff)).some(row => row.externalId === delayedId), false);
+        assert.equal((await storeB.readAsOf(new Date(Date.parse(conservativeFrontier) + 1).toISOString())).some(row => row.externalId === delayedId), true);
       } finally {
         releaseCommit();
         await pending.catch(() => undefined);
       }
+    });
+
+    await t.test("transaction timeout aborts finalization and recovery remains idempotent", async () => {
+      const scope = `pit-timeout-${suffix}`; const delayedId = `timeout-${suffix}`;
+      await assert.rejects(timeoutStore.ingestAdministrative(batch(scope, delayedId, "2026-01-06:0000000003"), {
+        onFinalizeSealedBeforeCommit: async () => { await wait(1_500); },
+      }));
+      const recovered = await storeB.getCheckpoint(scope);
+      assert.ok(recovered);
+      const replay = await storeB.ingestAdministrative(batch(scope, delayedId, "2026-01-06:0000000003"));
+      assert.deepEqual(replay, { insertedPublications: 0, insertedObservations: 0 });
+      assert.equal((await storeB.readAsOf(new Date(Date.now() + 5_000).toISOString())).filter(row => row.externalId === delayedId).length, 1);
     });
 
     await t.test("observation PIT uses both publication and observation frontiers", async () => {
@@ -279,6 +298,8 @@ test("News Core PostgreSQL N1 real PG17 atomic/idempotent/leased path", { skip: 
          has_table_privilege('news_service','news_core.publications','insert') service_insert`,
       );
       assert.deepEqual(privileges.rows[0], { public_select: false, reader_select: false, service_insert: true });
+      const parameter = await admin.query<{ can_set: boolean }>("select has_parameter_privilege('news_service','transaction_timeout','SET') can_set");
+      assert.equal(parameter.rows[0].can_set, false);
       await admin.query("set role news_reader");
       try {
         assert.equal((await admin.query("select * from news_core.read_publications_as_of($1::timestamptz)", [new Date(Date.now() + 2_000).toISOString()])).rowCount > 0, true);
@@ -299,6 +320,6 @@ test("News Core PostgreSQL N1 real PG17 atomic/idempotent/leased path", { skip: 
     await admin.query("delete from news_core.checkpoints where collection_scope_key like $1", [`%${suffix}%`]).catch(() => undefined);
     await admin.query("delete from news_core.sources where source_id like $1", [`role-source-${suffix}`]).catch(() => undefined);
     await admin.query("delete from news_core.sources where source_id like $1", [`service-source-${suffix}`]).catch(() => undefined);
-    await Promise.all([storeA.close(), storeB.close(), serviceStore.close(), admin.end()]);
+    await Promise.all([storeA.close(), storeB.close(), serviceStore.close(), timeoutStore.close(), admin.end()]);
   }
 });

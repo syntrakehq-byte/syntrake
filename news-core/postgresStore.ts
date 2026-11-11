@@ -44,6 +44,10 @@ export class PostgresNewsStore {
     const client = await this.pool.connect();
     try {
       await client.query("begin");
+      const guard = await client.query<{ availability_at: Date | string }>(
+        "select availability_at from news_core.begin_news_finalization_guard()",
+      );
+      const availabilityAt = iso(guard.rows[0].availability_at);
       await client.query("select pg_advisory_xact_lock(hashtextextended($1, 20261111))", [txid]);
       const pending = await client.query<{ present: boolean }>(
         `select exists(select 1 from news_core.publications where pending_transaction_id=$1 and visibility_state='PENDING')
@@ -70,8 +74,8 @@ export class PostgresNewsStore {
       if (onFrontierCreated) await onFrontierCreated();
       if (delayBeforeCommitMs > 0) await new Promise(resolve => setTimeout(resolve, delayBeforeCommitMs));
       const published = await client.query<{ published_at: Date | string }>(
-        "select news_core.seal_visibility_frontier($1::bigint) as published_at",
-        [frontierId],
+        "select news_core.seal_visibility_frontier($1::bigint,$2::timestamptz) as published_at",
+        [frontierId, availabilityAt],
       );
       const publishedAt = iso(published.rows[0].published_at);
       await client.query(

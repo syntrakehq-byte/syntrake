@@ -12,6 +12,10 @@ do $$ begin
   end if;
 end $$;
 
+-- The worker cannot disable the server-side finalization guard.
+revoke set on parameter transaction_timeout from public;
+revoke set on parameter transaction_timeout from news_service;
+
 create table if not exists news_core.sources (
   source_id text primary key,
   provider_key text not null,
@@ -139,14 +143,28 @@ grant select, insert on news_core.visibility_frontiers to news_service;
 revoke update on news_core.visibility_frontiers from news_service;
 revoke update (published_at) on news_core.visibility_frontiers from news_service;
 
-create or replace function news_core.seal_visibility_frontier(p_frontier_id bigint)
+create or replace function news_core.begin_news_finalization_guard()
+returns table(transaction_started_at timestamptz, availability_at timestamptz)
+language plpgsql volatile security definer
+set search_path = pg_catalog, news_core
+as $$
+begin
+  -- PostgreSQL 17 aborts this transaction if it spans more than 1 second.
+  perform set_config('transaction_timeout', '1s', true);
+  return query
+    select transaction_timestamp(), transaction_timestamp() + interval '1.25 seconds';
+end
+$$;
+
+create or replace function news_core.seal_visibility_frontier(p_frontier_id bigint, p_published_at timestamptz)
 returns timestamptz
 language sql volatile security definer
 set search_path = pg_catalog, news_core
 as $$
   update news_core.visibility_frontiers f
-     set published_at=clock_timestamp()
+     set published_at=p_published_at
    where f.frontier_id=p_frontier_id
+     and p_published_at > clock_timestamp()
      and (
        exists (select 1 from news_core.publications p where p.visibility_frontier_id=f.frontier_id and p.visibility_state='PENDING')
        or exists (select 1 from news_core.observations o where o.visibility_frontier_id=f.frontier_id and o.visibility_state='PENDING')
@@ -155,8 +173,10 @@ as $$
   returning f.published_at
 $$;
 
-revoke all on function news_core.seal_visibility_frontier(bigint) from public;
-grant execute on function news_core.seal_visibility_frontier(bigint) to news_service;
+revoke all on function news_core.begin_news_finalization_guard() from public;
+revoke all on function news_core.seal_visibility_frontier(bigint,timestamptz) from public;
+grant execute on function news_core.begin_news_finalization_guard() to news_service;
+grant execute on function news_core.seal_visibility_frontier(bigint,timestamptz) to news_service;
 grant usage, select on all sequences in schema news_core to news_service;
 
 create or replace function news_core.read_publications_as_of(p_as_of timestamptz)
