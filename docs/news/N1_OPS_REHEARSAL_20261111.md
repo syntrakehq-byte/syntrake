@@ -79,3 +79,12 @@ O ensaio durou segundos e não prova disponibilidade 24/7, reinício do host, ro
 - `news_service` continua a ser uma role interna confiável; DML administrativo direto não é uma fronteira de segurança de produção.
 
 O N1 não é declarado como operação 24/7 de produção.
+
+## OPS-03 — códigos de saída
+
+O worker preserva falhas de arranque e execução no `process.exitCode`, captura falhas de `store.close()` como não-zero e só escreve `NEWS_STORE_CLOSED` após o fecho bem-sucedido. O encerramento final usa o código acumulado, nunca força sucesso.
+
+Subprocessos reais cobertos por `news-core/tests/workerProcess.test.ts`:
+
+- shutdown cooperativo com PostgreSQL isolado: código `0`, marcador `NEWS_STORE_CLOSED`, sem processo órfão;
+- PostgreSQL indisponível no arranque: código diferente de `0`.

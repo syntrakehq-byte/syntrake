@@ -5,6 +5,7 @@ import { PostgresNewsStore, type ClaimedTarget, type ExecutionLease } from "./po
 export type NewsExecutorOptions = Readonly<{
   store: PostgresNewsStore; workerId: string; secUserAgent: string; leaseSeconds?: number;
   collectionScopeKey?: string; heartbeatIntervalMs?: number; fetchTimeoutMs?: number; fetchImpl?: typeof fetch; now?: Date; signal?: AbortSignal;
+  onExecutionError?: (error: unknown) => void;
 }>;
 
 async function runTarget(store: PostgresNewsStore, target: ClaimedTarget, options: NewsExecutorOptions, signal: AbortSignal, lease: ExecutionLease): Promise<number> {
@@ -70,7 +71,7 @@ export async function runNewsExecutorForever(options: NewsExecutorOptions & { in
   const intervalMs = options.intervalMs ?? 30_000;
   while (!options.signal?.aborted) {
     try { await runNewsExecutorOnce(options); }
-    catch (error) { console.error(error instanceof Error ? error.message : "NEWS_EXECUTOR_FAILED"); }
+    catch (error) { options.onExecutionError?.(error); console.error(error instanceof Error ? error.message : "NEWS_EXECUTOR_FAILED"); }
     if (options.signal?.aborted) break;
     await waitForNextPoll(intervalMs, options.signal);
   }
