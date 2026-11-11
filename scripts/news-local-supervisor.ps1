@@ -21,6 +21,9 @@ while ((Get-Date) -lt $deadline) {
   $stamp = Get-Date -Format "yyyyMMdd-HHmmssfff"
   $stdout = Join-Path $LogDirectory "worker-$stamp.out.log"
   $stderr = Join-Path $LogDirectory "worker-$stamp.err.log"
+  $shutdownFile = Join-Path $LogDirectory "shutdown-$stamp.request"
+  if (Test-Path -LiteralPath $shutdownFile) { Remove-Item -LiteralPath $shutdownFile -Force }
+  $env:NEWS_SHUTDOWN_FILE = $shutdownFile
   $worker = Start-Process -FilePath "node" -ArgumentList @("node_modules/tsx/dist/cli.mjs", "scripts/news-postgres-worker.ts") -WorkingDirectory $root -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
   Write-Event "START pid=$($worker.Id) restart=$restartCount"
   $started = Get-Date
@@ -36,15 +39,17 @@ while ((Get-Date) -lt $deadline) {
   }
 
   if (-not $worker.HasExited) {
-    & node -e "process.kill($($worker.Id), 'SIGTERM')"
-    Write-Event "SIGTERM pid=$($worker.Id)"
+    New-Item -ItemType File -Force -Path $shutdownFile | Out-Null
+    Write-Event "COOPERATIVE_SHUTDOWN_REQUESTED pid=$($worker.Id)"
     $worker.WaitForExit(10000)
     if (-not $worker.HasExited) {
       Stop-Process -Id $worker.Id -Force
-      Write-Event "FORCE_STOP_AFTER_SIGTERM pid=$($worker.Id)"
+      Write-Event "FORCE_STOP_AFTER_COOPERATIVE_TIMEOUT pid=$($worker.Id)"
     }
   }
 
+  $closed = Select-String -LiteralPath $stdout -Pattern "NEWS_STORE_CLOSED" -Quiet
+  if ($closed) { Write-Event "WORKER_STORE_CLOSED pid=$($worker.Id)" }
   Write-Event "EXIT pid=$($worker.Id) code=$($worker.ExitCode)"
   if ((Get-Date) -lt $deadline) { $restartCount++ }
 }
