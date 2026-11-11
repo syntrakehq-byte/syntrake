@@ -30,7 +30,11 @@ test("News Core PostgreSQL N1 real PG17 atomic/idempotent/leased path", { skip: 
   await admin.connect();
   const poolA = new Pool({ connectionString: DB_URL, max: 4 });
   const poolB = new Pool({ connectionString: DB_URL, max: 4 });
+  const servicePool = new Pool({ connectionString: DB_URL, max: 1 });
   const storeA = new PostgresNewsStore(poolA); const storeB = new PostgresNewsStore(poolB);
+  const serviceConnection = await servicePool.connect();
+  await serviceConnection.query("set role news_service"); serviceConnection.release();
+  const serviceStore = new PostgresNewsStore(servicePool);
   const suffix = randomUUID().replaceAll("-", "");
   const scopeA = `pg-test-a-${suffix}`; const scopeB = `pg-test-b-${suffix}`;
   try {
@@ -61,6 +65,19 @@ test("News Core PostgreSQL N1 real PG17 atomic/idempotent/leased path", { skip: 
       assert.equal((await storeA.readAsOf(after)).filter(row => row.externalId === "ack-loss").length, 1);
       const count = await admin.query("select count(*)::int n from news_core.observations where provider_observation_key=$1", [`${scopeA}:ack-loss`]);
       assert.equal(count.rows[0].n, 1);
+    });
+
+    await t.test("effective news_service completes ingest, finalization, checkpoint and recovery", async () => {
+      const scope = `service-${suffix}`;
+      const source = `service-source-${suffix}`;
+      await serviceStore.ensureSource(source, "sec");
+      const serviceBatch = { ...batch(scope, "service", "2026-01-03:0000000002"), checkpoint: { ...batch(scope, "service", "2026-01-03:0000000002").checkpoint, sourceId: source } };
+      const committed = await serviceStore.ingestAdministrative(serviceBatch);
+      assert.deepEqual(committed, { insertedPublications: 1, insertedObservations: 1 });
+      const state = await admin.query<{ visibility_state: string; frontier: number | null }>("select visibility_state,visibility_frontier_id frontier from news_core.publications where publication_id=$1", [`pg-test-${scope}-service`]);
+      assert.equal(state.rows[0].visibility_state, "COMMITTED"); assert.ok(state.rows[0].frontier);
+      const replay = await serviceStore.ingestAdministrative(serviceBatch);
+      assert.deepEqual(replay, { insertedPublications: 0, insertedObservations: 0 });
     });
 
     await t.test("expired worker is fenced before data/checkpoint commit", async () => {
@@ -132,6 +149,27 @@ test("News Core PostgreSQL N1 real PG17 atomic/idempotent/leased path", { skip: 
       assert.equal((await storeB.readAsOf(new Date(Date.now() + 2_000).toISOString())).filter(row => row.externalId === "delayed").length, 1);
     });
 
+    await t.test("crash after durable staging recovers as service and VACUUM preserves PIT", async () => {
+      const scope = `recover-pit-${suffix}`;
+      const staged = batch(scope, "recover", "2026-01-06:0000000001");
+      await assert.rejects(storeA.ingestAdministrative(staged, { failurePoint: "after-commit-before-finalize" }), /INJECTED_FAILURE_AFTER_COMMIT_BEFORE_FINALIZE/);
+      const future = new Date(Date.now() + 2_000).toISOString();
+      await admin.query("set role news_reader");
+      try {
+        await assert.rejects(admin.query("select * from news_core.publications"), /permission denied/);
+        assert.equal((await admin.query("select * from news_core.read_publications_as_of($1::timestamptz)", [future])).rowCount, 0);
+      } finally { await admin.query("reset role"); }
+      await serviceStore.getCheckpoint(scope);
+      const replay = await serviceStore.ingestAdministrative(staged);
+      assert.deepEqual(replay, { insertedPublications: 0, insertedObservations: 0 });
+      const beforeVacuum = await serviceStore.readAsOf(future);
+      assert.equal(beforeVacuum.filter(row => row.externalId === "recover").length, 1);
+      await admin.query("vacuum (analyze) news_core.publications");
+      await admin.query("vacuum (analyze) news_core.visibility_frontiers");
+      const afterVacuum = await serviceStore.readAsOf(future);
+      assert.deepEqual(afterVacuum.filter(row => row.externalId === "recover"), beforeVacuum.filter(row => row.externalId === "recover"));
+    });
+
     await t.test("two instances serialize leases and expired lease recovers", async () => {
       await storeA.upsertTarget({ collectionScopeKey: `lease-${suffix}`, sourceId: "sec-edgar", providerKey: "sec", entityKey: "0000000001", parameters: {} });
       const first = await storeA.claimNext("worker-a", 60);
@@ -165,7 +203,8 @@ test("News Core PostgreSQL N1 real PG17 atomic/idempotent/leased path", { skip: 
       assert.deepEqual(privileges.rows[0], { public_select: false, reader_select: true, service_insert: true });
       await admin.query("set role news_reader");
       try {
-        assert.equal((await admin.query("select count(*) from news_core.publications")).rowCount, 1);
+        assert.equal((await admin.query("select * from news_core.read_publications_as_of($1::timestamptz)", [new Date(Date.now() + 2_000).toISOString()])).rowCount > 0, true);
+        await assert.rejects(admin.query("select count(*) from news_core.publications"), /permission denied/);
         await assert.rejects(admin.query("insert into news_core.publications(publication_id,source_id,origin_fingerprint,external_id,original_url,title,first_seen_at,form) values ('denied','sec-edgar','denied','denied','https://www.sec.gov/Archives/edgar/data/1/denied','denied',clock_timestamp(),'8-K')"), /permission denied/);
       } finally { await admin.query("reset role"); }
       await admin.query("set role news_service");
@@ -181,6 +220,7 @@ test("News Core PostgreSQL N1 real PG17 atomic/idempotent/leased path", { skip: 
     await admin.query("delete from news_core.publications where publication_id like $1", [`pg-test-%${suffix}%`]).catch(() => undefined);
     await admin.query("delete from news_core.checkpoints where collection_scope_key like $1", [`%${suffix}%`]).catch(() => undefined);
     await admin.query("delete from news_core.sources where source_id like $1", [`role-source-${suffix}`]).catch(() => undefined);
-    await Promise.all([storeA.close(), storeB.close(), admin.end()]);
+    await admin.query("delete from news_core.sources where source_id like $1", [`service-source-${suffix}`]).catch(() => undefined);
+    await Promise.all([storeA.close(), storeB.close(), serviceStore.close(), admin.end()]);
   }
 });

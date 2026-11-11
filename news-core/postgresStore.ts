@@ -11,7 +11,7 @@ export type ExecutionLease = Readonly<{
 export type ClaimedTarget = NewsTarget & Readonly<{ attempt: number; executionId: string }>;
 export type FinishResult = Readonly<{ status: "FINISHED" | "STALE" }>;
 export type IngestOptions = Readonly<{
-  failurePoint?: "none" | "before-commit" | "delay-before-commit";
+  failurePoint?: "none" | "before-commit" | "delay-before-commit" | "after-commit-before-finalize";
   delayBeforeCommitMs?: number; lease?: ExecutionLease;
 }>;
 
@@ -33,32 +33,34 @@ export class PostgresNewsStore {
   constructor(private readonly pool: Pool) {}
   async close(): Promise<void> { await this.pool.end(); }
 
-  private async commitTimestamp(txid: string): Promise<string> {
-    const result = await this.pool.query<{ committed_at: Date | string | null }>(
-      "select pg_xact_commit_timestamp($1::text::xid) as committed_at", [txid],
-    );
-    const value = result.rows[0]?.committed_at;
-    if (!value) throw new Error("NEWS_COMMIT_TIMESTAMP_UNAVAILABLE");
-    return iso(value);
-  }
-
   private async finalizePending(txid: string): Promise<void> {
-    const committedAt = await this.commitTimestamp(txid);
     const client = await this.pool.connect();
     try {
       await client.query("begin");
+      await client.query("select pg_advisory_xact_lock(hashtextextended($1, 20261111))", [txid]);
+      const pending = await client.query<{ present: boolean }>(
+        `select exists(select 1 from news_core.publications where pending_transaction_id=$1 and visibility_state='PENDING')
+         or exists(select 1 from news_core.observations where pending_transaction_id=$1 and visibility_state='PENDING')
+         or exists(select 1 from news_core.checkpoints where pending_transaction_id=$1 and visibility_state='PENDING') as present`, [txid],
+      );
+      if (!pending.rows[0].present) { await client.query("commit"); return; }
+      const frontier = await client.query<{ frontier_id: string; published_at: Date | string }>(
+        "insert into news_core.visibility_frontiers default values returning frontier_id,published_at",
+      );
+      const frontierId = frontier.rows[0].frontier_id;
+      const publishedAt = iso(frontier.rows[0].published_at);
       await client.query(
         `update news_core.publications set ingested_at=$1::timestamptz,as_known_at=$1::timestamptz,
-         visibility_state='COMMITTED',pending_transaction_id=null
-         where pending_transaction_id=$2 and visibility_state='PENDING'`, [committedAt, txid],
+         visibility_state='COMMITTED',pending_transaction_id=null,visibility_frontier_id=$3
+         where pending_transaction_id=$2 and visibility_state='PENDING'`, [publishedAt, txid, frontierId],
       );
       await client.query(
-        `update news_core.observations set visibility_state='COMMITTED',pending_transaction_id=null
-         where pending_transaction_id=$1 and visibility_state='PENDING'`, [txid],
+        `update news_core.observations set visibility_state='COMMITTED',pending_transaction_id=null,visibility_frontier_id=$2
+         where pending_transaction_id=$1 and visibility_state='PENDING'`, [txid, frontierId],
       );
       await client.query(
-        `update news_core.checkpoints set visibility_state='COMMITTED',pending_transaction_id=null
-         where pending_transaction_id=$1 and visibility_state='PENDING'`, [txid],
+        `update news_core.checkpoints set visibility_state='COMMITTED',pending_transaction_id=null,visibility_frontier_id=$2
+         where pending_transaction_id=$1 and visibility_state='PENDING'`, [txid, frontierId],
       );
       await client.query("commit");
     } catch (error) { await client.query("rollback").catch(() => undefined); throw error; }
@@ -152,6 +154,7 @@ export class PostgresNewsStore {
       if (options.failurePoint === "before-commit") throw new Error("INJECTED_FAILURE_BEFORE_COMMIT");
       if (lease) await this.assertLease(client, lease);
       await client.query("commit"); committed = true; client.release();
+      if (options.failurePoint === "after-commit-before-finalize") throw new Error("INJECTED_FAILURE_AFTER_COMMIT_BEFORE_FINALIZE");
       await this.finalizePending(txid);
       return { insertedPublications, insertedObservations };
     } catch (error) {
@@ -173,9 +176,7 @@ export class PostgresNewsStore {
     const result = await this.pool.query<NewsPublication>(
       `select publication_id as "publicationId",source_id as "sourceId",origin_fingerprint as "originFingerprint",external_id as "externalId",
        original_url as "originalUrl",title,published_at as "publishedAt",first_seen_at as "firstSeenAt",ingested_at as "ingestedAt",
-       as_known_at as "asKnownAt",form from news_core.publications where visibility_state='COMMITTED' and as_known_at is not null
-       and as_known_at <= $1::timestamptz and coalesce(pg_xact_commit_timestamp(xmin),as_known_at) <= $1::timestamptz
-       order by as_known_at,publication_id`, [asOf],
+       as_known_at as "asKnownAt",form from news_core.read_publications_as_of($1::timestamptz)`, [asOf],
     );
     return result.rows;
   }

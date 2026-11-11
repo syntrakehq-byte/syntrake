@@ -48,13 +48,6 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - name: Enable PostgreSQL commit timestamps
-        shell: bash
-        run: |
-          container_id=$(docker ps --filter ancestor=postgres:17 --format '{{.ID}}' | head -n 1)
-          docker exec "$container_id" psql -U postgres -d syntrake_news_ci -c "alter system set track_commit_timestamp = 'on'"
-          docker restart "$container_id"
-          until pg_isready -h 127.0.0.1 -p 5432 -U postgres -d syntrake_news_ci; do sleep 1; done
       - run: npm run test:news
       - run: npm run test:news:pg17
       - run: npx tsc --noEmit
