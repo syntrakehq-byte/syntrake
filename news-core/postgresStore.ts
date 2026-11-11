@@ -212,12 +212,12 @@ export class PostgresNewsStore {
     const client = await this.pool.connect();
     try {
       await client.query("begin");
+      const execution = await client.query(
+        `update news_core.executions set heartbeat_at=clock_timestamp() where execution_id=$1 and collection_scope_key=$2 and worker_id=$3 and state='RUNNING' returning execution_id`, [lease.executionId, lease.collectionScopeKey, lease.workerId],
+      );
       const target = await client.query(
         `update news_core.collection_targets set lease_until=clock_timestamp()+($1::int * interval '1 second'),updated_at=clock_timestamp()
          where collection_scope_key=$2 and active_execution_id=$3 and lease_owner=$4 and lease_until > clock_timestamp() returning collection_scope_key`, [lease.leaseSeconds, lease.collectionScopeKey, lease.executionId, lease.workerId],
-      );
-      const execution = await client.query(
-        `update news_core.executions set heartbeat_at=clock_timestamp() where execution_id=$1 and collection_scope_key=$2 and worker_id=$3 and state='RUNNING' returning execution_id`, [lease.executionId, lease.collectionScopeKey, lease.workerId],
       );
       if ((target.rowCount ?? 0) !== 1 || (execution.rowCount ?? 0) !== 1) { await client.query("rollback"); return false; }
       await client.query("commit"); return true;
