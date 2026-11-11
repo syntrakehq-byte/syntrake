@@ -14,6 +14,7 @@ export type IngestOptions = Readonly<{
   failurePoint?: "none" | "before-commit" | "delay-before-commit" | "delay-before-finalize-commit" | "after-commit-before-finalize";
   delayBeforeCommitMs?: number; lease?: ExecutionLease;
   onFinalizeFrontierCreated?: () => Promise<void>;
+  onFinalizeSealedBeforeCommit?: (publishedAt: string) => Promise<void>;
 }>;
 
 function watermarkKey(batch: NewsBatch): string | null {
@@ -34,7 +35,12 @@ export class PostgresNewsStore {
   constructor(private readonly pool: Pool) {}
   async close(): Promise<void> { await this.pool.end(); }
 
-  private async finalizePending(txid: string, delayBeforeCommitMs = 0, onFrontierCreated?: () => Promise<void>): Promise<void> {
+  private async finalizePending(
+    txid: string,
+    delayBeforeCommitMs = 0,
+    onFrontierCreated?: () => Promise<void>,
+    onSealedBeforeCommit?: (publishedAt: string) => Promise<void>,
+  ): Promise<void> {
     const client = await this.pool.connect();
     try {
       await client.query("begin");
@@ -81,6 +87,7 @@ export class PostgresNewsStore {
         `update news_core.checkpoints set visibility_state='COMMITTED',pending_transaction_id=null
          where pending_transaction_id=$1 and visibility_state='PENDING'`, [txid],
       );
+      if (onSealedBeforeCommit) await onSealedBeforeCommit(publishedAt);
       await client.query("commit");
     } catch (error) { await client.query("rollback").catch(() => undefined); throw error; }
     finally { client.release(); }
@@ -178,6 +185,7 @@ export class PostgresNewsStore {
         txid,
         options.failurePoint === "delay-before-finalize-commit" ? options.delayBeforeCommitMs ?? 150 : 0,
         options.onFinalizeFrontierCreated,
+        options.onFinalizeSealedBeforeCommit,
       );
       return { insertedPublications, insertedObservations };
     } catch (error) {

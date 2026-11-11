@@ -171,6 +171,28 @@ test("News Core PostgreSQL N1 real PG17 atomic/idempotent/leased path", { skip: 
       } finally { await pending.catch(() => undefined); }
     });
 
+    await t.test("PG17 demonstrates look-ahead when paused after seal before commit", async () => {
+      const scope = `pit-seal-gap-${suffix}`; const delayedId = `seal-gap-${suffix}`;
+      let releaseCommit!: () => void;
+      const commitReleased = new Promise<void>(resolve => { releaseCommit = resolve; });
+      let sealed!: (publishedAt: string) => void;
+      const sealedPromise = new Promise<string>(resolve => { sealed = resolve; });
+      const pending = storeA.ingestAdministrative(batch(scope, delayedId, "2026-01-06:0000000002"), {
+        onFinalizeSealedBeforeCommit: async publishedAt => { sealed(publishedAt); await commitReleased; },
+      });
+      const sealedAt = await sealedPromise;
+      const cutoff = new Date(Date.parse(sealedAt) + 1).toISOString();
+      try {
+        assert.equal((await storeB.readAsOf(cutoff)).some(row => row.externalId === delayedId), false);
+        releaseCommit();
+        await pending;
+        assert.equal((await storeB.readAsOf(cutoff)).some(row => row.externalId === delayedId), true);
+      } finally {
+        releaseCommit();
+        await pending.catch(() => undefined);
+      }
+    });
+
     await t.test("observation PIT uses both publication and observation frontiers", async () => {
       const scope = `pit-observation-${suffix}`; const publicationSuffix = `observation-${suffix}`;
       const first = batch(scope, publicationSuffix, "2026-01-07:0000000001");
