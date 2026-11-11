@@ -24,7 +24,7 @@ function runWorker(env: Record<string, string>): Promise<{ code: number | null; 
   });
 }
 
-test("worker subprocess exits 0 after cooperative shutdown and closes the store", { skip: !DB_URL && "NEWS_DATABASE_URL or TEST_DATABASE_URL required" }, async () => {
+test("worker subprocess has one bootstrap, exits 0 after cooperative shutdown and closes the store", { skip: !DB_URL && "NEWS_DATABASE_URL or TEST_DATABASE_URL required" }, async () => {
   const admin = new Client({ connectionString: DB_URL }); await admin.connect();
   const directory = await mkdtemp(join(tmpdir(), "syntrake-news-worker-process-"));
   const shutdownFile = join(directory, "shutdown.request");
@@ -36,6 +36,7 @@ test("worker subprocess exits 0 after cooperative shutdown and closes the store"
     assert.equal(result.signal, null); assert.equal(result.code, 0, result.stderr);
     assert.match(result.stdout, /NEWS_SHUTDOWN_REQUESTED reason=COOPERATIVE_FILE/);
     assert.match(result.stdout, /NEWS_STORE_CLOSED/);
+    assert.equal((result.stdout.match(/NEWS_STORE_CLOSED/g) ?? []).length, 1, "import must not start a second worker bootstrap");
   } finally {
     await admin.query("delete from news_core.collection_targets where entity_key=$1", [cik]);
     await admin.end(); await rm(directory, { recursive: true, force: true });
