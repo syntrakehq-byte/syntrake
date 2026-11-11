@@ -249,6 +249,8 @@ export class PostgresNewsStore {
   }
 
   private async ensureInitialRevision(client: PoolClient, publication: NewsPublication, observation: NewsBatch["observations"][number] | undefined, txid: string): Promise<void> {
+    const existing = await client.query("select publication_revision_id from news_core.publication_revisions where publication_id=$1 and revision_no=1", [publication.publicationId]);
+    if (existing.rowCount === 1) return;
     const source = await client.query<{ provider_key: string }>("select provider_key from news_core.sources where source_id=$1", [publication.sourceId]);
     if (source.rowCount !== 1) throw new Error("NEWS_REVISION_SOURCE_NOT_FOUND");
     const retrievedAt = observation?.retrievedAt ?? publication.firstSeenAt;
