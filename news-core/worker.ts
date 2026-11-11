@@ -1,12 +1,14 @@
 import { fetchSecFilings } from "./secAdapter";
+import { secCollectionScopeKey } from "./secAdapter";
 import { FileNewsStore } from "./fileStore";
 
 export async function runSecPoll(options: Readonly<{ store: FileNewsStore; cik: string; userAgent: string; now?: Date; fetchImpl?: typeof fetch }>): Promise<{ ingested: number; checkpoint: string | null }> {
-  const current = await options.store.checkpoint("sec-edgar");
+  const collectionScopeKey = secCollectionScopeKey(options.cik);
+  const current = await options.store.checkpoint(collectionScopeKey);
   const result = await fetchSecFilings({ cik: options.cik, userAgent: options.userAgent, now: options.now, fetchImpl: options.fetchImpl, cursor: current?.cursor });
   const updatedAt = (options.now ?? new Date()).toISOString();
-  await options.store.commit({ publications: result.publications, observations: result.observations, checkpoint: { sourceId: "sec-edgar", cursor: result.nextCursor, updatedAt } });
-  return { ingested: result.publications.length, checkpoint: result.nextCursor };
+  const committed = await options.store.commit({ publications: result.publications, observations: result.observations, checkpoint: { sourceId: "sec-edgar", collectionScopeKey, cursor: result.nextCursor, updatedAt } });
+  return { ingested: committed.insertedPublications, checkpoint: result.nextCursor };
 }
 
 if (process.argv[1]?.endsWith("news-poll.ts")) {
