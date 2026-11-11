@@ -49,14 +49,22 @@ test("source outage, replay idempotency and pre-commit failure are fail-closed",
   await assert.rejects(() => fetchSecFilings({ cik: A, userAgent: "test", fetchImpl: async () => response({}, 503) }), /SEC_UNAVAILABLE:503/);
   const store = new FileNewsStore(path); const fetchImpl = async () => response(payload(A)); await runSecPoll({ store, cik: A, userAgent: "test", fetchImpl }); await runSecPoll({ store, cik: A, userAgent: "test", fetchImpl });
   const saved = JSON.parse(await readFile(path, "utf8")); assert.equal(saved.publications.length, 1); assert.equal(saved.observations.length, 1);
-  await assert.rejects(() => runSecPoll({ store: new FileNewsStore(path, "before"), cik: B, userAgent: "test", fetchImpl: async () => response(payload(B, [{ accession: "0000789019-26-000001", date: "2026-11-10", document: "b.htm", form: "8-K" }])) }), /INJECTED_PRE_COMMIT_FAILURE/); assert.equal((await new FileNewsStore(path).checkpoint(`sec-edgar|sec|cik=${B}|forms=10-K,10-Q,8-K,20-F,6-K|overlap=7|v=2`)), null);
+  await assert.rejects(() => runSecPoll({ store: new FileNewsStore(path, "before-staging"), cik: B, userAgent: "test", fetchImpl: async () => response(payload(B, [{ accession: "0000789019-26-000001", date: "2026-11-10", document: "b.htm", form: "8-K" }])) }), /INJECTED_PRE_COMMIT_FAILURE/); assert.equal((await new FileNewsStore(path).checkpoint(`sec-edgar|sec|cik=${B}|forms=10-K,10-Q,8-K,20-F,6-K|overlap=7|v=2`)), null);
   await rm(directory, { recursive: true, force: true });
 });
 
-test("post-durable interruption recovers timestamps and checkpoint", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "syntrake-news-pit-")), path = join(directory, "store.json"), failing = new FileNewsStore(path, "after-durable");
-  await assert.rejects(() => runSecPoll({ store: failing, cik: A, userAgent: "test", fetchImpl: async () => response(payload(A)) }), /INJECTED_POST_DURABLE_FAILURE/);
-  const pending = JSON.parse(await readFile(path, "utf8")); assert.equal(pending.checkpoints.length, 0); assert.equal(pending.publications[0].ingestedAt, null);
-  await runSecPoll({ store: new FileNewsStore(path), cik: A, userAgent: "test", fetchImpl: async () => response(payload(A)) }); const final = JSON.parse(await readFile(path, "utf8")); assert.equal(final.checkpoints.length, 1); assert.ok(final.publications[0].ingestedAt); assert.ok(final.publications[0].asKnownAt);
+test("staging is private: read during incomplete persistence exposes no provisional PIT state", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "syntrake-news-pit-")), path = join(directory, "store.json"), failing = new FileNewsStore(path, "after-staging");
+  await assert.rejects(() => runSecPoll({ store: failing, cik: A, userAgent: "test", fetchImpl: async () => response(payload(A)) }), /INJECTED_POST_STAGING_FAILURE/);
+  const during = await new FileNewsStore(path).read(); assert.equal(during.publications.length, 0); assert.equal(during.observations.length, 0); assert.equal(during.checkpoints.length, 0);
+  await rm(directory, { recursive: true, force: true });
+});
+
+test("recovery after staging crash commits timestamps and checkpoint exactly once", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "syntrake-news-recovery-pit-")), path = join(directory, "store.json"), failing = new FileNewsStore(path, "after-staging");
+  await assert.rejects(() => runSecPoll({ store: failing, cik: A, userAgent: "test", fetchImpl: async () => response(payload(A)) }), /INJECTED_POST_STAGING_FAILURE/);
+  const recovered = await runSecPoll({ store: new FileNewsStore(path), cik: A, userAgent: "test", fetchImpl: async () => response(payload(A)) }); assert.equal(recovered.ingested, 0);
+  const final = await new FileNewsStore(path).read(); assert.equal(final.checkpoints.length, 1); assert.equal(final.publications.length, 1); assert.equal(final.observations.length, 1); assert.ok(final.publications[0].ingestedAt); assert.ok(final.publications[0].asKnownAt); assert.ok(Date.parse(final.publications[0].asKnownAt!) >= Date.parse(final.publications[0].firstSeenAt));
+  const replay = await runSecPoll({ store: new FileNewsStore(path), cik: A, userAgent: "test", fetchImpl: async () => response(payload(A)) }); assert.equal(replay.ingested, 0); const afterReplay = await new FileNewsStore(path).read(); assert.equal(afterReplay.publications.length, 1); assert.equal(afterReplay.checkpoints.length, 1);
   await rm(directory, { recursive: true, force: true });
 });
