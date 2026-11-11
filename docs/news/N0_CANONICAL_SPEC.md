@@ -48,7 +48,7 @@ Os identificadores internos são opacos, imutáveis e não derivados de tickers.
 | `NewsEvidence` | `evidenceId`, `publicationRevisionId`, `claimRef`, `evidenceType`, `independenceGroup`, `asKnownAt` | `sourceDocumentRef`, `verificationStatus`, `qualityFlags` |
 | `NewsEntityLinkRevision` | `entityLinkId`, `eventId`, `linkRevisionId`, `targetScope`, `identityStatus`, `relationType`, `asKnownAt`, `evidenceIds` | `issuerId`, `instrumentId`, `listingId`, `sectorKey`, `countryCode`, `macroKey`, `candidateRef`, `validFrom`, `validTo` |
 | `NewsEventPublicationLinkRevision` | `linkId`, `eventId`, `publicationId`, `linkRevisionId`, `asKnownAt`, `relation` | `supersedesRevisionId`, `qualityFlags`; vínculo muitos-para-muitos |
-| `NewsCollectionCursor` | `sourceId`, `checkpoint`, `updatedAt` | Estado recuperável por fonte; não é cursor de paginação da API |
+| `NewsCollectionCursor` | `sourceId`, `collectionScopeKey`, `checkpoint`, `updatedAt` | Estado recuperável por partição de recolha; `collectionScopeKey` é obrigatório e não é cursor de paginação da API |
 | `NewsJobExecution` | `executionId`, `jobKey`, `state`, `attempt`, `startedAt` | `finishedAt`, `failureCode`, `lastHeartbeatAt`; sem payloads sensíveis nos logs |
 
 Campos textuais publicados não são tratados como instruções executáveis. Armazenamento concreto (tabelas, constraints, índices) fica para desenho N1, preservando estas invariantes.
@@ -108,6 +108,8 @@ Tratamento explícito de: resposta vazia válida, indisponibilidade, throttling,
 
 O limite transacional é normativo: uma unidade de ingestão deve gravar as observações, a publicação/revisão deduplicada, as referências de proveniência e o resultado de processamento antes de avançar `NewsCollectionCursor`. O cursor só pode avançar na mesma transação que o compromisso durável de todos os itens até à posição, ou ficar no ponto anterior com uma tarefa recuperável. Uma falha antes do commit deixa o cursor inalterado; uma falha depois do commit pode repetir a leitura, mas constraints únicas em `(sourceId, originFingerprint)`, `(providerKey, providerObservationKey)` e `(publicationId, revisionNo)` tornam a repetição sem efeitos lógicos adicionais. O checkpoint não pode ser usado como substituto da chave de idempotência.
 
+`collectionScopeKey`/`sourcePartitionKey` é uma chave estável derivada de `sourceId`, `providerKey`, entidade ou consulta de recolha (por exemplo, CIK), versão do adaptador e parâmetros relevantes (formulários, janela, ordenação e limite). O valor deve ser normalizado e versionado antes de ser persistido; não pode conter `accountId`, holdings ou watchlists privadas. Cada combinação de fonte, CIK e parâmetros possui cursor e estado de recovery independentes. A idempotência operacional inclui essa partição: uma mesma accession em CIKs diferentes não é considerada o mesmo item lógico sem prova de identidade de origem.
+
 ### 7. API interna canónica
 
 **Envelope comum `NewsEnvelope` próprio:** `schemaVersion`, `requestId`, `status`, `asOf`, `servedAt`, `data`, `sourceRefs`, `qualityFlags`, `nextCursor|null`. Validação runtime de todos os itens e campos, `schemaVersion=1.0` inicialmente. Separar erro operacional de consulta bem-sucedida sem resultados (`AVAILABLE` com `data=[]`). `PARTIAL` ou `STALE` devem indicar incompletude ou atraso. Nunca devolver uma identidade resolvida se o estado não for `EXACT`. Não importar diretamente o validador `DataEnvelope` de preços.
@@ -138,7 +140,7 @@ A arquitetura exige:
 
 **Prova obrigatória de aceitação:** com **zero sessões**, executar dois ciclos de recolha real, incluindo um ciclo sem novas publicações se for o caso, e provar ingestão de pelo menos uma publicação genuína verificável, que poderá ser reproduzida de modo controlado para garantir um teste determinístico. Provar persistência e leitura posterior. Interromper o executor entre descoberta e persistência, reiniciar, recuperar o trabalho sem duplicação e completar o intervalo perdido. O teste não depende de um jornal publicar precisamente durante o ensaio. Falhar qualquer prova impede encerrar o News Core.
 
-Os 37 IDs abaixo são critérios de aceitação, não são por si só testes executados. Antes de `N0_APPROVED`, cada ID deve apontar para um teste automatizado ou para um ensaio reproduzível com fixture/artefacto de evidência, declarar pré-condições, observações e resultado esperado, e distinguir claramente simulação, teste contra fixture e operação contra fonte real. A matriz não pode ser contada como cobertura só por estar escrita.
+Os 37 IDs abaixo são critérios de aceitação, não são por si só testes executados. A matriz de rastreabilidade `docs/news/N0_ACCEPTANCE_TRACEABILITY.md` liga cada ID a um teste/ensaio, fase e artefacto esperado. Antes de `N0_APPROVED`, cada ID deve apontar para um teste automatizado ou para um ensaio reproduzível com fixture/artefacto de evidência, declarar pré-condições, observações e resultado esperado, e distinguir claramente simulação, teste contra fixture e operação contra fonte real. A matriz não pode ser contada como cobertura só por estar escrita.
 
 **Roadmap:** N0 define a obrigação; N1 implementa a primeira recolha sem sessão; N2/N3 completam tratamento e histórico; N4 audita provas; N5 valida ponta a ponta a operação autónoma com consumidores. Vigilância 24/7 **não é opcional**.
 
@@ -169,7 +171,7 @@ Os 37 IDs abaixo são critérios de aceitação, não são por si só testes exe
 | N0-T12 | Correção depois do cutoff | Não aparece antes da correção |
 | N0-T13 | Identity link criado depois do cutoff | Não aparece historicamente |
 | N0-T14 | Fusão/split posterior | Histórico anterior reproduzível |
-| N0-T15 | Reprocessamento/idempotência | Sem efeitos duplicados |
+| N0-T15 | Reprocessamento/idempotência e duas partições de entidade | Sem efeitos duplicados; CIK A e CIK B mantêm checkpoints e recovery independentes |
 | N0-T16 | Fornecedor offline | Falha explícita, sem dados inventados |
 | N0-T17 | Resposta externa malformada | Rejeitada |
 | N0-T18 | SSRF/redirect para IP interno | Bloqueado |
