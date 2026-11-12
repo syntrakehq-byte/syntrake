@@ -175,7 +175,7 @@ create policy fact_revision_publications_service on news_core.fact_revision_publ
 create policy fact_revision_relations_service on news_core.fact_revision_relations for all to news_service using (true) with check (true);
 
 create or replace function news_core.finalize_fact_revision(p_fact_revision_id text)
-returns table(as_known_at timestamptz, committed_at timestamptz)
+returns table(assigned_as_known_at timestamptz, assigned_committed_at timestamptz)
 language plpgsql volatile security definer set search_path=pg_catalog,news_core as $$
 declare dependency_max timestamptz;
 declare server_now timestamptz;
