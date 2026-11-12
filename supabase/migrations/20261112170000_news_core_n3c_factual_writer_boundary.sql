@@ -290,7 +290,7 @@ begin
   if not found then
     raise exception 'NEWS_FACT_REVISION_NOT_AUTHORIZED' using errcode='42501';
   end if;
-  select fr.fact_revision_id,fr.finalized_at,fr.as_known_at,fr.committed_at into revision
+  select fr.fact_revision_id,fr.staged_txid,fr.finalized_at,fr.as_known_at,fr.committed_at into revision
     from news_core.fact_revisions fr
     join news_core.fact_events fe using (fact_event_id)
    where fr.fact_revision_id=p_fact_revision_id
