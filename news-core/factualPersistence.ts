@@ -77,7 +77,7 @@ export class PostgresFactualStore {
         evidence: input.evidence,
         dependencies: input.dependencies,
         relation: input.relation ?? null,
-        seal: false,
+        seal: failurePoint !== "after-commit",
       };
       const result = await client.query<{ inserted: boolean; fact_event_id: string; fact_revision_id: string; revision_no: number; logical_fingerprint: string }>("select * from news_core.persist_fact_revision_v1($1::jsonb)", [JSON.stringify(payload)]);
       const row = result.rows[0];
@@ -85,7 +85,7 @@ export class PostgresFactualStore {
       if (holdBeforeCommitMs > 0) await new Promise(resolve => setTimeout(resolve, holdBeforeCommitMs));
       await client.query("commit");
       if (failurePoint === "after-commit") throw new Error("INJECTED_FAILURE_AFTER_COMMIT");
-      if (row.fact_revision_id) await this.publishRevision(row.fact_revision_id);
+      if (failurePoint !== "after-commit" && !payload.seal && row.fact_revision_id) await this.publishRevision(row.fact_revision_id);
       return { inserted: row.inserted, factEventId: row.fact_event_id, factRevisionId: row.fact_revision_id, revisionNo: row.revision_no, logicalFingerprint: row.logical_fingerprint };
     } catch (error) { await client.query("rollback").catch(() => undefined); throw error; } finally { client.release(); }
   }
