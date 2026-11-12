@@ -152,7 +152,6 @@ begin
     select 1 from news_core.fact_revisions
      where fact_revision_id=p_fact_revision_id
        and finalized_at is null
-       and confirmation_status in ('REPORTED','UNVERIFIED')
   ) then
     raise exception 'NEWS_FACT_REVISION_NOT_AUTHORIZED' using errcode='42501';
   end if;
