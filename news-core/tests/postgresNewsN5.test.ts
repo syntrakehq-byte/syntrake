@@ -48,7 +48,8 @@ test("N5 PostgreSQL 17 read API is PIT, role-scoped, paginated and append-only c
     const publication2Known = (await admin.query<{ as_known_at: Date }>("select as_known_at from news_core.publication_revisions where publication_revision_id=$1", [publicationRevision2Id])).rows[0].as_known_at;
     const factRevision2Id = `${eventId}:revision:2`;
     const publication2Document = (await admin.query<{ source_document_ref: string }>("select source_document_ref from news_core.publication_revisions where publication_revision_id=$1", [publicationRevision2Id])).rows[0].source_document_ref;
-    await persistFixture("The company was fined, later corrected.", `fp2:${suffix}`, publicationRevision2Id, `evidence2:${suffix}`, new Date().toISOString(), publication2Document);
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    await persistFixture("The company was fined, later corrected.", `fp2:${suffix}`, publicationRevision2Id, `evidence2:${suffix}`, publication2Known.toISOString(), publication2Document);
     const fact2Committed = (await admin.query<{ committed_at: Date }>("select committed_at from news_core.fact_revisions where fact_revision_id=$1", [factRevision2Id])).rows[0].committed_at;
     await new Promise(resolve => setTimeout(resolve, 3000));
     const afterSecond = new Date(Date.now() - 500).toISOString();
