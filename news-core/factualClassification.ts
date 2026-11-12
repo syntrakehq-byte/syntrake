@@ -29,6 +29,7 @@ export type ConfirmationStatusV1 = "PRIMARY_CONFIRMED" | "CORROBORATED" | "REPOR
 export type LifecycleStatusV1 = "ACTIVE" | "CORRECTED" | "RETRACTED";
 export type PolarityV1 = "AFFIRMATIVE" | "NEGATIVE" | "UNKNOWN";
 export type EvidenceKindV1 = "STRUCTURED_FIELD" | "DOCUMENT_EXCERPT";
+export type TemporalBindingV1 = Readonly<{ evidenceId: string; contentLocator: string | null; statementHash: string }>;
 
 export type CommittedPublicationRevisionV1 = Readonly<{
   publicationRevisionId: string;
@@ -57,6 +58,7 @@ export type ClassificationEvidenceV1 = Readonly<{
   structuredField: string | null;
   structuredValue: string | null;
   structuredAuthority: "ADAPTER_ASSERTED" | "SOURCE_ASSERTED" | null;
+  temporalBinding?: TemporalBindingV1 | null;
   observedAt: string;
   retrievedAt: string;
   asKnownAt: string;
@@ -154,10 +156,11 @@ const hasUncertainLanguage = (text: string): boolean => /\b(?:could|may|might|if
 const splitSentences = (text: string): string[] => text.split(/(?<=[.!?])\s+/).map(normalizedText).filter(Boolean);
 const negativeForRule = (text: string, match: RegExpExecArray, rule: Rule): boolean => {
   const before = text.slice(Math.max(0, match.index - 80), match.index + match[0].length);
-  if (!/\b(?:denies?|denied|rejects?|rejected)\b/i.test(before)) return false;
-  if (rule.category === "DIVIDEND_ANNOUNCEMENT") return /\b(?:denies?|denied|rejects?|rejected)\b.{0,60}\bdividend\b/i.test(before);
-  if (rule.category === "MERGER_ACQUISITION") return /\b(?:denies?|denied|rejects?|rejected)\b.{0,60}\b(?:merger|acqui(?:re|sition)|takeover|combination)\b/i.test(before);
-  return true;
+  const negation = "(?:did not|does not|do not|not|no|never|denies?|denied|rejects?|rejected)";
+  if (rule.category === "DIVIDEND_ANNOUNCEMENT") return new RegExp(`\\b${negation}\\b.{0,60}\\bdividend\\b`, "i").test(before);
+  if (rule.category === "MERGER_ACQUISITION") return new RegExp(`\\b${negation}\\b.{0,60}\\b(?:merger|acqui(?:re|sition)|takeover|combination|speculation)\\b`, "i").test(before);
+  if (rule.category === "OPERATIONAL_DISRUPTION") return new RegExp(`\\b${negation}\\b.{0,60}\\b(?:outage|disruption|service interruption|shutdown)\\b`, "i").test(before);
+  return false;
 };
 const logicalInputFingerprint = (input: ClassificationInputV1): string => sha256(stable({ contractVersion: input.contractVersion, taxonomyVersion: input.taxonomyVersion, ruleSetVersion: input.ruleSetVersion, publicationRevision: input.publicationRevision, evidence: input.evidence }));
 
@@ -179,6 +182,12 @@ function validateInput(input: ClassificationInputV1): void {
     if (evidence.excerpt && evidence.excerptHash !== sha256(evidence.excerpt)) throw new Error("N3A_EXCERPT_HASH_MISMATCH");
     ids.add(evidence.evidenceId);
   }
+  for (const evidence of input.evidence) {
+    if (evidence.temporalBinding) {
+      const target = input.evidence.find(candidate => candidate.evidenceId === evidence.temporalBinding?.evidenceId);
+      if (!target || target.publicationRevisionId !== revision.publicationRevisionId || !evidence.temporalBinding.statementHash || (evidence.temporalBinding.contentLocator !== null && evidence.temporalBinding.contentLocator !== target.contentLocator)) throw new Error("N3A_TEMPORAL_BINDING_INVALID");
+    }
+  }
   if (Date.parse(input.proposedAt) < Math.max(Date.parse(revision.asKnownAt), ...input.evidence.map(evidence => Date.parse(evidence.asKnownAt)))) throw new Error("N3A_PROPOSAL_PRECEDES_DEPENDENCY");
 }
 
@@ -194,6 +203,11 @@ export class DeterministicFactClassifierV1 implements FactClassifierV1 {
       : [];
 
     const proposals: ClassificationProposalV1[] = [];
+    const temporalValueFor = (field: "occurredAt" | "scheduledFor", target: ClassificationEvidenceV1, statement: string): { value: string | null; evidence: ClassificationEvidenceV1 | null } => {
+      const statementHash = sha256(normalizedText(statement));
+      const matches = input.evidence.filter(candidate => candidate.kind === "STRUCTURED_FIELD" && candidate.structuredField === field && candidate.structuredAuthority === "SOURCE_ASSERTED" && candidate.temporalBinding?.evidenceId === target.evidenceId && candidate.temporalBinding.statementHash === statementHash && (candidate.temporalBinding.contentLocator === null || candidate.temporalBinding.contentLocator === target.contentLocator));
+      return matches.length === 1 ? { value: matches[0].structuredValue, evidence: matches[0] } : { value: null, evidence: null };
+    };
     for (const evidence of input.evidence.filter(item => item.kind === "DOCUMENT_EXCERPT" && item.excerpt)) {
       for (const text of splitSentences(evidence.excerpt as string)) {
         for (const rule of RULES) {
@@ -203,11 +217,11 @@ export class DeterministicFactClassifierV1 implements FactClassifierV1 {
           const future = hasFutureLanguage(text, rule);
           if (uncertain && rule.claimType === "EVENT_OCCURRENCE" && !future) continue;
           const negative = negativeForRule(text, match, rule);
-          const evidenceRefs = [{ evidenceId: evidence.evidenceId, sourceDocumentRef: evidence.sourceDocumentRef, contentLocator: evidence.contentLocator }];
+          const temporal = future ? temporalValueFor("scheduledFor", evidence, text) : temporalValueFor("occurredAt", evidence, text);
+          const claimEvidence = temporal.evidence ? [evidence, temporal.evidence] : [evidence];
+          const evidenceRefs = claimEvidence.map(item => ({ evidenceId: item.evidenceId, sourceDocumentRef: item.sourceDocumentRef, contentLocator: item.contentLocator }));
       const dependencyAsKnownAt = new Date(Math.max(Date.parse(revision.asKnownAt), ...input.evidence.map(evidence => Date.parse(evidence.asKnownAt)))).toISOString();
-      const scheduledFor = input.evidence.find(evidence => evidence.kind === "STRUCTURED_FIELD" && evidence.structuredField === "scheduledFor")?.structuredValue ?? null;
-      const occurredAt = input.evidence.find(evidence => evidence.kind === "STRUCTURED_FIELD" && evidence.structuredField === "occurredAt")?.structuredValue ?? null;
-          const proposalBase = { contractVersion: FACT_CLASSIFICATION_CONTRACT_V1, taxonomyVersion: FACT_TAXONOMY_V1, ruleSetVersion: DETERMINISTIC_RULES_V1, category: rule.category, claimType: future ? "SCHEDULED_EVENT" as const : negative ? "DENIAL" as const : rule.claimType, statement: rule.statement(text), subjectRef: null, objectRef: null, occurredAt: future ? null : occurredAt, scheduledFor: future ? scheduledFor : null, confirmationStatus: "REPORTED" as const, lifecycleStatus: "ACTIVE" as const, polarity: negative ? "NEGATIVE" as const : "AFFIRMATIVE" as const, publicationRevisionId: revision.publicationRevisionId, evidenceIds: evidenceRefs.map(item => item.evidenceId), evidenceRefs, dependencyAsKnownAt, ruleId: rule.id, justification: `Matched ${rule.id} against one persisted evidence unit.`, qualityFlags: [...revision.qualityFlags, "EXCERPT_HASH_LOCAL_ONLY"], inputFingerprint: logicalFingerprint };
+          const proposalBase = { contractVersion: FACT_CLASSIFICATION_CONTRACT_V1, taxonomyVersion: FACT_TAXONOMY_V1, ruleSetVersion: DETERMINISTIC_RULES_V1, category: rule.category, claimType: future ? "SCHEDULED_EVENT" as const : negative ? "DENIAL" as const : rule.claimType, statement: rule.statement(text), subjectRef: null, objectRef: null, occurredAt: future ? null : temporal.value, scheduledFor: future ? temporal.value : null, confirmationStatus: "REPORTED" as const, lifecycleStatus: "ACTIVE" as const, polarity: negative ? "NEGATIVE" as const : "AFFIRMATIVE" as const, publicationRevisionId: revision.publicationRevisionId, evidenceIds: evidenceRefs.map(item => item.evidenceId), evidenceRefs, dependencyAsKnownAt, ruleId: rule.id, justification: `Matched ${rule.id} against one persisted evidence unit.`, qualityFlags: [...revision.qualityFlags, "EXCERPT_HASH_LOCAL_ONLY"], inputFingerprint: logicalFingerprint };
           proposals.push({ ...proposalBase, proposedAt: input.proposedAt, inputFingerprint: sha256(stable(proposalBase)) });
         }
       }
