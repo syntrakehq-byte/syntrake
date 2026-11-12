@@ -131,7 +131,7 @@ begin
   values (revision_id,p->>'publicationRevisionId','FOCAL',focal_publication.as_known_at);
   relation := p->'relation';
   if relation is not null and jsonb_typeof(relation)='object' then
-    if not exists (select 1 from news_core.fact_revisions where fact_revision_id=relation->>'relatedRevisionId' and finalized_at is not null) then
+    if not exists (select 1 from news_core.fact_revisions fr where fr.fact_revision_id=relation->>'relatedRevisionId' and fr.finalized_at is not null) then
       raise exception 'NEWS_FACT_RELATION_INVALID' using errcode='23503';
     end if;
     insert into news_core.fact_revision_relations(fact_revision_id,related_revision_id,relation_type,as_known_at)
