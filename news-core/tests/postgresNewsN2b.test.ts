@@ -12,7 +12,6 @@ const n2Migration = new URL("../../supabase/migrations/20261111170000_news_core_
 const n2bMigration = new URL("../../supabase/migrations/20261111180000_news_core_n2b_entity_links.sql", import.meta.url);
 
 test("News Core N2-B canonical bridge, conservative matches and PIT", { skip: !DB_URL && "NEWS_DATABASE_URL or TEST_DATABASE_URL required: real PG17 only" }, async () => {
-  const stage = (value: string) => console.log(`[N2B stage] ${value}`);
   const admin = new Client({ connectionString: DB_URL });
   const pool = new Pool({ connectionString: DB_URL, max: 8 });
   const store = new PostgresNewsStore(pool);
@@ -23,23 +22,23 @@ test("News Core N2-B canonical bridge, conservative matches and PIT", { skip: !D
   const revisionId = `${publicationId}:revision:1`;
   const now = new Date().toISOString();
   try {
-    stage("connect"); await admin.connect();
+    await admin.connect();
     assert.match((await admin.query<{ v: string }>("select current_setting('server_version') v")).rows[0].v, /^17\./);
-    stage("n1"); await admin.query(await readFile(n1Migration, "utf8"));
+    await admin.query(await readFile(n1Migration, "utf8"));
     await admin.query("insert into news_core.sources(source_id,provider_key,source_type) values ($1,'n2b-fixture','SEC_EDGAR')", [sourceId]);
     const frontier = await admin.query<{ frontier_id: string; published_at: Date }>("insert into news_core.visibility_frontiers default values returning frontier_id,published_at");
     await admin.query("insert into news_core.publications(publication_id,source_id,origin_fingerprint,external_id,original_url,title,first_seen_at,ingested_at,as_known_at,form,visibility_state,visibility_frontier_id) values ($1,$2,$3,$4,$5,$6,$7,$8,$8,'8-K','COMMITTED',$9)", [publicationId, sourceId, `origin-${publicationId}`, publicationId, "https://www.sec.gov/Archives/edgar/data/1/n2b.htm", "Issuer event", now, frontier.rows[0].published_at, frontier.rows[0].frontier_id]);
     await admin.query("insert into news_core.observations(observation_id,provider_key,provider_observation_key,publication_id,observed_at,retrieved_at,publisher_key,visibility_state,visibility_frontier_id) values ($1,'n2b-fixture',$2,$3,$4,$4,'n2b','COMMITTED',$5)", [`observation-${publicationId}`, `observation-${publicationId}`, publicationId, now, frontier.rows[0].frontier_id]);
-    stage("n2"); await admin.query(await readFile(n2Migration, "utf8"));
-    stage("n2b"); await admin.query(await readFile(n2bMigration, "utf8"));
+    await admin.query(await readFile(n2Migration, "utf8"));
+    await admin.query(await readFile(n2bMigration, "utf8"));
 
     const exact: MarketCoreResolutionV1 = {
       contractVersion: "market-core-identity-v1", resolverVersion: "fixture-v1", status: "EXACT", selectedCandidateRef: "listing-xnas", reason: "CANONICAL_REGISTRY_MATCH",
       candidates: [{ candidateRef: "listing-xnas", targetScope: "LISTING", relationType: "DIRECT", issuerId: "issuer-acme", instrumentId: "instrument-acme", listingId: "listing-xnas", evidence: [{ evidenceId: "evidence-cik", evidenceKind: "OFFICIAL_REGISTRY", sourceRef: "sec:cik:0000000001", observedAt: now, verified: true }] }],
     };
-    stage("exact start"); const exactOutcome = await store.ingestEntityResolution(revisionId, exact); stage("exact complete");
+    const exactOutcome = await store.ingestEntityResolution(revisionId, exact);
     assert.equal(exactOutcome.inserted, true);
-    stage("read exact"); const afterExact = await store.readEntityLinksAsOf(new Date(Date.now() + 10_000).toISOString(), publicationId); stage("read exact complete");
+    const afterExact = await store.readEntityLinksAsOf(new Date(Date.now() + 10_000).toISOString(), publicationId);
     assert.equal(afterExact.length, 1);
     assert.equal(afterExact[0].identityStatus, "EXACT");
     assert.equal(afterExact[0].issuerId, "issuer-acme");
@@ -57,11 +56,9 @@ test("News Core N2-B canonical bridge, conservative matches and PIT", { skip: !D
         { candidateRef: "listing-xlse", targetScope: "LISTING", relationType: "MENTION", issuerId: "issuer-other", instrumentId: "instrument-other", listingId: "listing-xlse", evidence: [{ evidenceId: "e-xlse", evidenceKind: "EXCHANGE_REFERENCE", sourceRef: "exchange:xlse", observedAt: now, verified: true }] },
       ],
     };
-    stage("ambiguous start"); const ambiguousOutcome = await store.ingestEntityResolution(revisionId, ambiguous); stage("ambiguous complete");
+    const ambiguousOutcome = await store.ingestEntityResolution(revisionId, ambiguous);
     assert.equal(ambiguousOutcome.inserted, true);
-    stage("read ambiguous");
     const allLinks = await store.readEntityLinksAsOf(new Date(Date.now() + 10_000).toISOString(), publicationId);
-    stage("read ambiguous complete");
     assert.deepEqual(allLinks.map(row => row.identityStatus), ["EXACT", "AMBIGUOUS"]);
     assert.equal(allLinks[1].listingId, null);
     const beforeAmbiguous = new Date(Date.parse(String(allLinks[1].asKnownAt)) - 1).toISOString();
@@ -71,7 +68,7 @@ test("News Core N2-B canonical bridge, conservative matches and PIT", { skip: !D
       contractVersion: "market-core-identity-v1", resolverVersion: "fixture-issuer", status: "EXACT", selectedCandidateRef: "issuer-acme", reason: "ISSUER_ONLY_MATCH",
       candidates: [{ candidateRef: "issuer-acme", targetScope: "ISSUER", relationType: "MENTION", issuerId: "issuer-acme", instrumentId: null, listingId: null, evidence: [{ evidenceId: "e-issuer", evidenceKind: "OFFICIAL_REGISTRY", sourceRef: "sec:cik:0000000001", observedAt: now, verified: true }] }],
     };
-    stage("issuer start"); await store.ingestEntityResolution(revisionId, issuerOnly); stage("issuer complete");
+    await store.ingestEntityResolution(revisionId, issuerOnly);
     const issuerLink = (await store.readEntityLinksAsOf(new Date(Date.now() + 10_000).toISOString(), publicationId)).find(row => row.resolverVersion === "fixture-issuer");
     assert.equal(issuerLink?.issuerId, "issuer-acme");
     assert.equal(issuerLink?.instrumentId, null, "issuer news does not imply a listing");
@@ -80,7 +77,7 @@ test("News Core N2-B canonical bridge, conservative matches and PIT", { skip: !D
       contractVersion: "market-core-identity-v1", resolverVersion: "fixture-etf", status: "EXACT", selectedCandidateRef: "etf-acme", reason: "ETF_HOLDING_EVIDENCE",
       candidates: [{ candidateRef: "etf-acme", targetScope: "INSTRUMENT", relationType: "INDIRECT_EXPOSURE", issuerId: "issuer-etf", instrumentId: "instrument-etf", listingId: null, evidence: [{ evidenceId: "e-etf", evidenceKind: "PROVIDER_CATALOG", sourceRef: "catalog:holdings:etf-acme", observedAt: now, verified: true }] }],
     };
-    stage("etf start"); await store.ingestEntityResolution(revisionId, indirectEtf); stage("etf complete");
+    await store.ingestEntityResolution(revisionId, indirectEtf);
     const etfLink = (await store.readEntityLinksAsOf(new Date(Date.now() + 10_000).toISOString(), publicationId)).find(row => row.resolverVersion === "fixture-etf");
     assert.equal(etfLink?.relationType, "INDIRECT_EXPOSURE");
     assert.equal(etfLink?.identityStatus, "EXACT");
@@ -91,22 +88,21 @@ test("News Core N2-B canonical bridge, conservative matches and PIT", { skip: !D
     await assert.rejects(store.ingestEntityResolution(revisionId, { ...exact, candidates: [{ ...exact.candidates[0], listingId: null }] }), /NEWS_ENTITY_SCOPE_INVALID/);
 
     const rollback = { ...exact, resolverVersion: "fixture-v2", reason: "ROLLBACK_PROBE" };
-    stage("rollback start"); await assert.rejects(store.ingestEntityResolution(revisionId, rollback, { failurePoint: "before-commit" }), /INJECTED_FAILURE_BEFORE_COMMIT/); stage("rollback complete");
+    await assert.rejects(store.ingestEntityResolution(revisionId, rollback, { failurePoint: "before-commit" }), /INJECTED_FAILURE_BEFORE_COMMIT/);
     assert.equal((await admin.query("select count(*)::int n from news_core.entity_link_revisions where resolver_version='fixture-v2' and publication_revision_id=$1", [revisionId])).rows[0].n, 0);
 
     const recovery = { ...exact, resolverVersion: "fixture-v3", reason: "RECOVERY_PROBE" };
-    stage("recovery start"); await assert.rejects(store.ingestEntityResolution(revisionId, recovery, { failurePoint: "after-commit-before-finalize" }), /INJECTED_FAILURE_AFTER_COMMIT_BEFORE_FINALIZE/); stage("recovery committed");
+    await assert.rejects(store.ingestEntityResolution(revisionId, recovery, { failurePoint: "after-commit-before-finalize" }), /INJECTED_FAILURE_AFTER_COMMIT_BEFORE_FINALIZE/);
     assert.equal((await admin.query("select count(*)::int n from news_core.entity_link_revisions where resolver_version='fixture-v3' and visibility_state='PENDING'", [])).rows[0].n, 1);
-    stage("recover pending"); await store.getCheckpoint(scope); stage("recover complete");
+    await store.getCheckpoint(scope);
     assert.equal((await store.readEntityLinksAsOf(new Date(Date.now() + 10_000).toISOString(), publicationId)).filter(row => row.resolverVersion === "fixture-v3").length, 1);
 
-    stage("reader role"); await admin.query("set role news_reader");
+    await admin.query("set role news_reader");
     await assert.rejects(admin.query("select * from news_core.entity_link_revisions"), /permission denied/);
-    stage("reader function"); const readerLink = await admin.query("select * from news_core.read_entity_links_as_of($1::timestamptz,$2::text)", [new Date(Date.now() + 10_000).toISOString(), publicationId]); stage("reader function complete");
+    const readerLink = await admin.query("select * from news_core.read_entity_links_as_of($1::timestamptz,$2::text)", [new Date(Date.now() + 10_000).toISOString(), publicationId]);
     assert.ok(readerLink.rows.length >= 3);
     await admin.query("reset role");
   } finally {
-    stage("cleanup");
     await admin.query("reset role").catch(() => undefined);
     await admin.query("delete from news_core.entity_link_evidence where entity_link_revision_id like $1", [`${publicationId}%`]).catch(() => undefined);
     await admin.query("delete from news_core.entity_link_candidates where entity_link_revision_id like $1", [`${publicationId}%`]).catch(() => undefined);

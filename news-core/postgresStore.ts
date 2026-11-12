@@ -396,7 +396,7 @@ export class PostgresNewsStore {
       validateEntityResolution({ publicationId: parent.rows[0].publication_id, publicationRevisionId, title: parent.rows[0].title, sourceDocumentRef: parent.rows[0].source_document_ref, publishedAt: parent.rows[0].published_at ? new Date(parent.rows[0].published_at).toISOString() : null }, result);
       await client.query("select pg_advisory_xact_lock(hashtextextended($1, 20261112))", [`${publicationRevisionId}:${result.resolverVersion}`]);
       const existing = await client.query<{ entity_link_revision_id: string }>("select entity_link_revision_id from news_core.entity_link_revisions where publication_revision_id=$1 and resolver_version=$2 and resolution_fingerprint=$3", [publicationRevisionId, result.resolverVersion, fingerprint]);
-      if (existing.rowCount === 1) { await client.query("commit"); committed = true; return { inserted: false, entityLinkRevisionId: existing.rows[0].entity_link_revision_id }; }
+      if (existing.rowCount === 1) { await client.query("commit"); committed = true; client.release(); return { inserted: false, entityLinkRevisionId: existing.rows[0].entity_link_revision_id }; }
       const next = await client.query<{ revision_no: number }>("select coalesce(max(revision_no),0)+1 revision_no from news_core.entity_link_revisions where publication_revision_id=$1 and resolver_version=$2", [publicationRevisionId, result.resolverVersion]);
       const revisionNo = next.rows[0].revision_no;
       const entityLinkRevisionId = `${publicationRevisionId}:entity-link:${result.resolverVersion}:${revisionNo}`;
