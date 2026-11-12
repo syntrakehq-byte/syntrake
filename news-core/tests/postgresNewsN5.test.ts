@@ -47,7 +47,7 @@ test("N5 PostgreSQL 17 read API is PIT, role-scoped, paginated and append-only c
     await admin.query("insert into news_core.fact_revisions(fact_revision_id,fact_event_id,revision_no,logical_fingerprint,rule_set_version,claim_type,statement,occurred_at,confirmation_status,lifecycle_status,polarity,focal_claim_key,publication_revision_id) values ($1,$2,2,$3,'deterministic-rule-v1','EVENT_CORRECTION','The company was fined, later corrected.',null,'REPORTED','ACTIVE','AFFIRMATIVE',$4,$5)", [factRevision2Id, eventId, `fp2:${suffix}`, `claim-key:${suffix}`, publicationRevision2Id]);
     await admin.query("select * from news_core.finalize_fact_revision($1)", [factRevision2Id]); await admin.query("reset role");
     const fact2Committed = (await admin.query<{ committed_at: Date }>("select committed_at from news_core.fact_revisions where fact_revision_id=$1", [factRevision2Id])).rows[0].committed_at;
-    const afterSecond = new Date(Math.max(publication2Known.valueOf(), fact2Committed.valueOf()) + 1).toISOString();
+    const afterSecond = new Date(Math.max(publication2Known.valueOf(), fact2Committed.valueOf())).toISOString();
     const oldTypeAfter = await api.getNewsEvents(auth, { asOf: afterSecond, targets: [eventId], eventTypes: ["EVENT_OCCURRENCE"] }); assert.equal(oldTypeAfter.data.length, 0);
     const newTypeAfter = await api.getNewsEvents(auth, { asOf: afterSecond, targets: [eventId], eventTypes: ["EVENT_CORRECTION"] }); assert.deepEqual(newTypeAfter.data.map(row => row.factRevisionId), [factRevision2Id]);
     const oldTypeBefore = await api.getNewsEvents(auth, { asOf: visibleAsOf, targets: [eventId], eventTypes: ["EVENT_OCCURRENCE"] }); assert.deepEqual(oldTypeBefore.data.map(row => row.factRevisionId), [factRevisionId]);
