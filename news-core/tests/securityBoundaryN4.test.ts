@@ -45,7 +45,7 @@ test("N4 non-administrative runtime identity cannot reach the factual writer", {
       await compromised.connect();
       await assert.rejects(compromised.query("insert into news_core.fact_events values ('forged','forged','news-fact-taxonomy-v1','LEGAL_REGULATORY')"), /permission denied/);
       await assert.rejects(compromised.query("select * from news_core.finalize_fact_revision('forged')"), /permission denied/);
-      await assert.rejects(compromised.query("select * from news_core.persist_fact_revision_v1($1::jsonb)", [JSON.stringify({ canonicalClaimId: "forged", logicalFingerprint: "forged-fingerprint", confirmationStatus: "PRIMARY_CONFIRMED" })]), /NEWS_FACT_CONFIRMATION_REQUIRES_ATTESTED_SERVER_RECEIPT/);
+      await assert.rejects(compromised.query("select * from news_core.persist_fact_revision_v1($1::jsonb)", [JSON.stringify({ canonicalClaimId: "forged", logicalFingerprint: "forged-fingerprint", confirmationStatus: "REPORTED" })]), /NEWS_FACT_ATTESTATION_REQUIRED/);
     } finally { await compromised.end(); await admin.query(`drop role if exists ${compromisedRole}`).catch(() => undefined); }
   } finally {
     await admin.query(`drop role if exists ${runtimeRole}`).catch(() => undefined);

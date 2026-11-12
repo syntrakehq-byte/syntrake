@@ -2,11 +2,61 @@
 -- The application capability may call one validated entry point only.  It must
 -- not be able to stage or seal arbitrary factual rows with direct SQL.
 
+do $$ begin
+  if not exists (select 1 from pg_roles where rolname = 'news_factual_attestor') then
+    create role news_factual_attestor nologin nocreatedb nocreaterole noinherit;
+  end if;
+end $$;
+
+create table if not exists news_core.fact_pipeline_attestations (
+  attestation_id text primary key,
+  canonical_claim_id text not null,
+  logical_fingerprint text not null,
+  payload jsonb not null check (jsonb_typeof(payload) = 'object'),
+  issued_at timestamptz not null default clock_timestamp(),
+  unique (canonical_claim_id, logical_fingerprint)
+);
+
+alter table news_core.fact_pipeline_attestations enable row level security;
+alter table news_core.fact_pipeline_attestations force row level security;
+revoke all on news_core.fact_pipeline_attestations from public,news_reader,news_service,news_factual_writer,news_factual_attestor;
+grant usage on schema news_core to news_factual_attestor;
+
+create or replace function news_core.issue_fact_attestation_v1(p_payload jsonb)
+returns text language plpgsql volatile security definer set search_path=pg_catalog,news_core as $$
+declare attestation_id text;
+begin
+  if jsonb_typeof(p_payload) <> 'object'
+     or nullif(p_payload->>'canonicalClaimId','') is null
+     or nullif(p_payload->>'logicalFingerprint','') is null
+     or nullif(p_payload->>'publicationRevisionId','') is null
+     or jsonb_typeof(coalesce(p_payload->'evidence','[]'::jsonb)) <> 'array'
+     or jsonb_typeof(coalesce(p_payload->'dependencies','[]'::jsonb)) <> 'array' then
+    raise exception 'NEWS_FACT_ATTESTATION_INVALID' using errcode='22023';
+  end if;
+  attestation_id := md5(clock_timestamp()::text || random()::text || p_payload::text);
+  insert into news_core.fact_pipeline_attestations(attestation_id,canonical_claim_id,logical_fingerprint,payload)
+  values (attestation_id,p_payload->>'canonicalClaimId',p_payload->>'logicalFingerprint',p_payload)
+  on conflict (canonical_claim_id,logical_fingerprint) do nothing
+  returning fact_pipeline_attestations.attestation_id into attestation_id;
+  if attestation_id is null then
+    select a.attestation_id into attestation_id
+      from news_core.fact_pipeline_attestations a
+     where a.canonical_claim_id=p_payload->>'canonicalClaimId'
+       and a.logical_fingerprint=p_payload->>'logicalFingerprint';
+  end if;
+  return attestation_id;
+end
+$$;
+revoke all on function news_core.issue_fact_attestation_v1(jsonb) from public,news_reader,news_service,news_factual_writer;
+grant execute on function news_core.issue_fact_attestation_v1(jsonb) to news_factual_attestor;
+
 create or replace function news_core.persist_fact_revision_v1(p_input jsonb)
 returns table(inserted boolean, fact_event_id text, fact_revision_id text, revision_no integer, logical_fingerprint text)
 language plpgsql volatile security definer set search_path=pg_catalog,news_core as $$
 declare
   p jsonb := p_input;
+  attestation jsonb;
   event_id text;
   revision_id text;
   next_revision integer;
@@ -19,6 +69,16 @@ declare
   relation jsonb;
   focal_publication record;
 begin
+  select a.payload into attestation
+    from news_core.fact_pipeline_attestations a
+   where a.attestation_id=p->>'attestationId';
+  if not found then
+    raise exception 'NEWS_FACT_ATTESTATION_REQUIRED' using errcode='42501';
+  end if;
+  if (p - 'attestationId' - 'seal') <> attestation then
+    raise exception 'NEWS_FACT_ATTESTATION_MISMATCH' using errcode='22023';
+  end if;
+  p := attestation || jsonb_build_object('attestationId',p->>'attestationId','seal',false);
   if jsonb_typeof(p) <> 'object' then
     raise exception 'NEWS_FACT_WRITE_INPUT_INVALID' using errcode='22023';
   end if;
@@ -31,6 +91,14 @@ begin
   if p->>'lifecycleStatus' not in ('ACTIVE','CORRECTED','RETRACTED')
      or p->>'polarity' not in ('AFFIRMATIVE','NEGATIVE','UNKNOWN') then
     raise exception 'NEWS_FACT_STATE_INVALID' using errcode='22023';
+  end if;
+  if p->>'lifecycleStatus'='CORRECTED'
+     and (jsonb_typeof(p->'relation') <> 'object' or p->'relation'->>'relationType' <> 'CORRECTS') then
+    raise exception 'NEWS_FACT_CORRECTION_RELATION_REQUIRED' using errcode='22023';
+  end if;
+  if p->>'lifecycleStatus'='RETRACTED'
+     and (jsonb_typeof(p->'relation') <> 'object' or p->'relation'->>'relationType' <> 'RETRACTS') then
+    raise exception 'NEWS_FACT_RETRACTION_RELATION_REQUIRED' using errcode='22023';
   end if;
   if (p->>'occurredAt') is not null and (p->>'scheduledFor') is not null then
     raise exception 'NEWS_FACT_TEMPORAL_FIELDS_CONFLICT' using errcode='22023';

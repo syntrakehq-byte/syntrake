@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { Client, Pool } from "pg";
-import { PostgresFactualStore, type PersistFactualInputV1 } from "../factualPersistence";
+import { factualLogicalFingerprintV1, PostgresFactualStore, type PersistFactualInputV1 } from "../factualPersistence";
 import { claimKeyV1, DeterministicEvidenceCorroboratorV1 } from "../evidenceCorroboration";
 
 const DB_URL = process.env.NEWS_DATABASE_URL ?? process.env.TEST_DATABASE_URL;
@@ -12,6 +12,7 @@ const migration = (name: string) => new URL(`../../supabase/migrations/${name}`,
 test("News Core N3-C append-only factual persistence, PIT, idempotence and security", { skip: !DB_URL && "NEWS_DATABASE_URL or TEST_DATABASE_URL required: real PG17 only" }, async () => {
   const admin = new Client({ connectionString: DB_URL });
   const pool = new Pool({ connectionString: DB_URL, max: 8 });
+  const attestorPool = new Pool({ connectionString: DB_URL, max: 2 });
   const readerPool = new Pool({ connectionString: DB_URL, max: 2 });
   const store = new PostgresFactualStore(pool, "news_factual_writer");
   const readerStore = new PostgresFactualStore(readerPool, "news_service");
@@ -30,7 +31,16 @@ test("News Core N3-C append-only factual persistence, PIT, idempotence and secur
     const claimKey = claimKeyV1(factualProposal);
     const corroborationInput = { contractVersion: "news-evidence-corroboration-v1" as const, ruleSetVersion: "evidence-corroboration-rule-v1" as const, proposal: factualProposal, claimKey, claimIdentities: [{ claimKey, canonicalClaimId: `canonical:${suffix}`, publicationRevisionId, statementFingerprint: `statement:${statement}`, asKnownAt }], claimEquivalences: [], cutoffAsKnownAt: asKnownAt, evidence: [{ evidenceId: "evidence-n3b", claimKey, originId: "origin-1", sourceDocumentRef, publicationRevisionId, provenanceRef: `prov:${suffix}`, contentLocator: "body:p1", statementHash: `hash:${statement}`, support: "SUPPORTS" as const, asKnownAt, availableAsKnownAt: asKnownAt, proposalEvidenceId: "evidence-n3a" }], verificationProofs: [], origins: [{ originId: "origin-1", sourceDocumentRef, publicationRevisionId, publisherRef: "fixture", editorialGroupRef: null, sourceKind: "SECONDARY" as const, provenanceRef: `prov:${suffix}`, availableAsKnownAt: asKnownAt, competence: [{ claimKey, status: "UNKNOWN" as const, basis: "IDENTIFIED_REPORT" as const, evidenceRefs: [] }] }], independence: [], evaluatedAt: asKnownAt };
     const corroboration = new DeterministicEvidenceCorroboratorV1().evaluate(corroborationInput);
-    return { canonicalClaimId: `canonical:${suffix}`, proposal: factualProposal, corroborationInput, corroboration, evidence: evidence(asKnownAt, claimKey), dependencies: [{ dependencyType: "N2_PUBLICATION_REVISION" as const, dependencyRef: publicationRevisionId, asKnownAt }, { dependencyType: "N3A_PROPOSAL" as const, dependencyRef: factualProposal.inputFingerprint, asKnownAt }, { dependencyType: "N3B_EVALUATION" as const, dependencyRef: corroboration.fingerprint, asKnownAt }] };
+    return { attestationId: "pending", canonicalClaimId: `canonical:${suffix}`, proposal: factualProposal, corroborationInput, corroboration, evidence: evidence(asKnownAt, claimKey), dependencies: [{ dependencyType: "N2_PUBLICATION_REVISION" as const, dependencyRef: publicationRevisionId, asKnownAt }, { dependencyType: "N3A_PROPOSAL" as const, dependencyRef: factualProposal.inputFingerprint, asKnownAt }, { dependencyType: "N3B_EVALUATION" as const, dependencyRef: corroboration.fingerprint, asKnownAt }] };
+  };
+  const attest = async (value: PersistFactualInputV1): Promise<PersistFactualInputV1> => {
+    const client = await attestorPool.connect();
+    try {
+      await client.query("begin"); await client.query("set local role news_factual_attestor");
+      const payload = { canonicalClaimId: value.canonicalClaimId, taxonomyVersion: value.proposal.taxonomyVersion, category: value.proposal.category, logicalFingerprint: factualLogicalFingerprintV1(value), ruleSetVersion: value.proposal.ruleSetVersion, claimType: value.proposal.claimType, statement: value.proposal.statement, subjectRef: value.proposal.subjectRef, objectRef: value.proposal.objectRef, occurredAt: value.proposal.occurredAt, scheduledFor: value.proposal.scheduledFor, confirmationStatus: value.corroboration.confirmationStatus, lifecycleStatus: value.corroboration.lifecycleStatus, polarity: value.corroboration.polarity, focalClaimKey: value.corroboration.claimKey, publicationRevisionId: value.proposal.publicationRevisionId, qualityFlags: value.proposal.qualityFlags, evidence: value.evidence, dependencies: value.dependencies, relation: value.relation ?? null };
+      const id = (await client.query<{ issue_fact_attestation_v1: string }>("select news_core.issue_fact_attestation_v1($1::jsonb) issue_fact_attestation_v1", [JSON.stringify(payload)])).rows[0].issue_fact_attestation_v1;
+      await client.query("commit"); return { ...value, attestationId: id };
+    } catch (error) { await client.query("rollback").catch(() => undefined); throw error; } finally { client.release(); }
   };
   try {
     await admin.connect();
@@ -44,36 +54,38 @@ test("News Core N3-C append-only factual persistence, PIT, idempotence and secur
     await admin.query(await readFile(migration("20261112120000_news_core_n3c_factual_persistence.sql"), "utf8"));
     await admin.query(await readFile(migration("20261112170000_news_core_n3c_factual_writer_boundary.sql"), "utf8"));
     const beforeFirstCommit = new Date(Date.now() - 1000).toISOString();
-    const first = await store.persist(input("The company was fined.", knownOne));
+    const first = await store.persist(await attest(input("The company was fined.", knownOne)));
     assert.equal(first.inserted, true);
     const firstCommitted = await admin.query<{ committed_at: Date }>("select committed_at from news_core.fact_revisions where fact_revision_id=$1", [first.factRevisionId]);
     const afterFirstCommit = new Date(firstCommitted.rows[0].committed_at.valueOf() + 1).toISOString();
     assert.equal((await store.readAsOf(afterFirstCommit)).length, 1);
     assert.equal((await store.readAsOf(beforeFirstCommit)).length, 0);
-    assert.deepEqual(await store.persist(input("The company was fined.", knownOne)), { ...first, inserted: false });
-    const concurrent = await Promise.all([store.persist(input("A second factual revision.", knownOne)), store.persist(input("A third factual revision.", knownOne))]);
+    assert.deepEqual(await store.persist(await attest(input("The company was fined.", knownOne))), { ...first, inserted: false });
+    const concurrent = await Promise.all([store.persist(await attest(input("A second factual revision.", knownOne))), store.persist(await attest(input("A third factual revision.", knownOne)))]);
     assert.deepEqual(concurrent.map(result => result.revisionNo).sort(), [2, 3]);
-    const corrected = await store.persist({ ...input("The company was fined, later corrected.", knownTwo, "CORRECTED"), relation: { relatedRevisionId: first.factRevisionId!, relationType: "CORRECTS" } });
+    const correctedInput: PersistFactualInputV1 = { ...input("The company was fined, later corrected.", knownTwo, "CORRECTED"), relation: { relatedRevisionId: first.factRevisionId!, relationType: "CORRECTS" as const } };
+    const corrected = await store.persist(await attest(correctedInput));
     assert.equal(corrected.inserted, true);
     assert.equal((await store.readAsOf(afterFirstCommit))[0].lifecycleStatus, "ACTIVE");
     assert.equal((await store.readAsOf(new Date(Date.now() + 1000).toISOString()))[0].lifecycleStatus, "CORRECTED");
     const openInput = input("transaction remains open", knownTwo);
-    const openWrite = store.persist(openInput, "none", 250);
+    const openWrite = attest(openInput).then(value => store.persist(value, "none", 250));
     await new Promise(resolve => setTimeout(resolve, 50));
     const cutoffWhileOpen = new Date().toISOString();
     assert.equal((await readerStore.readAsOf(cutoffWhileOpen)).some(row => row.statement === "transaction remains open"), false);
     await openWrite;
     assert.equal((await readerStore.readAsOf(cutoffWhileOpen)).some(row => row.statement === "transaction remains open"), false);
     const futureInput = input("future dependency", knownOne);
-    await assert.rejects(store.persist({ ...futureInput, dependencies: futureInput.dependencies.map(dependency => dependency.dependencyType === "N3B_EVALUATION" ? { ...dependency, asKnownAt: new Date(Date.now() + 60_000).toISOString() } : dependency) }), /NEWS_FACT_FUTURE_DEPENDENCY/);
-    await assert.rejects(store.persist({ ...input("invalid evidence", knownOne), evidence: [{ ...evidence(knownOne, claimKeyV1(proposal("invalid evidence", knownOne)))[0], sourceDocumentRef: "https://wrong.example/document" }] }), /NEWS_FACT_N3A_EVIDENCE_MISMATCH/);
+    await assert.rejects(store.persist(await attest({ ...futureInput, dependencies: futureInput.dependencies.map(dependency => dependency.dependencyType === "N3B_EVALUATION" ? { ...dependency, asKnownAt: new Date(Date.now() + 60_000).toISOString() } : dependency) })), /NEWS_FACT_FUTURE_DEPENDENCY/);
+    await assert.rejects(store.persist(await attest({ ...input("invalid evidence", knownOne), evidence: [{ ...evidence(knownOne, claimKeyV1(proposal("invalid evidence", knownOne)))[0], sourceDocumentRef: "https://wrong.example/document" }] })), /NEWS_FACT_N3A_EVIDENCE_MISMATCH/);
     const forgedDispute = input("forged dispute", knownTwo);
     await assert.rejects(store.persist({ ...forgedDispute, corroboration: { ...forgedDispute.corroboration, confirmationStatus: "DISPUTED", fingerprint: "arbitrary" }, dependencies: forgedDispute.dependencies.map(dependency => dependency.dependencyType === "N3B_EVALUATION" ? { ...dependency, dependencyRef: "arbitrary" } : dependency) }), /NEWS_FACT_CORROBORATION_RESULT_MISMATCH/);
     const forgedRetraction = input("forged retraction", knownTwo);
     await assert.rejects(store.persist({ ...forgedRetraction, proposal: { ...forgedRetraction.proposal, lifecycleStatus: "RETRACTED" }, corroboration: { ...forgedRetraction.corroboration, lifecycleStatus: "RETRACTED", polarity: "NEGATIVE" } }), /NEWS_FACT_CORROBORATION_INPUT_MISMATCH/);
-    await assert.rejects(store.persist(input("rollback probe", knownTwo), "before-commit"), /INJECTED_FAILURE_BEFORE_COMMIT/);
-    await assert.rejects(store.persist(input("post commit crash", knownTwo), "after-commit"), /INJECTED_FAILURE_AFTER_COMMIT/);
-    assert.equal((await store.persist(input("post commit crash", knownTwo))).inserted, false);
+    await assert.rejects(store.persist(await attest(input("rollback probe", knownTwo)), "before-commit"), /INJECTED_FAILURE_BEFORE_COMMIT/);
+    const crashedInput = await attest(input("post commit crash", knownTwo));
+    await assert.rejects(store.persist(crashedInput, "after-commit"), /INJECTED_FAILURE_AFTER_COMMIT/);
+    assert.equal((await store.persist(crashedInput)).inserted, false);
     assert.equal((await admin.query<{ n: number }>("select count(*)::int n from news_core.fact_revisions where fact_event_id=$1", [first.factEventId])).rows[0].n, 6);
     await assert.rejects(admin.query("update news_core.fact_revisions set statement='tampered' where fact_revision_id=$1", [first.factRevisionId]), /NEWS_FACT_HISTORY_APPEND_ONLY/);
     await assert.rejects(admin.query("insert into news_core.fact_revision_evidence values ($1,'late','N3A_PROPOSAL',$2,$3,$4,'late','late',$5)", [first.factRevisionId, claimKeyV1(proposal("The company was fined.", knownOne)), publicationRevisionId, sourceDocumentRef, knownOne]), /NEWS_FACT_REVISION_FINALIZED/);
@@ -88,5 +100,5 @@ test("News Core N3-C append-only factual persistence, PIT, idempotence and secur
     await admin.query("reset role");
     const security = await admin.query<{ relrowsecurity: boolean; relforcerowsecurity: boolean }>("select relrowsecurity,relforcerowsecurity from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='news_core' and c.relname='fact_revisions'");
     assert.deepEqual(security.rows[0], { relrowsecurity: true, relforcerowsecurity: true });
-  } finally { await admin.query("reset role").catch(() => undefined); await Promise.all([store.close(), readerStore.close(), admin.end()]); }
+  } finally { await admin.query("reset role").catch(() => undefined); await Promise.all([store.close(), readerStore.close(), attestorPool.end(), admin.end()]); }
 });

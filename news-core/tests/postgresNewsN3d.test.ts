@@ -5,7 +5,7 @@ import test from "node:test";
 import { Client, Pool } from "pg";
 import { DeterministicFactClassifierV1, excerptHashV1, type ClassificationInputV1, type ClassificationProposalV1 } from "../factualClassification";
 import { claimKeyV1, DeterministicEvidenceCorroboratorV1, type CorroborationInputV1 } from "../evidenceCorroboration";
-import { PostgresFactualStore, type PersistFactualInputV1 } from "../factualPersistence";
+import { factualLogicalFingerprintV1, PostgresFactualStore, type PersistFactualInputV1 } from "../factualPersistence";
 
 const DB_URL = process.env.NEWS_DATABASE_URL ?? process.env.TEST_DATABASE_URL;
 const migration = (name: string) => new URL(`../../supabase/migrations/${name}`, import.meta.url);
@@ -63,6 +63,7 @@ test("News Core N3-D end-to-end circuit, roles, PIT and pending revision recover
     const corroboration = new DeterministicEvidenceCorroboratorV1().evaluate(corroborationInput);
     assert.equal(corroboration.confirmationStatus, "REPORTED");
     const persistInput: PersistFactualInputV1 = {
+      attestationId: "pending",
       canonicalClaimId: `canonical:${suffix}`, proposal, corroborationInput, corroboration,
       evidence: [{ evidenceId: "n3d-excerpt", evidenceKind: "N3A_PROPOSAL", claimKey, publicationRevisionId, sourceDocumentRef, contentLocator: "body:p1", provenanceRef: `prov:${suffix}`, asKnownAt: at(200) }],
       dependencies: [
@@ -71,12 +72,17 @@ test("News Core N3-D end-to-end circuit, roles, PIT and pending revision recover
         { dependencyType: "N3B_EVALUATION", dependencyRef: corroboration.fingerprint, asKnownAt: at(400) },
       ],
     };
+    const attestationPayload = { canonicalClaimId: persistInput.canonicalClaimId, taxonomyVersion: proposal.taxonomyVersion, category: proposal.category, logicalFingerprint: factualLogicalFingerprintV1(persistInput), ruleSetVersion: proposal.ruleSetVersion, claimType: proposal.claimType, statement: proposal.statement, subjectRef: proposal.subjectRef, objectRef: proposal.objectRef, occurredAt: proposal.occurredAt, scheduledFor: proposal.scheduledFor, confirmationStatus: corroboration.confirmationStatus, lifecycleStatus: corroboration.lifecycleStatus, polarity: corroboration.polarity, focalClaimKey: corroboration.claimKey, publicationRevisionId: proposal.publicationRevisionId, qualityFlags: proposal.qualityFlags, evidence: persistInput.evidence, dependencies: persistInput.dependencies, relation: null };
+    await admin.query("set role news_factual_attestor");
+    const attestationId = (await admin.query<{ issue_fact_attestation_v1: string }>("select news_core.issue_fact_attestation_v1($1::jsonb) issue_fact_attestation_v1", [JSON.stringify(attestationPayload)])).rows[0].issue_fact_attestation_v1;
+    await admin.query("reset role");
+    const persistedInput = { ...persistInput, attestationId };
     const before = new Date().toISOString();
-    const pending = await store.persist(persistInput, "after-commit").catch(error => error as Error);
+    const pending = await store.persist(persistedInput, "after-commit").catch(error => error as Error);
     assert.match((pending as Error).message, /INJECTED_FAILURE_AFTER_COMMIT/);
     const pendingRow = await admin.query<{ finalized_at: Date | null }>("select finalized_at from news_core.fact_revisions where fact_event_id=$1 order by revision_no desc limit 1", [`canonical:${suffix}`]);
     assert.equal(pendingRow.rows[0].finalized_at, null);
-    const persisted = await store.persist(persistInput);
+    const persisted = await store.persist(persistedInput);
     assert.equal(persisted.inserted, false);
     const row = (await admin.query<{ as_known_at: Date; committed_at: Date }>("select as_known_at,committed_at from news_core.fact_revisions where fact_revision_id=$1", [persisted.factRevisionId])).rows[0];
     assert.ok(row.as_known_at.valueOf() >= row.committed_at.valueOf() - 1000);
@@ -93,7 +99,7 @@ test("News Core N3-D end-to-end circuit, roles, PIT and pending revision recover
     await assert.rejects(admin.query("select * from news_core.finalize_fact_revision($1)", [persisted.factRevisionId]), /permission denied/);
     await admin.query("reset role");
 
-    await store.persist(persistInput);
+    await store.persist(persistedInput);
     assert.equal((await admin.query<{ n: number }>("select count(*)::int n from news_core.fact_revisions where fact_event_id=$1", [persisted.factEventId])).rows[0].n, 1);
 
     const writerBypass = await admin.query<{ can_insert: boolean; can_execute: boolean }>("select has_table_privilege('news_factual_writer','news_core.fact_revisions','INSERT') can_insert, has_function_privilege('news_factual_writer','news_core.finalize_fact_revision(text)','EXECUTE') can_execute");

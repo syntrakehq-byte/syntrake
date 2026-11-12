@@ -6,13 +6,13 @@ import { claimKeyV1, DeterministicEvidenceCorroboratorV1, type CorroborationInpu
 export type FactualDependencyV1 = Readonly<{ dependencyType: "N2_PUBLICATION_REVISION" | "N3A_PROPOSAL" | "N3B_EVALUATION" | "FACT_REVISION"; dependencyRef: string; asKnownAt: string }>;
 export type FactualEvidenceRefV1 = Readonly<{ evidenceId: string; evidenceKind: "N3A_PROPOSAL" | "N3B_EVIDENCE" | "N3B_PROOF"; claimKey: string; publicationRevisionId: string; sourceDocumentRef: string; contentLocator: string; provenanceRef: string; asKnownAt: string }>;
 export type FactualRelationV1 = Readonly<{ relatedRevisionId: string; relationType: "CORRECTS" | "CONTESTS" | "RETRACTS" }>;
-export type PersistFactualInputV1 = Readonly<{ canonicalClaimId: string; proposal: ClassificationProposalV1; corroboration: CorroborationResultV1; corroborationInput: CorroborationInputV1; evidence: readonly FactualEvidenceRefV1[]; dependencies: readonly FactualDependencyV1[]; relation?: FactualRelationV1; }>;
+export type PersistFactualInputV1 = Readonly<{ attestationId: string; canonicalClaimId: string; proposal: ClassificationProposalV1; corroboration: CorroborationResultV1; corroborationInput: CorroborationInputV1; evidence: readonly FactualEvidenceRefV1[]; dependencies: readonly FactualDependencyV1[]; relation?: FactualRelationV1; }>;
 export type PersistFactualResultV1 = Readonly<{ inserted: boolean; factEventId: string; factRevisionId: string | null; revisionNo: number | null; logicalFingerprint: string }>;
 export type FactAsOfRowV1 = Readonly<{ factEventId: string; factRevisionId: string; revisionNo: number; canonicalClaimId: string; category: string; claimType: string; statement: string; occurredAt: string | null; scheduledFor: string | null; confirmationStatus: string; lifecycleStatus: string; polarity: string; asKnownAt: string; committedAt: string }>;
 export type FactEvidenceAsOfRowV1 = Readonly<{ factRevisionId: string; evidenceId: string; evidenceKind: string; claimKey: string; publicationRevisionId: string; sourceDocumentRef: string; contentLocator: string; provenanceRef: string; asKnownAt: string }>;
 
 const stable = (value: unknown): string => { if (value === null || typeof value !== "object") return JSON.stringify(value); if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`; return `{${Object.keys(value as Record<string, unknown>).sort().map(k => `${JSON.stringify(k)}:${stable((value as Record<string, unknown>)[k])}`).join(",")}}`; };
-const fingerprint = (input: PersistFactualInputV1): string => createHash("sha256").update(stable({ canonicalClaimId: input.canonicalClaimId, proposal: { ...input.proposal, proposedAt: undefined }, corroboration: { ...input.corroboration, evaluatedAt: undefined }, evidence: [...input.evidence].sort((a,b) => a.evidenceId.localeCompare(b.evidenceId)), dependencies: [...input.dependencies].sort((a,b) => `${a.dependencyType}:${a.dependencyRef}`.localeCompare(`${b.dependencyType}:${b.dependencyRef}`)), relation: input.relation ?? null })).digest("hex");
+export const factualLogicalFingerprintV1 = (input: PersistFactualInputV1): string => createHash("sha256").update(stable({ canonicalClaimId: input.canonicalClaimId, proposal: { ...input.proposal, proposedAt: undefined }, corroboration: { ...input.corroboration, evaluatedAt: undefined }, evidence: [...input.evidence].sort((a,b) => a.evidenceId.localeCompare(b.evidenceId)), dependencies: [...input.dependencies].sort((a,b) => `${a.dependencyType}:${a.dependencyRef}`.localeCompare(`${b.dependencyType}:${b.dependencyRef}`)), relation: input.relation ?? null })).digest("hex");
 const instant = (value: string): number => { const result = Date.parse(value); if (!Number.isFinite(result)) throw new Error("NEWS_FACT_TIMESTAMP_INVALID"); return result; };
 
 export class PostgresFactualStore {
@@ -29,8 +29,8 @@ export class PostgresFactualStore {
   }
 
   async persist(input: PersistFactualInputV1, failurePoint: "none" | "before-commit" | "after-commit" = "none", holdBeforeCommitMs = 0): Promise<PersistFactualResultV1> {
-    const logicalFingerprint = fingerprint(input);
-    if (!input.canonicalClaimId || input.proposal.publicationRevisionId === "" || input.evidence.length === 0) throw new Error("NEWS_FACT_INPUT_INVALID");
+    const logicalFingerprint = factualLogicalFingerprintV1(input);
+    if (!input.attestationId || !input.canonicalClaimId || input.proposal.publicationRevisionId === "" || input.evidence.length === 0) throw new Error("NEWS_FACT_ATTESTATION_REQUIRED");
     if (input.proposal.occurredAt && input.proposal.scheduledFor) throw new Error("NEWS_FACT_TEMPORAL_FIELDS_CONFLICT");
     if (input.corroboration.canonicalClaimId !== input.canonicalClaimId || input.corroboration.claimKey !== claimKeyV1(input.proposal)) throw new Error("NEWS_FACT_CORROBORATION_IDENTITY_INVALID");
     for (const evidence of input.evidence) {
@@ -57,6 +57,7 @@ export class PostgresFactualStore {
       for (const evidence of input.evidence) if (instant(evidence.asKnownAt) > serverNow) throw new Error("NEWS_FACT_FUTURE_EVIDENCE");
       if (failurePoint === "before-commit") throw new Error("INJECTED_FAILURE_BEFORE_COMMIT");
       const payload = {
+        attestationId: input.attestationId,
         canonicalClaimId: input.canonicalClaimId,
         taxonomyVersion: input.proposal.taxonomyVersion,
         category: input.proposal.category,
@@ -77,7 +78,7 @@ export class PostgresFactualStore {
         evidence: input.evidence,
         dependencies: input.dependencies,
         relation: input.relation ?? null,
-        seal: failurePoint !== "after-commit" && holdBeforeCommitMs === 0,
+        seal: false,
       };
       const result = await client.query<{ inserted: boolean; fact_event_id: string; fact_revision_id: string; revision_no: number; logical_fingerprint: string }>("select * from news_core.persist_fact_revision_v1($1::jsonb)", [JSON.stringify(payload)]);
       const row = result.rows[0];
