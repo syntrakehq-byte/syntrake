@@ -61,11 +61,15 @@ begin
       into publication
       from news_core.publication_revisions pr
      where pr.publication_revision_id=evidence->>'publicationRevisionId';
-    if not found or publication.visibility_state <> 'COMMITTED'
-       or publication.source_document_ref <> evidence->>'sourceDocumentRef'
-       or (evidence->>'asKnownAt')::timestamptz < publication.as_known_at
-       or (evidence->>'asKnownAt')::timestamptz > server_now then
+    if not found or publication.visibility_state <> 'COMMITTED' then
       raise exception 'NEWS_FACT_EVIDENCE_REFERENCE_INVALID' using errcode='22023';
+    end if;
+    if publication.source_document_ref <> evidence->>'sourceDocumentRef' then
+      raise exception 'NEWS_FACT_EVIDENCE_SOURCE_MISMATCH' using errcode='22023';
+    end if;
+    if (evidence->>'asKnownAt')::timestamptz < publication.as_known_at
+       or (evidence->>'asKnownAt')::timestamptz > server_now then
+      raise exception 'NEWS_FACT_EVIDENCE_TIME_INVALID' using errcode='22023';
     end if;
   end loop;
 
