@@ -9,6 +9,7 @@ export type FactualRelationV1 = Readonly<{ relatedRevisionId: string; relationTy
 export type PersistFactualInputV1 = Readonly<{ canonicalClaimId: string; proposal: ClassificationProposalV1; corroboration: CorroborationResultV1; corroborationInput: CorroborationInputV1; evidence: readonly FactualEvidenceRefV1[]; dependencies: readonly FactualDependencyV1[]; relation?: FactualRelationV1; }>;
 export type PersistFactualResultV1 = Readonly<{ inserted: boolean; factEventId: string; factRevisionId: string | null; revisionNo: number | null; logicalFingerprint: string }>;
 export type FactAsOfRowV1 = Readonly<{ factEventId: string; factRevisionId: string; revisionNo: number; canonicalClaimId: string; category: string; claimType: string; statement: string; occurredAt: string | null; scheduledFor: string | null; confirmationStatus: string; lifecycleStatus: string; polarity: string; asKnownAt: string; committedAt: string }>;
+export type FactEvidenceAsOfRowV1 = Readonly<{ factRevisionId: string; evidenceId: string; evidenceKind: string; claimKey: string; publicationRevisionId: string; sourceDocumentRef: string; contentLocator: string; provenanceRef: string; asKnownAt: string }>;
 
 const stable = (value: unknown): string => { if (value === null || typeof value !== "object") return JSON.stringify(value); if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`; return `{${Object.keys(value as Record<string, unknown>).sort().map(k => `${JSON.stringify(k)}:${stable((value as Record<string, unknown>)[k])}`).join(",")}}`; };
 const fingerprint = (input: PersistFactualInputV1): string => createHash("sha256").update(stable({ canonicalClaimId: input.canonicalClaimId, proposal: { ...input.proposal, proposedAt: undefined }, corroboration: { ...input.corroboration, evaluatedAt: undefined }, evidence: [...input.evidence].sort((a,b) => a.evidenceId.localeCompare(b.evidenceId)), dependencies: [...input.dependencies].sort((a,b) => `${a.dependencyType}:${a.dependencyRef}`.localeCompare(`${b.dependencyType}:${b.dependencyRef}`)), relation: input.relation ?? null })).digest("hex");
@@ -98,6 +99,28 @@ export class PostgresFactualStore {
       await client.query("begin");
       if (this.databaseRole) await client.query(`set local role ${this.databaseRole}`);
       const result = await client.query<FactAsOfRowV1>("select \"factEventId\",\"factRevisionId\",\"revisionNo\",\"canonicalClaimId\",category,\"claimType\",statement,\"occurredAt\",\"scheduledFor\",\"confirmationStatus\",\"lifecycleStatus\",polarity,\"asKnownAt\",\"committedAt\" from news_core.read_fact_revisions_as_of($1)", [asOf]);
+      await client.query("commit");
+      return result.rows;
+    } catch (error) { await client.query("rollback").catch(() => undefined); throw error; } finally { client.release(); }
+  }
+
+  async readHistoryAsOf(asOf: string, factEventId: string): Promise<FactAsOfRowV1[]> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("begin");
+      if (this.databaseRole) await client.query(`set local role ${this.databaseRole}`);
+      const result = await client.query<FactAsOfRowV1>("select * from news_core.read_fact_history_as_of($1,$2)", [asOf, factEventId]);
+      await client.query("commit");
+      return result.rows;
+    } catch (error) { await client.query("rollback").catch(() => undefined); throw error; } finally { client.release(); }
+  }
+
+  async readEvidenceAsOf(asOf: string, factRevisionId: string): Promise<FactEvidenceAsOfRowV1[]> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("begin");
+      if (this.databaseRole) await client.query(`set local role ${this.databaseRole}`);
+      const result = await client.query<FactEvidenceAsOfRowV1>("select * from news_core.read_fact_evidence_as_of($1,$2)", [asOf, factRevisionId]);
       await client.query("commit");
       return result.rows;
     } catch (error) { await client.query("rollback").catch(() => undefined); throw error; } finally { client.release(); }
