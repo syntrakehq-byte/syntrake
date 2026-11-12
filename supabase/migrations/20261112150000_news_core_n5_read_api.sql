@@ -29,7 +29,7 @@ create or replace function news_core.read_publication_revisions_filtered_as_of(p
 returns table("publicationRevisionId" text, "publicationId" text, "revisionNo" integer, title text, "publishedAt" timestamptz, form text, "contentFingerprint" text, "sourceDocumentRef" text, "qualityFlags" jsonb, "supersedesRevisionId" text, "ingestedAt" timestamptz, "asKnownAt" timestamptz)
 language sql stable security definer set search_path=pg_catalog,news_core as $$
   with visible as (
-    select r.*,row_number() over(partition by r.publication_id order by r.as_known_at desc,r.revision_no desc,r.ingested_at desc) as n
+    select r.*,row_number() over(partition by r.publication_id order by r.revision_no desc,r.as_known_at desc,r.ingested_at desc) as n
       from news_core.publication_revisions r join news_core.publications p using (publication_id) join news_core.visibility_frontiers f on f.frontier_id=r.visibility_frontier_id
      where r.visibility_state='COMMITTED' and p.visibility_state='COMMITTED' and r.as_known_at <= p_as_of and f.published_at <= p_as_of
   )
@@ -48,7 +48,7 @@ language sql stable security definer set search_path=pg_catalog,news_core as $$
   with candidates as (select r.*,e.canonical_claim_id,e.category
     from news_core.fact_revisions r join news_core.fact_events e using (fact_event_id)
    where r.finalized_at is not null and r.as_known_at <= p_as_of and r.committed_at <= p_as_of),
-  visible as (select candidates.*,row_number() over(partition by fact_event_id order by as_known_at desc,revision_no desc,committed_at desc) n from candidates)
+  visible as (select candidates.*,row_number() over(partition by fact_event_id order by revision_no desc,as_known_at desc,committed_at desc) n from candidates)
   select fact_event_id,fact_revision_id,revision_no,canonical_claim_id,category,claim_type,statement,occurred_at,scheduled_for,confirmation_status,lifecycle_status,polarity,as_known_at,committed_at
     from visible where n=1
      and (coalesce(cardinality(p_targets),0)=0 or fact_event_id = any(p_targets) or canonical_claim_id = any(p_targets) or category = any(p_targets))
