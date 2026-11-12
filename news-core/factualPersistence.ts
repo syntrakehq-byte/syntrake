@@ -34,8 +34,9 @@ export class PostgresFactualStore {
         const revision = await client.query<{ source_document_ref: string; as_known_at: Date }>("select source_document_ref,as_known_at from news_core.publication_revisions where publication_revision_id=$1 and visibility_state='COMMITTED'", [evidence.publicationRevisionId]);
         if (revision.rowCount !== 1 || revision.rows[0].source_document_ref !== evidence.sourceDocumentRef || instant(evidence.asKnownAt) < instant(revision.rows[0].as_known_at.toISOString())) throw new Error("NEWS_FACT_EVIDENCE_REFERENCE_INVALID");
       }
-      const event = await client.query<{ fact_event_id: string }>("insert into news_core.fact_events(fact_event_id,canonical_claim_id,taxonomy_version,category) values ($1,$1,$2,$3) on conflict(canonical_claim_id) do update set canonical_claim_id=excluded.canonical_claim_id returning fact_event_id", [input.canonicalClaimId, input.proposal.taxonomyVersion, input.proposal.category]);
-      const eventId = event.rows[0].fact_event_id;
+      const event = await client.query<{ fact_event_id: string }>("insert into news_core.fact_events(fact_event_id,canonical_claim_id,taxonomy_version,category) values ($1,$1,$2,$3) on conflict(canonical_claim_id) do nothing returning fact_event_id", [input.canonicalClaimId, input.proposal.taxonomyVersion, input.proposal.category]);
+      const eventId = event.rows[0]?.fact_event_id ?? (await client.query<{ fact_event_id: string }>("select fact_event_id from news_core.fact_events where canonical_claim_id=$1", [input.canonicalClaimId])).rows[0]?.fact_event_id;
+      if (!eventId) throw new Error("NEWS_FACT_EVENT_ID_UNAVAILABLE");
       await client.query("select fact_event_id from news_core.fact_events where fact_event_id=$1 for update", [eventId]);
       const existing = await client.query<{ fact_revision_id: string; revision_no: number }>("select fact_revision_id,revision_no from news_core.fact_revisions where fact_event_id=$1 and logical_fingerprint=$2", [eventId, logicalFingerprint]);
       if (existing.rowCount) { await client.query("rollback"); return { inserted: false, factEventId: eventId, factRevisionId: existing.rows[0].fact_revision_id, revisionNo: existing.rows[0].revision_no, logicalFingerprint }; }
