@@ -27,14 +27,14 @@ Esta matriz preserva os critérios N0-T01..T37. `PASS` significa que existe uma 
 | N0-T15 | N1 | NOT_PROVEN | não há ensaio completo por CIK nesta auditoria |
 | N0-T16 | N1 | PASS | testes de indisponibilidade do adaptador SEC |
 | N0-T17 | N1 | PASS | payload malformado rejeitado |
-| N0-T18 | N3 | NOT_PROVEN | SSRF/redirect não é exercitado pelo gate News |
+| N0-T18 | N3/N4 | NOT_PROVEN | N4 cobre bloqueio determinístico de hosts privados e redirects; DNS rebinding em rede controlada ainda não foi provado |
 | N0-T19 | N3 | PASS | conteúdo hostil tratado como dados em N3-A |
 | N0-T20 | N3 | NOT_PROVEN | isolamento de contas não pertence ao circuito News testado |
 | N0-T21 | N3 | NOT_PROVEN | Investing passou, mas a compatibilidade conjunta Investing + Trading não foi ensaiada |
 | N0-T22 | N2 | NOT_PROVEN | paginação histórica end-to-end não é exercitada aqui |
 | N0-T23 | N2/N3 | PASS | recusa conservadora sem evidência em N3-A/B |
 | N0-T24 | N1 | PASS | rollback/atomicidade em PG17 |
-| N0-T25 | N1/N4 | NOT_PROVEN | polls reais e autonomia 24/7 não demonstrados |
+| N0-T25 | N1/N4 | NOT_PROVEN | uma aquisição SEC live foi provada, mas dois polls autónomos e operação 24/7 não foram demonstrados |
 | N0-T26 | N1 | PASS | recovery/idempotência N1 e N3-C |
 | N0-T27 | N1/N3 | NOT_PROVEN | backfill real por partição não demonstrado |
 | N0-T28 | N2 | NOT_PROVEN | conflito de relógio de fornecedor não foi ensaiado neste gate |
@@ -54,4 +54,8 @@ Esta matriz preserva os critérios N0-T01..T37. `PASS` significa que existe uma 
 
 O mesmo ensaio comprova que `news_service` não pode ler tabelas factuais nem selar revisões, que as três roles são `NOLOGIN` e que `news_factual_writer` não herda memberships. Também regista explicitamente a limitação de confiança: o writer dedicado ainda possui INSERT bruto e EXECUTE da selagem. Essa capacidade é `BLOCKED` para uma afirmação de isolamento de produção; não é convertida em PASS por uma conexão administrativa com `SET ROLE`.
 
-Não foram executados neste PR: fontes reais, fornecedores externos, SSRF, operação autónoma 24/7, APIs N5, deploy ou migrações remotas.
+Não foram executados neste PR: fornecedores externos alternativos, DNS rebinding em rede controlada, operação autónoma 24/7, APIs N5, deploy ou migrações remotas.
+
+## Evidência N4
+
+`secLiveN4.test.ts` executou o endpoint oficial SEC EDGAR em CI e registou no log um SHA-256 sanitizado da resposta, CIK validado e publicações oficiais. `sourceSecurityN4.test.ts` cobre política local para schemes/hosts privados, metadata, redirects e conteúdo hostil. Essas provas não alteram `N0-T18` ou `N0-T25` para PASS porque os critérios normativos exigem, respetivamente, DNS/rebinding controlado e operação autónoma repetida.
