@@ -363,8 +363,8 @@ begin
        and fr.logical_fingerprint=attestation->>'logicalFingerprint'
        and fe.canonical_claim_id=attestation->>'canonicalClaimId'
   ) then raise exception 'NEWS_FACT_REVISION_NOT_AUTHORIZED' using errcode='42501'; end if;
-  if exists (select 1 from news_core.fact_revisions where fact_revision_id=p_fact_revision_id and committed_at is not null) then
-    return query select committed_at from news_core.fact_revisions where fact_revision_id=p_fact_revision_id;
+  if exists (select 1 from news_core.fact_revisions fr where fr.fact_revision_id=p_fact_revision_id and fr.committed_at is not null) then
+    return query select fr.committed_at from news_core.fact_revisions fr where fr.fact_revision_id=p_fact_revision_id;
     return;
   end if;
   perform set_config('news_core.fact_sealing','on',true);
