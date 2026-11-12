@@ -77,6 +77,28 @@ $$;
 revoke all on function news_core.register_verified_fact_pipeline_v1(jsonb) from public,news_reader,news_service,news_factual_writer,news_factual_attestor;
 grant execute on function news_core.register_verified_fact_pipeline_v1(jsonb) to news_pipeline_verifier;
 
+create or replace function news_core.reject_fact_mutation()
+returns trigger language plpgsql security definer set search_path=pg_catalog,news_core as $$
+begin
+  if tg_op = 'UPDATE' and current_setting('news_core.fact_sealing', true) = 'on'
+     and new.fact_revision_id=old.fact_revision_id and new.fact_event_id=old.fact_event_id
+     and new.revision_no=old.revision_no and new.logical_fingerprint=old.logical_fingerprint
+     and new.rule_set_version=old.rule_set_version and new.claim_type=old.claim_type
+     and new.statement=old.statement and new.confirmation_status=old.confirmation_status
+     and new.lifecycle_status=old.lifecycle_status and new.polarity=old.polarity
+     and new.focal_claim_key=old.focal_claim_key and new.publication_revision_id=old.publication_revision_id
+     and new.subject_ref is not distinct from old.subject_ref and new.object_ref is not distinct from old.object_ref
+     and new.occurred_at is not distinct from old.occurred_at and new.scheduled_for is not distinct from old.scheduled_for
+     and new.quality_flags is not distinct from old.quality_flags and new.supersedes_revision_id is not distinct from old.supersedes_revision_id
+     and new.staged_txid is not distinct from old.staged_txid
+     and ((old.finalized_at is null and new.finalized_at is not null)
+       or (old.finalized_at is not null and old.committed_at is null and new.finalized_at is not null and new.committed_at is not null)) then
+    return new;
+  end if;
+  raise exception 'NEWS_FACT_HISTORY_APPEND_ONLY' using errcode='55006';
+end
+$$;
+
 create or replace function news_core.issue_fact_attestation_v1(p_payload jsonb)
 returns text language plpgsql volatile security definer set search_path=pg_catalog,news_core as $$
 declare attestation_id text;
@@ -319,6 +341,7 @@ begin
     raise exception 'NEWS_FACT_STAGE_PUBLISH_SAME_TRANSACTION' using errcode='55006';
   end if;
   if revision.finalized_at is null then
+    perform set_config('news_core.fact_sealing','on',true);
     update news_core.fact_revisions
        set as_known_at=greatest(clock_timestamp(),coalesce((select max(dependency_as_known_at) from news_core.fact_revision_dependencies where fact_revision_id=p_fact_revision_id), '-infinity'::timestamptz)),
            finalized_at=clock_timestamp()
@@ -344,6 +367,7 @@ begin
     return query select committed_at from news_core.fact_revisions where fact_revision_id=p_fact_revision_id;
     return;
   end if;
+  perform set_config('news_core.fact_sealing','on',true);
   return query update news_core.fact_revisions fr set committed_at=clock_timestamp()
    where fr.fact_revision_id=p_fact_revision_id and fr.finalized_at is not null and fr.committed_at is null
    returning fr.committed_at;
