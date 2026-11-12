@@ -50,6 +50,7 @@ jobs:
       - run: npm ci
       - run: npm run test:news
       - run: npm run test:news:n3a
+      - run: npm run test:news:n3b
       - run: npm run test:news:pg17
       - run: npx tsc --noEmit
       - run: npm run lint -- --quiet

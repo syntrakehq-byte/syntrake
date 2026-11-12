@@ -17,6 +17,7 @@
     "test:investing:r2f:mock": "tsx --test investing-core/tests/verifySignedClerkRlsAB.test.ts",
     "test:news": "tsx --test news-core/tests/secIngestion.test.ts news-core/tests/workerProcess.test.ts",
     "test:news:n3a": "tsx --test news-core/tests/factualClassification.test.ts",
+    "test:news:n3b": "tsx --test news-core/tests/evidenceCorroboration.test.ts",
     "test:news:pg17": "tsx --test --test-timeout=180000 news-core/tests/postgresNews.test.ts && tsx --test --test-timeout=180000 news-core/tests/postgresNewsN2a.test.ts && tsx --test --test-timeout=180000 news-core/tests/postgresNewsN2b.test.ts && tsx --test --test-timeout=180000 news-core/tests/postgresNewsN2c.test.ts",
     "news:worker": "tsx scripts/news-postgres-worker.ts"
   },
