@@ -100,7 +100,9 @@ test("News Core N2-A PostgreSQL 17 immutable revisions/PIT/concurrency", { skip:
     const inserted2 = await store.ingestPublicationRevision(revision2);
     stage("insert revision 2 complete");
     assert.deepEqual(inserted2, { inserted: true, publicationRevisionId: revision2.revision.publicationRevisionId });
+    stage("read revision 2 start");
     const after2 = await store.readPublicationRevisionsAsOf(new Date(Date.now() + 5_000).toISOString(), publicationId);
+    stage("read revision 2 complete");
     assert.deepEqual(after2.map(row => row.revisionNo), [1, 2], "T02 preserves the prior revision");
     assert.ok(after2[1].asKnownAt && after2[0].asKnownAt && Date.parse(after2[1].asKnownAt) > Date.parse(after2[0].asKnownAt));
     assert.equal(typeof after2[1].asKnownAt, "string");
