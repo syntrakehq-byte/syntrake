@@ -77,7 +77,7 @@ export class PostgresFactualStore {
         evidence: input.evidence,
         dependencies: input.dependencies,
         relation: input.relation ?? null,
-        seal: failurePoint !== "after-commit",
+        seal: failurePoint !== "after-commit" && holdBeforeCommitMs === 0,
       };
       const result = await client.query<{ inserted: boolean; fact_event_id: string; fact_revision_id: string; revision_no: number; logical_fingerprint: string }>("select * from news_core.persist_fact_revision_v1($1::jsonb)", [JSON.stringify(payload)]);
       const row = result.rows[0];
