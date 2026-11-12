@@ -228,8 +228,18 @@ begin
     where fr.fact_revision_id=p_fact_revision_id and fr.finalized_at is null
       and fe.canonical_claim_id=attestation->>'canonicalClaimId'
       and fr.logical_fingerprint=attestation->>'logicalFingerprint'
-      and fr.statement=attestation->>'statement'
       and fr.publication_revision_id=attestation->>'publicationRevisionId'
+      and exists (
+        select 1 from news_core.fact_revision_evidence fre
+         where fre.fact_revision_id=fr.fact_revision_id
+           and fre.publication_revision_id=attestation->>'publicationRevisionId'
+      )
+      and exists (
+        select 1 from news_core.fact_revision_dependencies frd
+         where frd.fact_revision_id=fr.fact_revision_id
+           and frd.dependency_type='N2_PUBLICATION_REVISION'
+           and frd.dependency_ref=attestation->>'publicationRevisionId'
+      )
   ) then
     raise exception 'NEWS_FACT_REVISION_NOT_AUTHORIZED' using errcode='42501';
   end if;
