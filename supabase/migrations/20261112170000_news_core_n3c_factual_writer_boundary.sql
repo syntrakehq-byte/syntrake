@@ -247,15 +247,14 @@ begin
     insert into news_core.fact_revisions(
     fact_revision_id,fact_event_id,revision_no,logical_fingerprint,rule_set_version,claim_type,statement,
     subject_ref,object_ref,occurred_at,scheduled_for,confirmation_status,lifecycle_status,polarity,
-    focal_claim_key,publication_revision_id,quality_flags,supersedes_revision_id
+    focal_claim_key,publication_revision_id,quality_flags,supersedes_revision_id,staged_txid
   ) values (
     revision_id,event_id,next_revision,p->>'logicalFingerprint',p->>'ruleSetVersion',p->>'claimType',p->>'statement',
     nullif(p->>'subjectRef',''),nullif(p->>'objectRef',''),nullif(p->>'occurredAt','')::timestamptz,
     nullif(p->>'scheduledFor','')::timestamptz,p->>'confirmationStatus',p->>'lifecycleStatus',p->>'polarity',
     p->>'focalClaimKey',p->>'publicationRevisionId',coalesce(p->'qualityFlags','[]'::jsonb),
-    case when next_revision > 1 then event_id || ':revision:' || (next_revision-1)::text end
+    case when next_revision > 1 then event_id || ':revision:' || (next_revision-1)::text end,txid_current()
   );
-  update news_core.fact_revisions fr set staged_txid=txid_current() where fr.fact_revision_id=revision_id;
   for evidence in select value from jsonb_array_elements(p->'evidence') loop
     insert into news_core.fact_revision_evidence(fact_revision_id,evidence_id,evidence_kind,claim_key,publication_revision_id,source_document_ref,content_locator,provenance_ref,evidence_as_known_at)
     values (revision_id,evidence->>'evidenceId',evidence->>'evidenceKind',evidence->>'claimKey',evidence->>'publicationRevisionId',evidence->>'sourceDocumentRef',evidence->>'contentLocator',evidence->>'provenanceRef',(evidence->>'asKnownAt')::timestamptz);
