@@ -12,6 +12,10 @@ N2-C acrescenta uma camada editorial conservadora sobre os registos N1/N2-A/N2-B
 
 Título, ticker, emissor ou proximidade temporal não produzem `EXACT`. Correspondências insuficientes permanecem `AMBIGUOUS` ou `REVIEW_REQUIRED`.
 
+## Confiança da evidência
+
+O campo `verified` regista apenas a asserção do produtor ou adaptador que forneceu a evidência; não prova uma fonte independente real. Evidência `PUBLICATION_TEXT` isolada nunca estabelece `EXACT`, e fixtures controladas não conferem autoridade de registry ou fornecedor.
+
 ## Contratos
 
 `news-editorial-relations-v1` persiste snapshots append-only de membros de um grupo, evidência obrigatória e operações `ACTIVE`/`SEPARATED`.

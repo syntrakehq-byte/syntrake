@@ -45,8 +45,24 @@ test("News Core N2-C conservative editorial equivalence, structural many-to-many
     const afterExact = await store.readEditorialGroupsAsOf(new Date(Date.now() + 10_000).toISOString());
     assert.equal(afterExact.filter(row => row.groupId === exactGroup.groupId).length, 2);
     const beforeExact = new Date(Math.min(...afterExact.filter(row => row.groupId === exactGroup.groupId).map(row => Date.parse(String(row.asKnownAt)))) - 1).toISOString();
+    const betweenGroupRevisions = new Date(Math.max(...afterExact.filter(row => row.groupId === exactGroup.groupId).map(row => Date.parse(String(row.asKnownAt)))) + 1).toISOString();
     assert.equal((await store.readEditorialGroupsAsOf(beforeExact)).filter(row => row.groupId === exactGroup.groupId).length, 0);
     assert.deepEqual(await store.ingestEditorialGroup(exactGroup), { inserted: false, editorialGroupRevisionId: exact.editorialGroupRevisionId });
+
+    const groupRevisionTwo: EditorialGroupResolutionV1 = { ...exactGroup, publicationRevisionIds: [revisionIds[1], revisionIds[2]], reason: "MEMBERSHIP_CORRECTION", evidence: [{ evidenceId: "membership-proof", evidenceKind: "OFFICIAL_SOURCE", sourceRef: "https://publisher.example/correction/membership", observedAt: now, verified: true }] };
+    await store.ingestEditorialGroup(groupRevisionTwo);
+    const afterGroupRevisionTwo = new Date(Date.now() + 10_000).toISOString();
+    const effectiveGroup = (await store.readEditorialGroupsAsOf(afterGroupRevisionTwo)).filter(row => row.groupId === exactGroup.groupId);
+    assert.deepEqual(new Set(effectiveGroup.map(row => row.publicationRevisionId)), new Set([revisionIds[1], revisionIds[2]]));
+    assert.equal((await store.readEditorialGroupsAsOf(afterGroupRevisionTwo, revisionIds[0])).length, 0, "a removed member must not be resurrected by a filtered effective read");
+    assert.equal((await store.readEditorialGroupsAsOf(betweenGroupRevisions, revisionIds[0])).filter(row => row.groupId === exactGroup.groupId).length, 1, "the old member remains visible between revisions");
+    assert.equal((await store.readEditorialGroupsAsOf(beforeExact, revisionIds[0])).length, 0);
+    const groupHistory = (await store.readEditorialGroupHistoryAsOf(afterGroupRevisionTwo)).filter(row => row.groupId === exactGroup.groupId);
+    assert.deepEqual(new Set(groupHistory.map(row => row.publicationRevisionId)), new Set(revisionIds.slice(0, 3)));
+    assert.equal(groupHistory.filter(row => row.revisionNo === 1).length, 2);
+    assert.equal(groupHistory.filter(row => row.revisionNo === 2).length, 2);
+    const groupEvidence = await admin.query<{ verified: boolean }>("select verified from news_core.editorial_group_evidence where editorial_group_revision_id=$1 order by evidence_id", [exact.editorialGroupRevisionId]);
+    assert.deepEqual(groupEvidence.rows.map(row => row.verified), [true]);
 
     const ambiguousGroup: EditorialGroupResolutionV1 = {
       contractVersion: "news-editorial-relations-v1", resolverVersion: "fixture-editorial-v1", groupId: `ambiguous-group-${suffix}`, operation: "ACTIVE", status: "AMBIGUOUS", relationType: "POSSIBLE_DUPLICATE", reason: "SAME_TITLE_DIFFERENT_ORIGIN",
@@ -56,6 +72,10 @@ test("News Core N2-C conservative editorial equivalence, structural many-to-many
     const ambiguousRead = (await store.readEditorialGroupsAsOf(new Date(Date.now() + 10_000).toISOString())).filter(row => row.groupId === ambiguousGroup.groupId);
     assert.equal(ambiguousRead.length, 2);
     assert.deepEqual(new Set(ambiguousRead.map(row => row.matchStatus)), new Set(["AMBIGUOUS"]));
+    const ambiguousEvidence = await admin.query<{ verified: boolean }>("select verified from news_core.editorial_group_evidence where editorial_group_revision_id in (select editorial_group_revision_id from news_core.editorial_group_revisions where group_id=$1)", [ambiguousGroup.groupId]);
+    assert.deepEqual(ambiguousEvidence.rows.map(row => row.verified), [false]);
+    const missingVerified = { ...ambiguousGroup, groupId: `missing-verified-${suffix}`, evidence: [{ evidenceId: "missing-verified", evidenceKind: "PUBLICATION_TEXT", sourceRef: "fixture:missing-verified", observedAt: now }] } as unknown as EditorialGroupResolutionV1;
+    await assert.rejects(store.ingestEditorialGroup(missingVerified), /NEWS_EDITORIAL_EVIDENCE_INVALID/);
     await assert.rejects(store.ingestEditorialGroup({ ...ambiguousGroup, status: "EXACT", relationType: "POSSIBLE_DUPLICATE", reason: "UNSUPPORTED_EXACT" }), /NEWS_EDITORIAL_EXACT_UNSUPPORTED/);
 
     const eventOne: StructuralEventLinkResolutionV1 = {
@@ -67,11 +87,31 @@ test("News Core N2-C conservative editorial equivalence, structural many-to-many
     await store.ingestStructuralEventLinks(eventTwo);
     const eventRead = await store.readStructuralEventLinksAsOf(new Date(Date.now() + 10_000).toISOString());
     assert.equal(eventRead.filter(row => row.publicationRevisionId === revisionIds[0]).length, 2, "one publication may relate to multiple structural events");
+    const eventCutoffBeforeRevisionTwo = new Date(Date.now() + 10_000).toISOString();
+
+    const eventRevisionTwo: StructuralEventLinkResolutionV1 = { ...eventOne, publicationRevisionIds: [revisionIds[1], revisionIds[2]], reason: "EVENT_MEMBERSHIP_CORRECTION", evidence: [{ evidenceId: "event-membership-proof", evidenceKind: "OFFICIAL_SOURCE", sourceRef: "https://publisher.example/event/correction", observedAt: now, verified: true }] };
+    await store.ingestStructuralEventLinks(eventRevisionTwo);
+    const afterEventRevisionTwo = new Date(Date.now() + 10_000).toISOString();
+    const effectiveEvent = (await store.readStructuralEventLinksAsOf(afterEventRevisionTwo)).filter(row => row.structuralEventId === eventOne.structuralEventId);
+    assert.deepEqual(new Set(effectiveEvent.map(row => row.publicationRevisionId)), new Set([revisionIds[1], revisionIds[2]]));
+    assert.equal((await store.readStructuralEventLinksAsOf(afterEventRevisionTwo, revisionIds[0])).filter(row => row.structuralEventId === eventOne.structuralEventId).length, 0, "a removed event member must not be resurrected");
+    assert.equal((await store.readStructuralEventLinksAsOf(eventCutoffBeforeRevisionTwo, revisionIds[0])).filter(row => row.structuralEventId === eventOne.structuralEventId).length, 1, "the old event member remains visible before the correction");
+    const eventHistory = (await store.readStructuralEventLinkHistoryAsOf(afterEventRevisionTwo)).filter(row => row.structuralEventId === eventOne.structuralEventId);
+    assert.deepEqual(new Set(eventHistory.map(row => row.publicationRevisionId)), new Set(revisionIds.slice(0, 3)));
+    const eventEvidence = await admin.query<{ verified: boolean }>("select verified from news_core.publication_event_link_evidence where publication_event_link_revision_id in (select publication_event_link_revision_id from news_core.publication_event_link_revisions where structural_event_id=$1) order by evidence_id", [eventOne.structuralEventId]);
+    assert.deepEqual(eventEvidence.rows.map(row => row.verified), [true, true]);
+
+    const singletonEvent: StructuralEventLinkResolutionV1 = { ...eventOne, structuralEventId: `event-singleton-${suffix}`, publicationRevisionIds: [revisionIds[2]], reason: "SINGLETON_STRUCTURAL_REFERENCE", evidence: [{ evidenceId: "singleton-proof", evidenceKind: "PROVIDER_SOURCE", sourceRef: "provider:singleton", observedAt: now, verified: false }] };
+    await store.ingestStructuralEventLinks(singletonEvent);
+    assert.equal((await store.readStructuralEventLinksAsOf(afterEventRevisionTwo)).filter(row => row.structuralEventId === singletonEvent.structuralEventId).length, 1);
+    const singletonEvidence = await admin.query<{ verified: boolean }>("select verified from news_core.publication_event_link_evidence where publication_event_link_revision_id in (select publication_event_link_revision_id from news_core.publication_event_link_revisions where structural_event_id=$1)", [singletonEvent.structuralEventId]);
+    assert.deepEqual(singletonEvidence.rows.map(row => row.verified), [false]);
+    await assert.rejects(store.ingestStructuralEventLinks({ ...singletonEvent, operation: "SEPARATED", status: "EXACT", relationType: "SAME_STRUCTURAL_ORIGIN", reason: "INVALID_SEPARATED_EXACT", evidence: [{ evidenceId: "singleton-exact-proof", evidenceKind: "OFFICIAL_SOURCE", sourceRef: "https://publisher.example/invalid", observedAt: now, verified: true }] }), /NEWS_EVENT_LINK_SEPARATED_EXACT_INVALID/);
 
     const separated: EditorialGroupResolutionV1 = { ...exactGroup, operation: "SEPARATED", status: "REVIEW_REQUIRED", reason: "ORIGIN_CONFLICT_REQUIRES_SEPARATION", evidence: [{ evidenceId: "separation-proof", evidenceKind: "OFFICIAL_SOURCE", sourceRef: "https://publisher.example/correction/1", observedAt: now, verified: true }] };
     await store.ingestEditorialGroup(separated);
     assert.equal((await store.readEditorialGroupsAsOf(new Date(Date.now() + 10_000).toISOString())).filter(row => row.groupId === exactGroup.groupId).length, 0);
-    assert.equal((await store.readEditorialGroupHistoryAsOf(new Date(Date.now() + 10_000).toISOString())).filter(row => row.groupId === exactGroup.groupId).length, 4);
+    assert.equal((await store.readEditorialGroupHistoryAsOf(new Date(Date.now() + 10_000).toISOString())).filter(row => row.groupId === exactGroup.groupId).length, 6);
 
     const crashEvent: StructuralEventLinkResolutionV1 = { ...eventOne, structuralEventId: `event-crash-${suffix}`, reason: "RECOVERY_PROBE" };
     await assert.rejects(store.ingestStructuralEventLinks(crashEvent, { failurePoint: "after-commit-before-finalize" }), /INJECTED_FAILURE_AFTER_COMMIT_BEFORE_FINALIZE/);

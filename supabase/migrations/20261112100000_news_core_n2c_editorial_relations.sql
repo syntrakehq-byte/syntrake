@@ -35,6 +35,7 @@ create table if not exists news_core.editorial_group_evidence (
   evidence_kind text not null check (evidence_kind in ('OFFICIAL_SOURCE','PROVIDER_SOURCE','SYNDICATION_METADATA','PUBLICATION_TEXT')),
   source_ref text not null,
   observed_at timestamptz not null,
+  verified boolean not null,
   primary key (editorial_group_revision_id,evidence_id)
 );
 
@@ -72,6 +73,7 @@ create table if not exists news_core.publication_event_link_evidence (
   evidence_kind text not null check (evidence_kind in ('OFFICIAL_SOURCE','PROVIDER_SOURCE','SYNDICATION_METADATA','PUBLICATION_TEXT')),
   source_ref text not null,
   observed_at timestamptz not null,
+  verified boolean not null,
   primary key (publication_event_link_revision_id,evidence_id)
 );
 
@@ -139,10 +141,11 @@ $$;
 create or replace function news_core.read_editorial_groups_as_of(p_as_of timestamptz,p_publication_revision_id text default null)
 returns table("editorialGroupRevisionId" text,"groupId" text,"revisionNo" integer,"resolverVersion" text,"operation" text,"matchStatus" text,"relationType" text,reason text,"publicationRevisionId" text,"asKnownAt" timestamptz)
 language sql stable security definer set search_path=pg_catalog,news_core as $$
- with history as (select * from news_core.read_editorial_group_history_as_of(p_as_of,p_publication_revision_id)),
+ with history as (select * from news_core.read_editorial_group_history_as_of(p_as_of,null)),
  latest as (select distinct on ("groupId","resolverVersion") "editorialGroupRevisionId" from history order by "groupId","resolverVersion","revisionNo" desc)
  select h.* from history h join latest l on l."editorialGroupRevisionId"=h."editorialGroupRevisionId"
   where h.operation='ACTIVE'
+    and (p_publication_revision_id is null or h."publicationRevisionId"=p_publication_revision_id)
 $$;
 
 create or replace function news_core.read_structural_event_link_history_as_of(p_as_of timestamptz,p_publication_revision_id text default null)
@@ -167,10 +170,11 @@ $$;
 create or replace function news_core.read_structural_event_links_as_of(p_as_of timestamptz,p_publication_revision_id text default null)
 returns table("publicationEventLinkRevisionId" text,"structuralEventId" text,"revisionNo" integer,"resolverVersion" text,"operation" text,"matchStatus" text,"relationType" text,reason text,"publicationRevisionId" text,"asKnownAt" timestamptz)
 language sql stable security definer set search_path=pg_catalog,news_core as $$
- with history as (select * from news_core.read_structural_event_link_history_as_of(p_as_of,p_publication_revision_id)),
+ with history as (select * from news_core.read_structural_event_link_history_as_of(p_as_of,null)),
  latest as (select distinct on ("structuralEventId","resolverVersion") "publicationEventLinkRevisionId" from history order by "structuralEventId","resolverVersion","revisionNo" desc)
  select h.* from history h join latest l on l."publicationEventLinkRevisionId"=h."publicationEventLinkRevisionId"
   where h.operation='ACTIVE'
+    and (p_publication_revision_id is null or h."publicationRevisionId"=p_publication_revision_id)
 $$;
 
 revoke all on function news_core.read_editorial_group_history_as_of(timestamptz,text),news_core.read_editorial_groups_as_of(timestamptz,text),news_core.read_structural_event_link_history_as_of(timestamptz,text),news_core.read_structural_event_links_as_of(timestamptz,text) from public;

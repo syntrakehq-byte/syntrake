@@ -53,6 +53,10 @@ function validateMembers(members: readonly string[]): void {
   if (!Array.isArray(members) || members.length < 2 || members.some(member => !validId(member)) || new Set(members).size !== members.length) throw new Error("NEWS_EDITORIAL_MEMBERS_INVALID");
 }
 
+function validateEventMembers(members: readonly string[]): void {
+  if (!Array.isArray(members) || members.length < 1 || members.some(member => !validId(member)) || new Set(members).size !== members.length) throw new Error("NEWS_EVENT_LINK_MEMBERS_INVALID");
+}
+
 export function validateEditorialGroupResolution(result: EditorialGroupResolutionV1): EditorialGroupResolutionV1 {
   if (result.contractVersion !== "news-editorial-relations-v1" || !validId(result.resolverVersion) || !validId(result.groupId) || !validId(result.reason) || !["ACTIVE", "SEPARATED"].includes(result.operation)) throw new Error("NEWS_EDITORIAL_RESOLUTION_INVALID");
   if (!["EXACT", "AMBIGUOUS", "UNRESOLVED", "REVIEW_REQUIRED"].includes(result.status) || !["SAME_ORIGIN", "REPUBLICATION", "TRANSLATION", "POSSIBLE_DUPLICATE"].includes(result.relationType)) throw new Error("NEWS_EDITORIAL_RESOLUTION_INVALID");
@@ -67,8 +71,9 @@ export function validateEditorialGroupResolution(result: EditorialGroupResolutio
 export function validateStructuralEventLinkResolution(result: StructuralEventLinkResolutionV1): StructuralEventLinkResolutionV1 {
   if (result.contractVersion !== "news-structural-event-links-v1" || !validId(result.resolverVersion) || !validId(result.structuralEventId) || !validId(result.reason) || !["ACTIVE", "SEPARATED"].includes(result.operation)) throw new Error("NEWS_EVENT_LINK_RESOLUTION_INVALID");
   if (!["EXACT", "AMBIGUOUS", "UNRESOLVED", "REVIEW_REQUIRED"].includes(result.status) || !["RELATED", "SAME_STRUCTURAL_ORIGIN", "POSSIBLE_RELATION"].includes(result.relationType)) throw new Error("NEWS_EVENT_LINK_RESOLUTION_INVALID");
-  validateMembers(result.publicationRevisionIds);
+  validateEventMembers(result.publicationRevisionIds);
   validateEvidence(result.evidence);
+  if (result.operation === "SEPARATED" && result.status === "EXACT") throw new Error("NEWS_EVENT_LINK_SEPARATED_EXACT_INVALID");
   return result;
 }
 

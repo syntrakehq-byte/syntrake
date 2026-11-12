@@ -510,7 +510,7 @@ export class PostgresNewsStore {
         [editorialGroupRevisionId, result.groupId, revisionNo, result.contractVersion, result.resolverVersion, fingerprint, result.operation, result.status, result.relationType, result.reason, txid],
       );
       for (const publicationRevisionId of result.publicationRevisionIds) await client.query("insert into news_core.editorial_group_members(editorial_group_revision_id,publication_revision_id) values ($1,$2)", [editorialGroupRevisionId, publicationRevisionId]);
-      for (const evidence of result.evidence) await client.query("insert into news_core.editorial_group_evidence(editorial_group_revision_id,evidence_id,evidence_kind,source_ref,observed_at) values ($1,$2,$3,$4,$5::timestamptz)", [editorialGroupRevisionId, evidence.evidenceId, evidence.evidenceKind, evidence.sourceRef, evidence.observedAt]);
+      for (const evidence of result.evidence) await client.query("insert into news_core.editorial_group_evidence(editorial_group_revision_id,evidence_id,evidence_kind,source_ref,observed_at,verified) values ($1,$2,$3,$4,$5::timestamptz,$6)", [editorialGroupRevisionId, evidence.evidenceId, evidence.evidenceKind, evidence.sourceRef, evidence.observedAt, evidence.verified]);
       if (options.failurePoint === "before-commit") throw new Error("INJECTED_FAILURE_BEFORE_COMMIT");
       await client.query("commit"); committed = true; client.release();
       if (options.failurePoint === "after-commit-before-finalize") throw new Error("INJECTED_FAILURE_AFTER_COMMIT_BEFORE_FINALIZE");
@@ -546,7 +546,7 @@ export class PostgresNewsStore {
         [publicationEventLinkRevisionId, result.structuralEventId, revisionNo, result.contractVersion, result.resolverVersion, fingerprint, result.operation, result.status, result.relationType, result.reason, txid],
       );
       for (const publicationRevisionId of result.publicationRevisionIds) await client.query("insert into news_core.publication_event_link_members(publication_event_link_revision_id,publication_revision_id) values ($1,$2)", [publicationEventLinkRevisionId, publicationRevisionId]);
-      for (const evidence of result.evidence) await client.query("insert into news_core.publication_event_link_evidence(publication_event_link_revision_id,evidence_id,evidence_kind,source_ref,observed_at) values ($1,$2,$3,$4,$5::timestamptz)", [publicationEventLinkRevisionId, evidence.evidenceId, evidence.evidenceKind, evidence.sourceRef, evidence.observedAt]);
+      for (const evidence of result.evidence) await client.query("insert into news_core.publication_event_link_evidence(publication_event_link_revision_id,evidence_id,evidence_kind,source_ref,observed_at,verified) values ($1,$2,$3,$4,$5::timestamptz,$6)", [publicationEventLinkRevisionId, evidence.evidenceId, evidence.evidenceKind, evidence.sourceRef, evidence.observedAt, evidence.verified]);
       if (options.failurePoint === "before-commit") throw new Error("INJECTED_FAILURE_BEFORE_COMMIT");
       await client.query("commit"); committed = true; client.release();
       if (options.failurePoint === "after-commit-before-finalize") throw new Error("INJECTED_FAILURE_AFTER_COMMIT_BEFORE_FINALIZE");
