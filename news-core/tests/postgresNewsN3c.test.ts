@@ -42,6 +42,7 @@ test("News Core N3-C append-only factual persistence, PIT, idempotence and secur
     await admin.query("insert into news_core.observations(observation_id,provider_key,provider_observation_key,publication_id,observed_at,retrieved_at,publisher_key,visibility_state,visibility_frontier_id) values ($1,'n3c-fixture',$1,$2,$3,$3,'n3c','COMMITTED',$4)", [`observation:${suffix}`, publicationId, knownOne, frontier.rows[0].frontier_id]);
     await admin.query(await readFile(migration("20261111170000_news_core_n2a_revisions.sql"), "utf8"));
     await admin.query(await readFile(migration("20261112120000_news_core_n3c_factual_persistence.sql"), "utf8"));
+    await admin.query(await readFile(migration("20261112170000_news_core_n3c_factual_writer_boundary.sql"), "utf8"));
     const beforeFirstCommit = new Date(Date.now() - 1000).toISOString();
     const first = await store.persist(input("The company was fined.", knownOne));
     assert.equal(first.inserted, true);

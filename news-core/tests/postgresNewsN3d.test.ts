@@ -34,6 +34,7 @@ test("News Core N3-D end-to-end circuit, roles, PIT and pending revision recover
     await admin.query("insert into news_core.observations(observation_id,provider_key,provider_observation_key,publication_id,observed_at,retrieved_at,publisher_key,visibility_state,visibility_frontier_id) values ($1,'n3d-fixture',$1,$2,$3,$3,'n3d','COMMITTED',$4)", [`observation:${suffix}`, publicationId, at(0), frontier.rows[0].frontier_id]);
     await admin.query(await readFile(migration("20261111170000_news_core_n2a_revisions.sql"), "utf8"));
     await admin.query(await readFile(migration("20261112120000_news_core_n3c_factual_persistence.sql"), "utf8"));
+    await admin.query(await readFile(migration("20261112170000_news_core_n3c_factual_writer_boundary.sql"), "utf8"));
 
     const excerpt = "The company was fined.";
     const classificationInput: ClassificationInputV1 = {
@@ -96,7 +97,8 @@ test("News Core N3-D end-to-end circuit, roles, PIT and pending revision recover
     assert.equal((await admin.query<{ n: number }>("select count(*)::int n from news_core.fact_revisions where fact_event_id=$1", [persisted.factEventId])).rows[0].n, 1);
 
     const writerBypass = await admin.query<{ can_insert: boolean; can_execute: boolean }>("select has_table_privilege('news_factual_writer','news_core.fact_revisions','INSERT') can_insert, has_function_privilege('news_factual_writer','news_core.finalize_fact_revision(text)','EXECUTE') can_execute");
-    assert.deepEqual(writerBypass.rows[0], { can_insert: true, can_execute: true });
+    assert.deepEqual(writerBypass.rows[0], { can_insert: false, can_execute: false });
+    assert.equal((await admin.query("select has_function_privilege('news_factual_writer','news_core.persist_fact_revision_v1(jsonb)','EXECUTE') can_execute")).rows[0].can_execute, true);
   } finally {
     await admin.query("reset role").catch(() => undefined);
     await Promise.all([store.close(), reader.close(), admin.end()]);
