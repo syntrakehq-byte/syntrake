@@ -27,8 +27,9 @@ create table if not exists news_core.fact_revisions (
   polarity text not null check (polarity in ('AFFIRMATIVE','NEGATIVE','UNKNOWN')),
   focal_claim_key text not null,
   publication_revision_id text not null references news_core.publication_revisions(publication_revision_id),
-  as_known_at timestamptz not null,
-  committed_at timestamptz not null default clock_timestamp(),
+  as_known_at timestamptz,
+  committed_at timestamptz,
+  finalized_at timestamptz,
   quality_flags jsonb not null default '[]'::jsonb,
   supersedes_revision_id text references news_core.fact_revisions(fact_revision_id),
   check (occurred_at is null or scheduled_for is null),
@@ -84,7 +85,31 @@ create index if not exists fact_revision_dependencies_pit_idx
 create or replace function news_core.reject_fact_mutation()
 returns trigger language plpgsql security definer set search_path=pg_catalog,news_core as $$
 begin
+  if tg_op = 'UPDATE' and current_setting('news_core.fact_sealing', true) = 'on'
+     and old.finalized_at is null and new.finalized_at is not null
+     and new.fact_revision_id=old.fact_revision_id and new.fact_event_id=old.fact_event_id
+     and new.revision_no=old.revision_no and new.logical_fingerprint=old.logical_fingerprint
+     and new.rule_set_version=old.rule_set_version and new.claim_type=old.claim_type
+     and new.statement=old.statement and new.confirmation_status=old.confirmation_status
+     and new.lifecycle_status=old.lifecycle_status and new.polarity=old.polarity
+     and new.focal_claim_key=old.focal_claim_key and new.publication_revision_id=old.publication_revision_id
+     and new.subject_ref is not distinct from old.subject_ref and new.object_ref is not distinct from old.object_ref
+     and new.occurred_at is not distinct from old.occurred_at and new.scheduled_for is not distinct from old.scheduled_for
+     and new.quality_flags is not distinct from old.quality_flags and new.supersedes_revision_id is not distinct from old.supersedes_revision_id then
+    return new;
+  end if;
   raise exception 'NEWS_FACT_HISTORY_APPEND_ONLY' using errcode='55006';
+end
+$$;
+
+create or replace function news_core.guard_fact_child_insert()
+returns trigger language plpgsql security definer set search_path=pg_catalog,news_core as $$
+declare finalized timestamptz;
+begin
+  select finalized_at into finalized from news_core.fact_revisions where fact_revision_id=new.fact_revision_id;
+  if finalized is null and not found then raise exception 'NEWS_FACT_REVISION_NOT_FOUND' using errcode='23503'; end if;
+  if finalized is not null then raise exception 'NEWS_FACT_REVISION_FINALIZED' using errcode='55006'; end if;
+  return new;
 end
 $$;
 
@@ -115,6 +140,14 @@ drop trigger if exists fact_revision_publications_immutable on news_core.fact_re
 create trigger fact_revision_publications_immutable before update or delete on news_core.fact_revision_publications for each row execute function news_core.reject_fact_mutation();
 drop trigger if exists fact_revision_relations_immutable on news_core.fact_revision_relations;
 create trigger fact_revision_relations_immutable before update or delete on news_core.fact_revision_relations for each row execute function news_core.reject_fact_mutation();
+drop trigger if exists fact_revision_evidence_open_guard on news_core.fact_revision_evidence;
+create trigger fact_revision_evidence_open_guard before insert on news_core.fact_revision_evidence for each row execute function news_core.guard_fact_child_insert();
+drop trigger if exists fact_revision_dependencies_open_guard on news_core.fact_revision_dependencies;
+create trigger fact_revision_dependencies_open_guard before insert on news_core.fact_revision_dependencies for each row execute function news_core.guard_fact_child_insert();
+drop trigger if exists fact_revision_publications_open_guard on news_core.fact_revision_publications;
+create trigger fact_revision_publications_open_guard before insert on news_core.fact_revision_publications for each row execute function news_core.guard_fact_child_insert();
+drop trigger if exists fact_revision_relations_open_guard on news_core.fact_revision_relations;
+create trigger fact_revision_relations_open_guard before insert on news_core.fact_revision_relations for each row execute function news_core.guard_fact_child_insert();
 
 alter table news_core.fact_events enable row level security;
 alter table news_core.fact_events force row level security;
@@ -133,6 +166,33 @@ revoke all on news_core.fact_events,news_core.fact_revisions,news_core.fact_revi
 grant usage on schema news_core to news_service,news_reader;
 grant select,insert on news_core.fact_events,news_core.fact_revisions,news_core.fact_revision_evidence,news_core.fact_revision_dependencies,news_core.fact_revision_publications,news_core.fact_revision_relations to news_service;
 
+create policy fact_events_service on news_core.fact_events for all to news_service using (true) with check (true);
+create policy fact_revisions_service on news_core.fact_revisions for all to news_service using (true) with check (true);
+create policy fact_revision_evidence_service on news_core.fact_revision_evidence for all to news_service using (true) with check (true);
+create policy fact_revision_dependencies_service on news_core.fact_revision_dependencies for all to news_service using (true) with check (true);
+create policy fact_revision_publications_service on news_core.fact_revision_publications for all to news_service using (true) with check (true);
+create policy fact_revision_relations_service on news_core.fact_revision_relations for all to news_service using (true) with check (true);
+
+create or replace function news_core.finalize_fact_revision(p_fact_revision_id text)
+returns table(as_known_at timestamptz, committed_at timestamptz)
+language plpgsql volatile security definer set search_path=pg_catalog,news_core as $$
+declare dependency_max timestamptz;
+begin
+  perform set_config('news_core.fact_sealing','on',true);
+  select max(dependency_as_known_at) into dependency_max from fact_revision_dependencies where fact_revision_id=p_fact_revision_id;
+  if not exists(select 1 from fact_revisions where fact_revision_id=p_fact_revision_id and finalized_at is null) then
+    raise exception 'NEWS_FACT_REVISION_NOT_OPEN' using errcode='55006';
+  end if;
+  return query update fact_revisions
+    set as_known_at=greatest(clock_timestamp(),coalesce(dependency_max, '-infinity'::timestamptz)),
+        committed_at=clock_timestamp(), finalized_at=clock_timestamp()
+    where fact_revision_id=p_fact_revision_id and finalized_at is null
+    returning fact_revisions.as_known_at,fact_revisions.committed_at;
+end
+$$;
+revoke all on function news_core.finalize_fact_revision(text) from public,news_reader;
+grant execute on function news_core.finalize_fact_revision(text) to news_service;
+
 create or replace function news_core.read_fact_revisions_as_of(p_as_of timestamptz)
 returns table("factEventId" text,"factRevisionId" text,"revisionNo" integer,"canonicalClaimId" text,"category" text,"claimType" text,"statement" text,"occurredAt" timestamptz,"scheduledFor" timestamptz,"confirmationStatus" text,"lifecycleStatus" text,"polarity" text,"asKnownAt" timestamptz,"committedAt" timestamptz)
 language sql stable security definer set search_path=pg_catalog,news_core as $$
@@ -140,7 +200,7 @@ language sql stable security definer set search_path=pg_catalog,news_core as $$
     select r.*,e.canonical_claim_id,e.category,
            row_number() over (partition by r.fact_event_id order by r.as_known_at desc,r.revision_no desc,r.committed_at desc) as n
       from news_core.fact_revisions r join news_core.fact_events e using (fact_event_id)
-     where r.as_known_at <= p_as_of and r.committed_at <= p_as_of
+     where r.finalized_at is not null and r.as_known_at <= p_as_of and r.committed_at <= p_as_of
   )
   select fact_event_id,fact_revision_id,revision_no,canonical_claim_id,category,claim_type,statement,occurred_at,scheduled_for,confirmation_status,lifecycle_status,polarity,as_known_at,committed_at
     from visible where n=1 order by fact_event_id
