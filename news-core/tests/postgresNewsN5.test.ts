@@ -34,7 +34,8 @@ test("N5 PostgreSQL 17 read API is PIT, role-scoped, paginated and append-only c
       const attestationId = (await admin.query<{ issue_fact_attestation_v1: string }>("select news_core.issue_fact_attestation_v1($1::jsonb) issue_fact_attestation_v1", [JSON.stringify(payload)])).rows[0].issue_fact_attestation_v1;
       await admin.query("reset role");
       await admin.query("set role news_factual_writer");
-      await admin.query("select * from news_core.persist_fact_revision_v1($1::jsonb)", [JSON.stringify({ ...payload, attestationId, seal: true })]);
+      const staged = (await admin.query<{ fact_revision_id: string }>("select * from news_core.persist_fact_revision_v1($1::jsonb)", [JSON.stringify({ ...payload, attestationId, seal: true })])).rows[0];
+      await admin.query("select * from news_core.publish_fact_revision_v1($1,$2)", [staged.fact_revision_id, attestationId]);
       await admin.query("reset role");
     };
     const publication1Meta = (await admin.query<{ source_document_ref: string; as_known_at: Date }>("select source_document_ref,as_known_at from news_core.publication_revisions where publication_revision_id=$1", [revisionId])).rows[0];

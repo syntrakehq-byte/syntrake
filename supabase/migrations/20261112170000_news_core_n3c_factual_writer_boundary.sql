@@ -216,14 +216,20 @@ begin
 end
 $$;
 
-create or replace function news_core.publish_fact_revision_v1(p_fact_revision_id text)
+create or replace function news_core.publish_fact_revision_v1(p_fact_revision_id text,p_attestation_id text)
 returns table(assigned_as_known_at timestamptz, assigned_committed_at timestamptz)
 language plpgsql volatile security definer set search_path=pg_catalog,news_core as $$
+declare attestation jsonb;
 begin
-  if not exists (
-    select 1 from news_core.fact_revisions
-     where fact_revision_id=p_fact_revision_id
-       and finalized_at is null
+  select a.payload into attestation from news_core.fact_pipeline_attestations a where a.attestation_id=p_attestation_id;
+  if not found or not exists (
+    select 1 from news_core.fact_revisions fr
+    join news_core.fact_events fe using (fact_event_id)
+    where fr.fact_revision_id=p_fact_revision_id and fr.finalized_at is null
+      and fe.canonical_claim_id=attestation->>'canonicalClaimId'
+      and fr.logical_fingerprint=attestation->>'logicalFingerprint'
+      and fr.statement=attestation->>'statement'
+      and fr.publication_revision_id=attestation->>'publicationRevisionId'
   ) then
     raise exception 'NEWS_FACT_REVISION_NOT_AUTHORIZED' using errcode='42501';
   end if;
@@ -235,5 +241,5 @@ revoke all on news_core.fact_events,news_core.fact_revisions,news_core.fact_revi
   news_core.fact_revision_dependencies,news_core.fact_revision_publications,news_core.fact_revision_relations
   from news_factual_writer;
 revoke all on function news_core.finalize_fact_revision(text) from news_factual_writer;
-revoke all on function news_core.persist_fact_revision_v1(jsonb),news_core.publish_fact_revision_v1(text) from public,news_reader,news_service;
-grant execute on function news_core.persist_fact_revision_v1(jsonb),news_core.publish_fact_revision_v1(text) to news_factual_writer;
+revoke all on function news_core.persist_fact_revision_v1(jsonb),news_core.publish_fact_revision_v1(text,text) from public,news_reader,news_service;
+grant execute on function news_core.persist_fact_revision_v1(jsonb),news_core.publish_fact_revision_v1(text,text) to news_factual_writer;

@@ -18,12 +18,12 @@ const instant = (value: string): number => { const result = Date.parse(value); i
 export class PostgresFactualStore {
   constructor(private readonly pool: Pool, private readonly databaseRole: "news_factual_writer" | "news_service" = "news_factual_writer") {}
   async close(): Promise<void> { await this.pool.end(); }
-  private async publishRevision(revisionId: string): Promise<void> {
+  private async publishRevision(revisionId: string, attestationId: string): Promise<void> {
     const client = await this.pool.connect();
     try {
       await client.query("begin");
       await client.query(`set local role ${this.databaseRole}`);
-      await client.query("select * from news_core.publish_fact_revision_v1($1)", [revisionId]);
+      await client.query("select * from news_core.publish_fact_revision_v1($1,$2)", [revisionId, attestationId]);
       await client.query("commit");
     } catch (error) { await client.query("rollback").catch(() => undefined); throw error; } finally { client.release(); }
   }
@@ -86,7 +86,7 @@ export class PostgresFactualStore {
       if (holdBeforeCommitMs > 0) await new Promise(resolve => setTimeout(resolve, holdBeforeCommitMs));
       await client.query("commit");
       if (failurePoint === "after-commit") throw new Error("INJECTED_FAILURE_AFTER_COMMIT");
-      if (!payload.seal && row.fact_revision_id) await this.publishRevision(row.fact_revision_id);
+      if (!payload.seal && row.fact_revision_id) await this.publishRevision(row.fact_revision_id, input.attestationId);
       return { inserted: row.inserted, factEventId: row.fact_event_id, factRevisionId: row.fact_revision_id, revisionNo: row.revision_no, logicalFingerprint: row.logical_fingerprint };
     } catch (error) { await client.query("rollback").catch(() => undefined); throw error; } finally { client.release(); }
   }
