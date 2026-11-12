@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import type { NewsBatch, NewsPublication, NewsPublicationRevision, NewsRevisionProvenance } from "./contracts";
 import { canonicalCandidate, validateEntityResolution, type MarketCoreResolutionV1 } from "./entityResolution";
+import { stableEditorialFingerprint, validateEditorialGroupResolution, validateStructuralEventLinkResolution, type EditorialGroupResolutionV1, type StructuralEventLinkResolutionV1 } from "./editorialRelations";
 
 export type NewsTarget = Readonly<{
   collectionScopeKey: string; sourceId: string; providerKey: string; entityKey: string;
@@ -93,6 +94,14 @@ export class PostgresNewsStore {
         );
         pending.rows[0].present = pending.rows[0].present || entityPending.rows[0].present;
       }
+      const editorialTables = (await client.query<{ installed: boolean }>("select to_regclass('news_core.editorial_group_revisions') is not null as installed")).rows[0].installed;
+      if (editorialTables) {
+        const editorialPending = await client.query<{ present: boolean }>(
+          `select exists(select 1 from news_core.editorial_group_revisions where pending_transaction_id=$1 and visibility_state='PENDING')
+           or exists(select 1 from news_core.publication_event_link_revisions where pending_transaction_id=$1 and visibility_state='PENDING') as present`, [txid],
+        );
+        pending.rows[0].present = pending.rows[0].present || editorialPending.rows[0].present;
+      }
       if (!pending.rows[0].present) { await client.query("commit"); return; }
       const frontier = await client.query<{ frontier_id: string }>(
         "insert into news_core.visibility_frontiers default values returning frontier_id",
@@ -122,6 +131,10 @@ export class PostgresNewsStore {
         await client.query("update news_core.entity_link_revisions set visibility_frontier_id=$2 where pending_transaction_id=$1 and visibility_state='PENDING'", [txid, frontierId]);
         await client.query("update news_core.entity_link_evidence set visibility_frontier_id=$2 where pending_transaction_id=$1 and visibility_state='PENDING'", [txid, frontierId]);
       }
+      if (editorialTables) {
+        await client.query("update news_core.editorial_group_revisions set visibility_frontier_id=$2 where pending_transaction_id=$1 and visibility_state='PENDING'", [txid, frontierId]);
+        await client.query("update news_core.publication_event_link_revisions set visibility_frontier_id=$2 where pending_transaction_id=$1 and visibility_state='PENDING'", [txid, frontierId]);
+      }
       if (onFrontierCreated) await onFrontierCreated();
       if (delayBeforeCommitMs > 0) await new Promise(resolve => setTimeout(resolve, delayBeforeCommitMs));
       let dependencyMinimum = minimumPublishedAt;
@@ -131,6 +144,25 @@ export class PostgresNewsStore {
              from news_core.entity_link_revisions l
              join news_core.publication_revisions r on r.publication_revision_id=l.publication_revision_id
             where l.pending_transaction_id=$1 and l.visibility_state='PENDING'`, [txid],
+        );
+        const parentMinimum = dependency.rows[0]?.minimum ? iso(dependency.rows[0].minimum) : null;
+        if (parentMinimum && (!dependencyMinimum || Date.parse(parentMinimum) > Date.parse(dependencyMinimum))) dependencyMinimum = parentMinimum;
+      }
+      if (editorialTables) {
+        const dependency = await client.query<{ minimum: Date | string | null }>(
+          `select max(parent.as_known_at) as minimum from (
+             select r.as_known_at
+               from news_core.editorial_group_revisions g
+               join news_core.editorial_group_members m on m.editorial_group_revision_id=g.editorial_group_revision_id
+               join news_core.publication_revisions r on r.publication_revision_id=m.publication_revision_id
+              where g.pending_transaction_id=$1 and g.visibility_state='PENDING'
+             union all
+             select r.as_known_at
+               from news_core.publication_event_link_revisions l
+               join news_core.publication_event_link_members m on m.publication_event_link_revision_id=l.publication_event_link_revision_id
+               join news_core.publication_revisions r on r.publication_revision_id=m.publication_revision_id
+              where l.pending_transaction_id=$1 and l.visibility_state='PENDING'
+           ) parent`, [txid],
         );
         const parentMinimum = dependency.rows[0]?.minimum ? iso(dependency.rows[0].minimum) : null;
         if (parentMinimum && (!dependencyMinimum || Date.parse(parentMinimum) > Date.parse(dependencyMinimum))) dependencyMinimum = parentMinimum;
@@ -167,6 +199,10 @@ export class PostgresNewsStore {
         await client.query(`update news_core.entity_link_revisions set ingested_at=$1::timestamptz,as_known_at=$1::timestamptz,visibility_state='COMMITTED',pending_transaction_id=null where pending_transaction_id=$2 and visibility_state='PENDING'`, [publishedAt, txid]);
         await client.query(`update news_core.entity_link_evidence set ingested_at=$1::timestamptz,as_known_at=$1::timestamptz,visibility_state='COMMITTED',pending_transaction_id=null where pending_transaction_id=$2 and visibility_state='PENDING'`, [publishedAt, txid]);
       }
+      if (editorialTables) {
+        await client.query(`update news_core.editorial_group_revisions set ingested_at=$1::timestamptz,as_known_at=$1::timestamptz,visibility_state='COMMITTED',pending_transaction_id=null where pending_transaction_id=$2 and visibility_state='PENDING'`, [publishedAt, txid]);
+        await client.query(`update news_core.publication_event_link_revisions set ingested_at=$1::timestamptz,as_known_at=$1::timestamptz,visibility_state='COMMITTED',pending_transaction_id=null where pending_transaction_id=$2 and visibility_state='PENDING'`, [publishedAt, txid]);
+      }
       if (onSealedBeforeCommit) await onSealedBeforeCommit(publishedAt);
       await client.query("commit");
     } catch (error) { await client.query("rollback").catch(() => undefined); throw error; }
@@ -186,6 +222,11 @@ export class PostgresNewsStore {
     if (entityTables) {
       const entityPending = await this.pool.query<{ txid: string }>("select distinct pending_transaction_id::text as txid from news_core.entity_link_revisions where visibility_state='PENDING' and pending_transaction_id is not null union select distinct pending_transaction_id::text from news_core.entity_link_evidence where visibility_state='PENDING' and pending_transaction_id is not null");
       for (const row of entityPending.rows) txids.add(row.txid);
+    }
+    const editorialTables = (await this.pool.query<{ installed: boolean }>("select to_regclass('news_core.editorial_group_revisions') is not null as installed")).rows[0].installed;
+    if (editorialTables) {
+      const editorialPending = await this.pool.query<{ txid: string }>("select distinct pending_transaction_id::text as txid from news_core.editorial_group_revisions where visibility_state='PENDING' and pending_transaction_id is not null union select distinct pending_transaction_id::text from news_core.publication_event_link_revisions where visibility_state='PENDING' and pending_transaction_id is not null");
+      for (const row of editorialPending.rows) txids.add(row.txid);
     }
     for (const txid of txids) await this.finalizePending(txid);
   }
@@ -444,6 +485,78 @@ export class PostgresNewsStore {
     finally { if (!committed) client.release(); }
   }
 
+  async ingestEditorialGroup(result: EditorialGroupResolutionV1, options: IngestOptions = {}): Promise<{ inserted: boolean; editorialGroupRevisionId: string }> {
+    validateEditorialGroupResolution(result);
+    await this.recoverPending();
+    const fingerprint = createHash("sha256").update(stableEditorialFingerprint(result)).digest("hex");
+    const client = await this.pool.connect(); let committed = false;
+    try {
+      await client.query("begin");
+      const txid = (await client.query<{ txid: string }>("select txid_current()::text txid")).rows[0].txid;
+      const parents = await client.query<{ publication_revision_id: string; as_known_at: Date | string | null; visibility_state: string }>(
+        "select publication_revision_id,as_known_at,visibility_state from news_core.publication_revisions where publication_revision_id=any($1::text[]) for share", [result.publicationRevisionIds],
+      );
+      if (parents.rowCount !== result.publicationRevisionIds.length || parents.rows.some(parent => parent.visibility_state !== "COMMITTED" || !parent.as_known_at)) throw new Error("NEWS_EDITORIAL_PARENT_NOT_COMMITTED");
+      await client.query("select pg_advisory_xact_lock(hashtextextended($1, 20261113))", [`${result.groupId}:${result.resolverVersion}`]);
+      const existing = await client.query<{ editorial_group_revision_id: string }>("select editorial_group_revision_id from news_core.editorial_group_revisions where group_id=$1 and resolver_version=$2 and resolution_fingerprint=$3", [result.groupId, result.resolverVersion, fingerprint]);
+      if (existing.rowCount === 1) { await client.query("commit"); committed = true; client.release(); return { inserted: false, editorialGroupRevisionId: existing.rows[0].editorial_group_revision_id }; }
+      const next = await client.query<{ revision_no: number }>("select coalesce(max(revision_no),0)+1 revision_no from news_core.editorial_group_revisions where group_id=$1 and resolver_version=$2", [result.groupId, result.resolverVersion]);
+      const revisionNo = next.rows[0].revision_no;
+      const editorialGroupRevisionId = `${result.groupId}:editorial:${result.resolverVersion}:${revisionNo}`;
+      await client.query(
+        `insert into news_core.editorial_group_revisions
+          (editorial_group_revision_id,group_id,revision_no,resolver_contract_version,resolver_version,resolution_fingerprint,match_status,relation_type,reason,pending_transaction_id,supersedes_editorial_group_revision_id)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,(select editorial_group_revision_id from news_core.editorial_group_revisions where group_id=$2 and resolver_version=$5 and revision_no=$3-1))`,
+        [editorialGroupRevisionId, result.groupId, revisionNo, result.contractVersion, result.resolverVersion, fingerprint, result.status, result.relationType, result.reason, txid],
+      );
+      for (const publicationRevisionId of result.publicationRevisionIds) await client.query("insert into news_core.editorial_group_members(editorial_group_revision_id,publication_revision_id) values ($1,$2)", [editorialGroupRevisionId, publicationRevisionId]);
+      for (const evidence of result.evidence) await client.query("insert into news_core.editorial_group_evidence(editorial_group_revision_id,evidence_id,evidence_kind,source_ref,observed_at) values ($1,$2,$3,$4,$5::timestamptz)", [editorialGroupRevisionId, evidence.evidenceId, evidence.evidenceKind, evidence.sourceRef, evidence.observedAt]);
+      if (options.failurePoint === "before-commit") throw new Error("INJECTED_FAILURE_BEFORE_COMMIT");
+      await client.query("commit"); committed = true; client.release();
+      if (options.failurePoint === "after-commit-before-finalize") throw new Error("INJECTED_FAILURE_AFTER_COMMIT_BEFORE_FINALIZE");
+      const parentMinimum = parents.rows.reduce<string | null>((minimum, parent) => { const value = iso(parent.as_known_at); return !minimum || Date.parse(value) > Date.parse(minimum) ? value : minimum; }, null);
+      await this.finalizePending(txid, 0, undefined, undefined, parentMinimum ?? undefined);
+      return { inserted: true, editorialGroupRevisionId };
+    } catch (error) { if (!committed) await client.query("rollback").catch(() => undefined); throw error; }
+    finally { if (!committed) client.release(); }
+  }
+
+  async ingestStructuralEventLinks(result: StructuralEventLinkResolutionV1, options: IngestOptions = {}): Promise<{ inserted: boolean; publicationEventLinkRevisionId: string }> {
+    validateStructuralEventLinkResolution(result);
+    await this.recoverPending();
+    const fingerprint = createHash("sha256").update(stableEditorialFingerprint(result)).digest("hex");
+    const client = await this.pool.connect(); let committed = false;
+    try {
+      await client.query("begin");
+      const txid = (await client.query<{ txid: string }>("select txid_current()::text txid")).rows[0].txid;
+      const parents = await client.query<{ publication_revision_id: string; as_known_at: Date | string | null; visibility_state: string }>(
+        "select publication_revision_id,as_known_at,visibility_state from news_core.publication_revisions where publication_revision_id=any($1::text[]) for share", [result.publicationRevisionIds],
+      );
+      if (parents.rowCount !== result.publicationRevisionIds.length || parents.rows.some(parent => parent.visibility_state !== "COMMITTED" || !parent.as_known_at)) throw new Error("NEWS_EVENT_LINK_PARENT_NOT_COMMITTED");
+      await client.query("select pg_advisory_xact_lock(hashtextextended($1, 20261113))", [`${result.structuralEventId}:${result.resolverVersion}`]);
+      const existing = await client.query<{ publication_event_link_revision_id: string }>("select publication_event_link_revision_id from news_core.publication_event_link_revisions where structural_event_id=$1 and resolver_version=$2 and resolution_fingerprint=$3", [result.structuralEventId, result.resolverVersion, fingerprint]);
+      if (existing.rowCount === 1) { await client.query("commit"); committed = true; client.release(); return { inserted: false, publicationEventLinkRevisionId: existing.rows[0].publication_event_link_revision_id }; }
+      const next = await client.query<{ revision_no: number }>("select coalesce(max(revision_no),0)+1 revision_no from news_core.publication_event_link_revisions where structural_event_id=$1 and resolver_version=$2", [result.structuralEventId, result.resolverVersion]);
+      const revisionNo = next.rows[0].revision_no;
+      const publicationEventLinkRevisionId = `${result.structuralEventId}:event-link:${result.resolverVersion}:${revisionNo}`;
+      await client.query(
+        `insert into news_core.publication_event_link_revisions
+          (publication_event_link_revision_id,structural_event_id,revision_no,resolver_contract_version,resolver_version,resolution_fingerprint,match_status,relation_type,reason,pending_transaction_id,supersedes_publication_event_link_revision_id)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,(select publication_event_link_revision_id from news_core.publication_event_link_revisions where structural_event_id=$2 and resolver_version=$5 and revision_no=$3-1))`,
+        [publicationEventLinkRevisionId, result.structuralEventId, revisionNo, result.contractVersion, result.resolverVersion, fingerprint, result.status, result.relationType, result.reason, txid],
+      );
+      for (const publicationRevisionId of result.publicationRevisionIds) await client.query("insert into news_core.publication_event_link_members(publication_event_link_revision_id,publication_revision_id) values ($1,$2)", [publicationEventLinkRevisionId, publicationRevisionId]);
+      for (const evidence of result.evidence) await client.query("insert into news_core.publication_event_link_evidence(publication_event_link_revision_id,evidence_id,evidence_kind,source_ref,observed_at) values ($1,$2,$3,$4,$5::timestamptz)", [publicationEventLinkRevisionId, evidence.evidenceId, evidence.evidenceKind, evidence.sourceRef, evidence.observedAt]);
+      if (options.failurePoint === "before-commit") throw new Error("INJECTED_FAILURE_BEFORE_COMMIT");
+      await client.query("commit"); committed = true; client.release();
+      if (options.failurePoint === "after-commit-before-finalize") throw new Error("INJECTED_FAILURE_AFTER_COMMIT_BEFORE_FINALIZE");
+      const parentMinimum = parents.rows.reduce<string | null>((minimum, parent) => { const value = iso(parent.as_known_at); return !minimum || Date.parse(value) > Date.parse(minimum) ? value : minimum; }, null);
+      await this.finalizePending(txid, 0, undefined, undefined, parentMinimum ?? undefined);
+      return { inserted: true, publicationEventLinkRevisionId };
+    } catch (error) { if (!committed) await client.query("rollback").catch(() => undefined); throw error; }
+    finally { if (!committed) client.release(); }
+  }
+
   private async assertRevisionProvenance(client: PoolClient, revision: NewsRevisionInput["revision"], provenance: NewsRevisionInput["provenance"]): Promise<void> {
     const rows = await client.query("select provenance_id,publication_revision_id,source_id,provider_key,provider_observation_key,original_url,source_document_ref,retrieved_at,quality_flags from news_core.publication_revision_provenance where publication_revision_id=$1 order by provenance_id", [revision.publicationRevisionId]);
     const row = rows.rows.find(candidate => candidate.provenance_id === provenance.provenanceId);
@@ -474,6 +587,26 @@ export class PostgresNewsStore {
     const result = await this.pool.query(
       "select * from news_core.read_entity_link_history_as_of($1::timestamptz,$2::text)", [asOf, publicationId ?? null],
     );
+    return result.rows.map(row => ({ ...row, asKnownAt: optionalIso(row.asKnownAt) }));
+  }
+
+  async readEditorialGroupsAsOf(asOf: string, publicationRevisionId?: string): Promise<readonly Record<string, unknown>[]> {
+    const result = await this.pool.query("select * from news_core.read_editorial_groups_as_of($1::timestamptz,$2::text)", [asOf, publicationRevisionId ?? null]);
+    return result.rows.map(row => ({ ...row, asKnownAt: optionalIso(row.asKnownAt) }));
+  }
+
+  async readEditorialGroupHistoryAsOf(asOf: string, publicationRevisionId?: string): Promise<readonly Record<string, unknown>[]> {
+    const result = await this.pool.query("select * from news_core.read_editorial_group_history_as_of($1::timestamptz,$2::text)", [asOf, publicationRevisionId ?? null]);
+    return result.rows.map(row => ({ ...row, asKnownAt: optionalIso(row.asKnownAt) }));
+  }
+
+  async readStructuralEventLinksAsOf(asOf: string, publicationRevisionId?: string): Promise<readonly Record<string, unknown>[]> {
+    const result = await this.pool.query("select * from news_core.read_structural_event_links_as_of($1::timestamptz,$2::text)", [asOf, publicationRevisionId ?? null]);
+    return result.rows.map(row => ({ ...row, asKnownAt: optionalIso(row.asKnownAt) }));
+  }
+
+  async readStructuralEventLinkHistoryAsOf(asOf: string, publicationRevisionId?: string): Promise<readonly Record<string, unknown>[]> {
+    const result = await this.pool.query("select * from news_core.read_structural_event_link_history_as_of($1::timestamptz,$2::text)", [asOf, publicationRevisionId ?? null]);
     return result.rows.map(row => ({ ...row, asKnownAt: optionalIso(row.asKnownAt) }));
   }
 
