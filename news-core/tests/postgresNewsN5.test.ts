@@ -39,6 +39,22 @@ test("N5 PostgreSQL 17 read API is PIT, role-scoped, paginated and append-only c
     const evidence = await api.getEventEvidence(auth, { eventId, asOf: visibleAsOf }); assert.equal(evidence.data[0].sourceDocumentRef, document);
     const history = await api.getNewsHistory(auth, { targets: [eventId], asOf: visibleAsOf }); assert.equal(history.data.length, 1);
     const before = await api.getNewsEvents(auth, { asOf: new Date(Date.parse(known) - 1000).toISOString() }); assert.equal(before.data.some(row => row.factRevisionId === factRevisionId), false);
+    const publicationRevision2Id = `${publicationId}:revision:2`;
+    await news.ingestPublicationRevision({ revision: { publicationRevisionId: publicationRevision2Id, publicationId, revisionNo: 2, title: "N5 corrected fixture", publishedAt: null, form: "8-K", contentFingerprint: `corrected:${suffix}`, sourceDocumentRef: `${document}:corrected`, qualityFlags: [], supersedesRevisionId: revisionId }, provenance: { provenanceId: `${publicationId}:provenance:2`, publicationRevisionId: publicationRevision2Id, sourceId, providerKey: "n5-fixture", providerObservationKey: `obs:${suffix}:revision:2`, originalUrl: `${document}:corrected`, sourceDocumentRef: `${document}:corrected`, retrievedAt: new Date().toISOString(), qualityFlags: [] } });
+    const publication2Known = (await admin.query<{ as_known_at: Date }>("select as_known_at from news_core.publication_revisions where publication_revision_id=$1", [publicationRevision2Id])).rows[0].as_known_at;
+    const factRevision2Id = `${eventId}:revision:2`;
+    await admin.query("set role news_factual_writer");
+    await admin.query("insert into news_core.fact_revisions(fact_revision_id,fact_event_id,revision_no,logical_fingerprint,rule_set_version,claim_type,statement,occurred_at,confirmation_status,lifecycle_status,polarity,focal_claim_key,publication_revision_id) values ($1,$2,2,$3,'deterministic-rule-v1','EVENT_CORRECTION','The company was fined, later corrected.',null,'REPORTED','ACTIVE','AFFIRMATIVE',$4,$5)", [factRevision2Id, eventId, `fp2:${suffix}`, `claim-key:${suffix}`, publicationRevision2Id]);
+    await admin.query("select * from news_core.finalize_fact_revision($1)", [factRevision2Id]); await admin.query("reset role");
+    const fact2Committed = (await admin.query<{ committed_at: Date }>("select committed_at from news_core.fact_revisions where fact_revision_id=$1", [factRevision2Id])).rows[0].committed_at;
+    const afterSecond = new Date(Math.max(publication2Known.valueOf(), fact2Committed.valueOf()) + 1).toISOString();
+    const oldTypeAfter = await api.getNewsEvents(auth, { asOf: afterSecond, targets: [eventId], eventTypes: ["EVENT_OCCURRENCE"] }); assert.equal(oldTypeAfter.data.length, 0);
+    const newTypeAfter = await api.getNewsEvents(auth, { asOf: afterSecond, targets: [eventId], eventTypes: ["EVENT_CORRECTION"] }); assert.deepEqual(newTypeAfter.data.map(row => row.factRevisionId), [factRevision2Id]);
+    const oldTypeBefore = await api.getNewsEvents(auth, { asOf: visibleAsOf, targets: [eventId], eventTypes: ["EVENT_OCCURRENCE"] }); assert.deepEqual(oldTypeBefore.data.map(row => row.factRevisionId), [factRevisionId]);
+    const oldPublicationAfter = await api.discoverNews(auth, { asOf: afterSecond, query: "N5 official fixture", filters: { sourceIds: [sourceId] } }); assert.equal(oldPublicationAfter.data.length, 0);
+    const newPublicationAfter = await api.discoverNews(auth, { asOf: afterSecond, query: "N5 corrected fixture", filters: { sourceIds: [sourceId] } }); assert.deepEqual(newPublicationAfter.data.map(row => row.publicationRevisionId), [publicationRevision2Id]);
+    const fullHistory = await api.getNewsHistory(auth, { targets: [eventId], asOf: afterSecond, limit: 1 }); assert.equal(fullHistory.data.length, 1); assert.ok(fullHistory.nextCursor);
+    const historyPage2 = await api.getNewsHistory(auth, { targets: [eventId], asOf: afterSecond, limit: 1, cursor: fullHistory.nextCursor }); assert.equal(historyPage2.data.length, 1); assert.notEqual(historyPage2.data[0].factRevisionId, fullHistory.data[0].factRevisionId);
     await admin.query("set role news_service"); await assert.rejects(admin.query("select * from news_core.fact_revisions"), /permission denied/); await admin.query("reset role");
   } finally { await admin.query("reset role").catch(() => undefined); await Promise.all([news.close(), factual.close(), admin.end()]); }
 });
