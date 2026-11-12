@@ -36,9 +36,13 @@ test("News Core N3-C append-only factual persistence, PIT, idempotence and secur
   const attest = async (value: PersistFactualInputV1): Promise<PersistFactualInputV1> => {
     const client = await attestorPool.connect();
     try {
-      await client.query("begin"); await client.query("set local role news_factual_attestor");
+      await client.query("begin");
       const payload = { canonicalClaimId: value.canonicalClaimId, taxonomyVersion: value.proposal.taxonomyVersion, category: value.proposal.category, logicalFingerprint: factualLogicalFingerprintV1(value), ruleSetVersion: value.proposal.ruleSetVersion, claimType: value.proposal.claimType, statement: value.proposal.statement, subjectRef: value.proposal.subjectRef, objectRef: value.proposal.objectRef, occurredAt: value.proposal.occurredAt, scheduledFor: value.proposal.scheduledFor, confirmationStatus: value.corroboration.confirmationStatus, lifecycleStatus: value.corroboration.lifecycleStatus, polarity: value.corroboration.polarity, focalClaimKey: value.corroboration.claimKey, publicationRevisionId: value.proposal.publicationRevisionId, qualityFlags: value.proposal.qualityFlags, evidence: value.evidence, dependencies: value.dependencies, relation: value.relation ?? null };
-      const id = (await client.query<{ issue_fact_attestation_v1: string }>("select news_core.issue_fact_attestation_v1($1::jsonb) issue_fact_attestation_v1", [JSON.stringify(payload)])).rows[0].issue_fact_attestation_v1;
+      await client.query("set local role news_pipeline_verifier");
+      const verificationId = (await client.query<{ register_verified_fact_pipeline_v1: string }>("select news_core.register_verified_fact_pipeline_v1($1::jsonb) register_verified_fact_pipeline_v1", [JSON.stringify(payload)])).rows[0].register_verified_fact_pipeline_v1;
+      await client.query("commit");
+      await client.query("begin"); await client.query("set local role news_factual_attestor");
+      const id = (await client.query<{ issue_fact_attestation_v1: string }>("select news_core.issue_fact_attestation_v1($1::jsonb) issue_fact_attestation_v1", [JSON.stringify({ ...payload, verificationId })])).rows[0].issue_fact_attestation_v1;
       await client.query("commit"); return { ...value, attestationId: id };
     } catch (error) { await client.query("rollback").catch(() => undefined); throw error; } finally { client.release(); }
   };
@@ -53,6 +57,9 @@ test("News Core N3-C append-only factual persistence, PIT, idempotence and secur
     await admin.query(await readFile(migration("20261111170000_news_core_n2a_revisions.sql"), "utf8"));
     await admin.query(await readFile(migration("20261112120000_news_core_n3c_factual_persistence.sql"), "utf8"));
     await admin.query(await readFile(migration("20261112170000_news_core_n3c_factual_writer_boundary.sql"), "utf8"));
+    await admin.query("set role news_factual_attestor");
+    await assert.rejects(admin.query("select news_core.issue_fact_attestation_v1($1::jsonb)", [JSON.stringify({ canonicalClaimId: "forged", logicalFingerprint: "arbitrary", publicationRevisionId, evidence: [], dependencies: [], verificationId: "not-verified" })]), /NEWS_FACT_PIPELINE_ATTESTATION_UNVERIFIED/);
+    await admin.query("reset role");
     const beforeFirstCommit = new Date(Date.now() - 1000).toISOString();
     const first = await store.persist(await attest(input("The company was fined.", knownOne)));
     assert.equal(first.inserted, true);
@@ -60,6 +67,15 @@ test("News Core N3-C append-only factual persistence, PIT, idempotence and secur
     const afterFirstCommit = new Date(firstCommitted.rows[0].committed_at.valueOf() + 1).toISOString();
     assert.equal((await store.readAsOf(afterFirstCommit)).length, 1);
     assert.equal((await store.readAsOf(beforeFirstCommit)).length, 0);
+    const sameTransactionInput = await attest(input("same transaction must fail", knownTwo));
+    const sameTransactionClient = await pool.connect();
+    try {
+      await sameTransactionClient.query("begin"); await sameTransactionClient.query("set local role news_factual_writer");
+      const samePayload = { attestationId: sameTransactionInput.attestationId, canonicalClaimId: sameTransactionInput.canonicalClaimId, taxonomyVersion: sameTransactionInput.proposal.taxonomyVersion, category: sameTransactionInput.proposal.category, logicalFingerprint: factualLogicalFingerprintV1(sameTransactionInput), ruleSetVersion: sameTransactionInput.proposal.ruleSetVersion, claimType: sameTransactionInput.proposal.claimType, statement: sameTransactionInput.proposal.statement, subjectRef: sameTransactionInput.proposal.subjectRef, objectRef: sameTransactionInput.proposal.objectRef, occurredAt: sameTransactionInput.proposal.occurredAt, scheduledFor: sameTransactionInput.proposal.scheduledFor, confirmationStatus: sameTransactionInput.corroboration.confirmationStatus, lifecycleStatus: sameTransactionInput.corroboration.lifecycleStatus, polarity: sameTransactionInput.corroboration.polarity, focalClaimKey: sameTransactionInput.corroboration.claimKey, publicationRevisionId: sameTransactionInput.proposal.publicationRevisionId, qualityFlags: sameTransactionInput.proposal.qualityFlags, evidence: sameTransactionInput.evidence, dependencies: sameTransactionInput.dependencies, relation: sameTransactionInput.relation ?? null, seal: false };
+      const staged = (await sameTransactionClient.query<{ fact_revision_id: string }>("select * from news_core.persist_fact_revision_v1($1::jsonb)", [JSON.stringify(samePayload)])).rows[0];
+      await assert.rejects(sameTransactionClient.query("select * from news_core.publish_fact_revision_v1($1,$2)", [staged.fact_revision_id, sameTransactionInput.attestationId]), /NEWS_FACT_STAGE_PUBLISH_SAME_TRANSACTION/);
+      await sameTransactionClient.query("rollback");
+    } finally { sameTransactionClient.release(); }
     assert.deepEqual(await store.persist(await attest(input("The company was fined.", knownOne))), { ...first, inserted: false });
     const concurrent = await Promise.all([store.persist(await attest(input("A second factual revision.", knownOne))), store.persist(await attest(input("A third factual revision.", knownOne)))]);
     assert.deepEqual(concurrent.map(result => result.revisionNo).sort(), [2, 3]);
@@ -85,6 +101,18 @@ test("News Core N3-C append-only factual persistence, PIT, idempotence and secur
     await assert.rejects(store.persist(await attest(input("rollback probe", knownTwo)), "before-commit"), /INJECTED_FAILURE_BEFORE_COMMIT/);
     const crashedInput = await attest(input("post commit crash", knownTwo));
     await assert.rejects(store.persist(crashedInput, "after-commit"), /INJECTED_FAILURE_AFTER_COMMIT/);
+    const pendingRevisionId = (await admin.query<{ fact_revision_id: string }>("select fact_revision_id from news_core.fact_revisions where fact_event_id=$1 and statement=$2", [`canonical:${suffix}`, "post commit crash"])).rows[0].fact_revision_id;
+    const heldPublish = await pool.connect();
+    try {
+      await heldPublish.query("begin"); await heldPublish.query("set local role news_factual_writer");
+      await heldPublish.query("select * from news_core.publish_fact_revision_v1($1,$2)", [pendingRevisionId, crashedInput.attestationId]);
+      const cutoffDuringPublish = new Date().toISOString();
+      assert.equal((await readerStore.readAsOf(cutoffDuringPublish)).some(row => row.factRevisionId === pendingRevisionId), false);
+      await heldPublish.query("commit");
+      assert.equal((await readerStore.readAsOf(cutoffDuringPublish)).some(row => row.factRevisionId === pendingRevisionId), false);
+    } finally { heldPublish.release(); }
+    const visibilityClient = await pool.connect();
+    try { await visibilityClient.query("begin"); await visibilityClient.query("set local role news_factual_writer"); await visibilityClient.query("select * from news_core.make_fact_revision_visible_v1($1,$2)", [pendingRevisionId, crashedInput.attestationId]); await visibilityClient.query("commit"); } finally { visibilityClient.release(); }
     assert.equal((await store.persist(crashedInput)).inserted, false);
     assert.equal((await admin.query<{ n: number }>("select count(*)::int n from news_core.fact_revisions where fact_event_id=$1", [first.factEventId])).rows[0].n, 6);
     await assert.rejects(admin.query("update news_core.fact_revisions set statement='tampered' where fact_revision_id=$1", [first.factRevisionId]), /NEWS_FACT_HISTORY_APPEND_ONLY/);

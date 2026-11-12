@@ -6,7 +6,12 @@ do $$ begin
   if not exists (select 1 from pg_roles where rolname = 'news_factual_attestor') then
     create role news_factual_attestor nologin nocreatedb nocreaterole noinherit;
   end if;
+  if not exists (select 1 from pg_roles where rolname = 'news_pipeline_verifier') then
+    create role news_pipeline_verifier nologin nocreatedb nocreaterole noinherit;
+  end if;
 end $$;
+
+alter table news_core.fact_revisions add column if not exists staged_txid bigint;
 
 create table if not exists news_core.fact_pipeline_attestations (
   attestation_id text primary key,
@@ -21,6 +26,56 @@ alter table news_core.fact_pipeline_attestations enable row level security;
 alter table news_core.fact_pipeline_attestations force row level security;
 revoke all on news_core.fact_pipeline_attestations from public,news_reader,news_service,news_factual_writer,news_factual_attestor;
 grant usage on schema news_core to news_factual_attestor;
+grant usage on schema news_core to news_pipeline_verifier;
+
+create table if not exists news_core.fact_pipeline_verifications (
+  verification_id text primary key,
+  logical_fingerprint text not null,
+  payload jsonb not null check (jsonb_typeof(payload) = 'object'),
+  verified_at timestamptz not null default clock_timestamp(),
+  unique (logical_fingerprint)
+);
+alter table news_core.fact_pipeline_verifications enable row level security;
+alter table news_core.fact_pipeline_verifications force row level security;
+revoke all on news_core.fact_pipeline_verifications from public,news_reader,news_service,news_factual_writer,news_factual_attestor,news_pipeline_verifier;
+
+create or replace function news_core.register_verified_fact_pipeline_v1(p_payload jsonb)
+returns text language plpgsql volatile security definer set search_path=pg_catalog,news_core as $$
+declare verification_id text;
+begin
+  if jsonb_typeof(p_payload) <> 'object'
+     or nullif(p_payload->>'canonicalClaimId','') is null
+     or nullif(p_payload->>'logicalFingerprint','') is null
+     or nullif(p_payload->>'publicationRevisionId','') is null
+     or p_payload->>'confirmationStatus' not in ('REPORTED','UNVERIFIED')
+     or jsonb_typeof(coalesce(p_payload->'evidence','[]'::jsonb)) <> 'array'
+     or jsonb_typeof(coalesce(p_payload->'dependencies','[]'::jsonb)) <> 'array' then
+    raise exception 'NEWS_FACT_PIPELINE_VERIFICATION_INVALID' using errcode='42501';
+  end if;
+  if not exists (
+    select 1 from news_core.publication_revisions pr
+     where pr.publication_revision_id=p_payload->>'publicationRevisionId'
+       and pr.visibility_state='COMMITTED' and pr.as_known_at is not null
+  ) or not exists (
+    select 1 from jsonb_array_elements(p_payload->'dependencies') d
+     where d->>'dependencyType'='N2_PUBLICATION_REVISION'
+       and d->>'dependencyRef'=p_payload->>'publicationRevisionId'
+  ) or jsonb_array_length(coalesce(p_payload->'evidence','[]'::jsonb))=0 then
+    raise exception 'NEWS_FACT_PIPELINE_VERIFICATION_INPUT_INVALID' using errcode='42501';
+  end if;
+  verification_id := md5(clock_timestamp()::text || random()::text || p_payload::text);
+  insert into news_core.fact_pipeline_verifications(verification_id,logical_fingerprint,payload)
+  values (verification_id,p_payload->>'logicalFingerprint',p_payload)
+  on conflict (logical_fingerprint) do nothing
+  returning fact_pipeline_verifications.verification_id into verification_id;
+  if verification_id is null then
+    select v.verification_id into verification_id from news_core.fact_pipeline_verifications v where v.logical_fingerprint=p_payload->>'logicalFingerprint';
+  end if;
+  return verification_id;
+end
+$$;
+revoke all on function news_core.register_verified_fact_pipeline_v1(jsonb) from public,news_reader,news_service,news_factual_writer,news_factual_attestor;
+grant execute on function news_core.register_verified_fact_pipeline_v1(jsonb) to news_pipeline_verifier;
 
 create or replace function news_core.issue_fact_attestation_v1(p_payload jsonb)
 returns text language plpgsql volatile security definer set search_path=pg_catalog,news_core as $$
@@ -33,6 +88,15 @@ begin
      or jsonb_typeof(coalesce(p_payload->'evidence','[]'::jsonb)) <> 'array'
      or jsonb_typeof(coalesce(p_payload->'dependencies','[]'::jsonb)) <> 'array' then
     raise exception 'NEWS_FACT_ATTESTATION_INVALID' using errcode='22023';
+  end if;
+  if nullif(p_payload->>'verificationId','') is null
+     or not exists (
+       select 1 from news_core.fact_pipeline_verifications v
+        where v.verification_id=p_payload->>'verificationId'
+          and v.logical_fingerprint=p_payload->>'logicalFingerprint'
+          and v.payload=(p_payload-'verificationId')
+     ) then
+    raise exception 'NEWS_FACT_PIPELINE_ATTESTATION_UNVERIFIED' using errcode='42501';
   end if;
   attestation_id := md5(clock_timestamp()::text || random()::text || p_payload::text);
   insert into news_core.fact_pipeline_attestations(attestation_id,canonical_claim_id,logical_fingerprint,payload)
@@ -75,10 +139,10 @@ begin
   if not found then
     raise exception 'NEWS_FACT_ATTESTATION_REQUIRED' using errcode='42501';
   end if;
-  if (p - 'attestationId' - 'seal') <> attestation then
+  if (p - 'attestationId' - 'seal') <> (attestation - 'verificationId') then
     raise exception 'NEWS_FACT_ATTESTATION_MISMATCH' using errcode='22023';
   end if;
-  p := attestation || jsonb_build_object('attestationId',p->>'attestationId','seal',false);
+  p := (attestation - 'verificationId') || jsonb_build_object('attestationId',p->>'attestationId','seal',false);
   if jsonb_typeof(p) <> 'object' then
     raise exception 'NEWS_FACT_WRITE_INPUT_INVALID' using errcode='22023';
   end if;
@@ -180,7 +244,7 @@ begin
 
   select coalesce(max(fr.revision_no),0)+1 into next_revision from news_core.fact_revisions fr where fr.fact_event_id=event_id;
   revision_id := event_id || ':revision:' || next_revision::text;
-  insert into news_core.fact_revisions(
+    insert into news_core.fact_revisions(
     fact_revision_id,fact_event_id,revision_no,logical_fingerprint,rule_set_version,claim_type,statement,
     subject_ref,object_ref,occurred_at,scheduled_for,confirmation_status,lifecycle_status,polarity,
     focal_claim_key,publication_revision_id,quality_flags,supersedes_revision_id
@@ -191,6 +255,7 @@ begin
     p->>'focalClaimKey',p->>'publicationRevisionId',coalesce(p->'qualityFlags','[]'::jsonb),
     case when next_revision > 1 then event_id || ':revision:' || (next_revision-1)::text end
   );
+  update news_core.fact_revisions set staged_txid=txid_current() where fact_revision_id=revision_id;
   for evidence in select value from jsonb_array_elements(p->'evidence') loop
     insert into news_core.fact_revision_evidence(fact_revision_id,evidence_id,evidence_kind,claim_key,publication_revision_id,source_document_ref,content_locator,provenance_ref,evidence_as_known_at)
     values (revision_id,evidence->>'evidenceId',evidence->>'evidenceKind',evidence->>'claimKey',evidence->>'publicationRevisionId',evidence->>'sourceDocumentRef',evidence->>'contentLocator',evidence->>'provenanceRef',(evidence->>'asKnownAt')::timestamptz);
@@ -247,11 +312,42 @@ begin
   if not found then
     raise exception 'NEWS_FACT_REVISION_NOT_AUTHORIZED' using errcode='42501';
   end if;
-  if revision.finalized_at is not null then
+  if revision.finalized_at is not null and revision.committed_at is not null then
     return query select revision.as_known_at,revision.committed_at;
     return;
   end if;
-  return query select * from news_core.finalize_fact_revision(p_fact_revision_id);
+  if revision.staged_txid=txid_current() then
+    raise exception 'NEWS_FACT_STAGE_PUBLISH_SAME_TRANSACTION' using errcode='55006';
+  end if;
+  if revision.finalized_at is null then
+    update news_core.fact_revisions
+       set as_known_at=greatest(clock_timestamp(),coalesce((select max(dependency_as_known_at) from news_core.fact_revision_dependencies where fact_revision_id=p_fact_revision_id), '-infinity'::timestamptz)),
+           finalized_at=clock_timestamp()
+     where fact_revision_id=p_fact_revision_id and finalized_at is null;
+  end if;
+  return query select fr.as_known_at,fr.committed_at from news_core.fact_revisions fr where fr.fact_revision_id=p_fact_revision_id;
+end
+$$;
+
+create or replace function news_core.make_fact_revision_visible_v1(p_fact_revision_id text,p_attestation_id text)
+returns table(committed_at timestamptz)
+language plpgsql volatile security definer set search_path=pg_catalog,news_core as $$
+declare attestation jsonb;
+begin
+  select a.payload into attestation from news_core.fact_pipeline_attestations a where a.attestation_id=p_attestation_id;
+  if not found or not exists (
+    select 1 from news_core.fact_revisions fr join news_core.fact_events fe using (fact_event_id)
+     where fr.fact_revision_id=p_fact_revision_id and fr.finalized_at is not null
+       and fr.logical_fingerprint=attestation->>'logicalFingerprint'
+       and fe.canonical_claim_id=attestation->>'canonicalClaimId'
+  ) then raise exception 'NEWS_FACT_REVISION_NOT_AUTHORIZED' using errcode='42501'; end if;
+  if exists (select 1 from news_core.fact_revisions where fact_revision_id=p_fact_revision_id and committed_at is not null) then
+    return query select committed_at from news_core.fact_revisions where fact_revision_id=p_fact_revision_id;
+    return;
+  end if;
+  return query update news_core.fact_revisions fr set committed_at=clock_timestamp()
+   where fr.fact_revision_id=p_fact_revision_id and fr.finalized_at is not null and fr.committed_at is null
+   returning fr.committed_at;
 end
 $$;
 
@@ -259,5 +355,5 @@ revoke all on news_core.fact_events,news_core.fact_revisions,news_core.fact_revi
   news_core.fact_revision_dependencies,news_core.fact_revision_publications,news_core.fact_revision_relations
   from news_factual_writer;
 revoke all on function news_core.finalize_fact_revision(text) from news_factual_writer;
-revoke all on function news_core.persist_fact_revision_v1(jsonb),news_core.publish_fact_revision_v1(text,text) from public,news_reader,news_service;
-grant execute on function news_core.persist_fact_revision_v1(jsonb),news_core.publish_fact_revision_v1(text,text) to news_factual_writer;
+revoke all on function news_core.persist_fact_revision_v1(jsonb),news_core.publish_fact_revision_v1(text,text),news_core.make_fact_revision_visible_v1(text,text) from public,news_reader,news_service;
+grant execute on function news_core.persist_fact_revision_v1(jsonb),news_core.publish_fact_revision_v1(text,text),news_core.make_fact_revision_visible_v1(text,text) to news_factual_writer;

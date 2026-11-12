@@ -73,8 +73,11 @@ test("News Core N3-D end-to-end circuit, roles, PIT and pending revision recover
       ],
     };
     const attestationPayload = { canonicalClaimId: persistInput.canonicalClaimId, taxonomyVersion: proposal.taxonomyVersion, category: proposal.category, logicalFingerprint: factualLogicalFingerprintV1(persistInput), ruleSetVersion: proposal.ruleSetVersion, claimType: proposal.claimType, statement: proposal.statement, subjectRef: proposal.subjectRef, objectRef: proposal.objectRef, occurredAt: proposal.occurredAt, scheduledFor: proposal.scheduledFor, confirmationStatus: corroboration.confirmationStatus, lifecycleStatus: corroboration.lifecycleStatus, polarity: corroboration.polarity, focalClaimKey: corroboration.claimKey, publicationRevisionId: proposal.publicationRevisionId, qualityFlags: proposal.qualityFlags, evidence: persistInput.evidence, dependencies: persistInput.dependencies, relation: null };
+    await admin.query("set role news_pipeline_verifier");
+    const verificationId = (await admin.query<{ register_verified_fact_pipeline_v1: string }>("select news_core.register_verified_fact_pipeline_v1($1::jsonb) register_verified_fact_pipeline_v1", [JSON.stringify(attestationPayload)])).rows[0].register_verified_fact_pipeline_v1;
+    await admin.query("reset role");
     await admin.query("set role news_factual_attestor");
-    const attestationId = (await admin.query<{ issue_fact_attestation_v1: string }>("select news_core.issue_fact_attestation_v1($1::jsonb) issue_fact_attestation_v1", [JSON.stringify(attestationPayload)])).rows[0].issue_fact_attestation_v1;
+    const attestationId = (await admin.query<{ issue_fact_attestation_v1: string }>("select news_core.issue_fact_attestation_v1($1::jsonb) issue_fact_attestation_v1", [JSON.stringify({ ...attestationPayload, verificationId })])).rows[0].issue_fact_attestation_v1;
     await admin.query("reset role");
     const persistedInput = { ...persistInput, attestationId };
     const before = new Date().toISOString();

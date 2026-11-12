@@ -30,12 +30,18 @@ test("N5 PostgreSQL 17 read API is PIT, role-scoped, paginated and append-only c
     await admin.query(await readFile(migration("20261112150000_news_core_n5_read_api.sql"), "utf8"));
     const persistFixture = async (statement: string, fingerprint: string, publicationRevisionId: string, evidenceId: string, evidenceKnown = known, evidenceDocument = statement.includes("corrected") ? `${document}:corrected` : document) => {
       const payload = { canonicalClaimId: eventId, taxonomyVersion: "news-fact-taxonomy-v1", category: "LEGAL_REGULATORY", logicalFingerprint: fingerprint, ruleSetVersion: "deterministic-rule-v1", claimType: statement.includes("corrected") ? "EVENT_CORRECTION" : "EVENT_OCCURRENCE", statement, subjectRef: null, objectRef: null, occurredAt: null, scheduledFor: null, confirmationStatus: "REPORTED", lifecycleStatus: "ACTIVE", polarity: "AFFIRMATIVE", focalClaimKey: `claim-key:${suffix}`, publicationRevisionId, qualityFlags: [], evidence: [{ evidenceId, evidenceKind: "N3A_PROPOSAL", claimKey: `claim-key:${suffix}`, publicationRevisionId, sourceDocumentRef: evidenceDocument, contentLocator: "body:p1", provenanceRef: `prov:${suffix}`, asKnownAt: evidenceKnown }], dependencies: [{ dependencyType: "N2_PUBLICATION_REVISION", dependencyRef: publicationRevisionId, asKnownAt: evidenceKnown }, { dependencyType: "N3A_PROPOSAL", dependencyRef: fingerprint, asKnownAt: evidenceKnown }, { dependencyType: "N3B_EVALUATION", dependencyRef: fingerprint, asKnownAt: evidenceKnown }], relation: null };
+      await admin.query("set role news_pipeline_verifier");
+      const verificationId = (await admin.query<{ register_verified_fact_pipeline_v1: string }>("select news_core.register_verified_fact_pipeline_v1($1::jsonb) register_verified_fact_pipeline_v1", [JSON.stringify(payload)])).rows[0].register_verified_fact_pipeline_v1;
+      await admin.query("reset role");
       await admin.query("set role news_factual_attestor");
-      const attestationId = (await admin.query<{ issue_fact_attestation_v1: string }>("select news_core.issue_fact_attestation_v1($1::jsonb) issue_fact_attestation_v1", [JSON.stringify(payload)])).rows[0].issue_fact_attestation_v1;
+      const attestationId = (await admin.query<{ issue_fact_attestation_v1: string }>("select news_core.issue_fact_attestation_v1($1::jsonb) issue_fact_attestation_v1", [JSON.stringify({ ...payload, verificationId })])).rows[0].issue_fact_attestation_v1;
       await admin.query("reset role");
       await admin.query("set role news_factual_writer");
       const staged = (await admin.query<{ fact_revision_id: string }>("select * from news_core.persist_fact_revision_v1($1::jsonb)", [JSON.stringify({ ...payload, attestationId, seal: true })])).rows[0];
       await admin.query("select * from news_core.publish_fact_revision_v1($1,$2)", [staged.fact_revision_id, attestationId]);
+      await admin.query("reset role");
+      await admin.query("set role news_factual_writer");
+      await admin.query("select * from news_core.make_fact_revision_visible_v1($1,$2)", [staged.fact_revision_id, attestationId]);
       await admin.query("reset role");
     };
     const publication1Meta = (await admin.query<{ source_document_ref: string; as_known_at: Date }>("select source_document_ref,as_known_at from news_core.publication_revisions where publication_revision_id=$1", [revisionId])).rows[0];
