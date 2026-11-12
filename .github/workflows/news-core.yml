@@ -53,5 +53,11 @@ jobs:
       - run: npm run test:news:n3b
       - run: npm run test:news:pg17
       - run: npm run test:news:n3d
+      - run: npm run test:news:n4
+      - run: npm run test:news:n4:pg17
+      - run: npm run test:news:n4:live
+        env:
+          N4_REAL_SOURCE: "1"
+          SEC_USER_AGENT: "syntrake-n4-ci/1.0 security@syntrake.example"
       - run: npx tsc --noEmit
       - run: npm run lint -- --quiet

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { NewsPublication, NewsProviderObservation } from "./contracts";
+import { fetchSafeExternal } from "./sourceSecurity";
 const SEC_SOURCE_ID = "sec-edgar", SEC_PROVIDER = "sec", FORMS = new Set(["10-K", "10-Q", "8-K", "20-F", "6-K"]), MAX_ROWS = 10_000;
 const ACCESSION = /^\d{10}-\d{2}-\d{6}$/, DOCUMENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}(?:\/[A-Za-z0-9][A-Za-z0-9._-]{0,255})*$/;
 type SecPayload = { cik?: unknown; filings?: { recent?: Record<string, unknown> } };
@@ -18,7 +19,9 @@ function parseCursor(value: string | null | undefined): SecCursor | null {
 export function secCollectionScopeKey(cik: string): string { return `sec-edgar|sec|cik=${cik}|forms=10-K,10-Q,8-K,20-F,6-K|overlap=7|v=2`; }
 export async function fetchSecFilings(options: Readonly<{ cik: string; userAgent: string; now?: Date; fetchImpl?: typeof fetch; cursor?: string | null; signal?: AbortSignal }>): Promise<SecResult> {
   if (!/^\d{10}$/.test(options.cik) || !options.userAgent.trim()) throw new Error("INVALID_SEC_CONFIG");
-  const previous = parseCursor(options.cursor), response = await (options.fetchImpl ?? fetch)(`https://data.sec.gov/submissions/CIK${options.cik}.json`, { headers: { "User-Agent": options.userAgent, Accept: "application/json" }, signal: options.signal });
+  const previous = parseCursor(options.cursor), sourceUrl = `https://data.sec.gov/submissions/CIK${options.cik}.json`, response = options.fetchImpl
+    ? await options.fetchImpl(sourceUrl, { headers: { "User-Agent": options.userAgent, Accept: "application/json" }, signal: options.signal })
+    : await fetchSafeExternal(sourceUrl, { headers: { "User-Agent": options.userAgent, Accept: "application/json" }, signal: options.signal });
   if (!response.ok) throw new Error(`SEC_UNAVAILABLE:${response.status}`);
   let payload: SecPayload; try { payload = await response.json() as SecPayload; } catch { throw new Error("INVALID_SEC_RESPONSE:json"); }
   if (payload.cik !== options.cik) throw new Error("INVALID_SEC_RESPONSE:cik");
