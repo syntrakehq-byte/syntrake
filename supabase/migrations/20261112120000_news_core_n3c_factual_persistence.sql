@@ -172,6 +172,9 @@ alter table news_core.fact_revision_relations force row level security;
 revoke all on news_core.fact_events,news_core.fact_revisions,news_core.fact_revision_evidence,news_core.fact_revision_dependencies,news_core.fact_revision_publications,news_core.fact_revision_relations from public,news_reader,news_service;
 grant usage on schema news_core to news_service,news_reader,news_factual_writer;
 grant select,insert on news_core.fact_events,news_core.fact_revisions,news_core.fact_revision_evidence,news_core.fact_revision_dependencies,news_core.fact_revision_publications,news_core.fact_revision_relations to news_factual_writer;
+-- The writer may inspect committed N2 publication revisions for validation,
+-- but receives no write privilege on the N1/N2 publication model.
+grant select on news_core.publication_revisions to news_factual_writer;
 
 create policy fact_events_writer on news_core.fact_events for all to news_factual_writer using (true) with check (true);
 create policy fact_revisions_writer on news_core.fact_revisions for all to news_factual_writer using (true) with check (true);
