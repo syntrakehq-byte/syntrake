@@ -78,7 +78,18 @@ test("News Core N2-A PostgreSQL 17 immutable revisions/PIT/concurrency", { skip:
     stage("read new publication complete");
     assert.deepEqual(newRows.map(row => row.revisionNo), [1], "post-migration publication receives revision 1");
 
+    stage("read original publication start");
+    const originalWatchdog = new Client({ connectionString: DB_URL });
+    const originalTimer = setTimeout(async () => {
+      await originalWatchdog.connect().catch(() => undefined);
+      const activity = await originalWatchdog.query("select pid,state,wait_event_type,wait_event,query from pg_stat_activity where datname=current_database() and pid<>pg_backend_pid()").catch(() => ({ rows: [] }));
+      console.log(`[N2A original activity] ${JSON.stringify(activity.rows)}`);
+      await originalWatchdog.end().catch(() => undefined);
+    }, 5_000);
     const original = await store.readPublicationRevisionsAsOf(new Date(Date.now() + 5_000).toISOString(), publicationId);
+    clearTimeout(originalTimer);
+    await originalWatchdog.end().catch(() => undefined);
+    stage("read original publication complete");
     assert.equal(original.length, 1, "N1 compatibility backfill creates exactly one truthful revision");
     assert.equal(original[0].revisionNo, 1);
     const revision2: NewsRevisionInput = {
