@@ -53,7 +53,8 @@ test("News Core N3-C append-only factual persistence, PIT, idempotence and secur
     assert.equal(corrected.inserted, true);
     assert.equal((await store.readAsOf(afterFirstCommit))[0].lifecycleStatus, "ACTIVE");
     assert.equal((await store.readAsOf(new Date(Date.now() + 1000).toISOString()))[0].lifecycleStatus, "CORRECTED");
-    await assert.rejects(store.persist({ ...input("future dependency", knownOne), dependencies: [{ dependencyType: "N3B_EVALUATION", dependencyRef: "future", asKnownAt: knownTwo }] }), /NEWS_FACT_FUTURE_DEPENDENCY/);
+    const futureInput = input("future dependency", knownOne);
+    await assert.rejects(store.persist({ ...futureInput, dependencies: futureInput.dependencies.map(dependency => dependency.dependencyType === "N3B_EVALUATION" ? { ...dependency, asKnownAt: new Date(Date.now() + 60_000).toISOString() } : dependency) }), /NEWS_FACT_FUTURE_DEPENDENCY/);
     await assert.rejects(store.persist({ ...input("invalid evidence", knownOne), evidence: [{ ...evidence(knownOne, claimKeyV1(proposal("invalid evidence", knownOne)))[0], sourceDocumentRef: "https://wrong.example/document" }] }), /NEWS_FACT_N3A_EVIDENCE_MISMATCH/);
     await assert.rejects(store.persist(input("rollback probe", knownTwo), "before-commit"), /INJECTED_FAILURE_BEFORE_COMMIT/);
     await assert.rejects(store.persist(input("post commit crash", knownTwo), "after-commit"), /INJECTED_FAILURE_AFTER_COMMIT/);
