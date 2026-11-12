@@ -192,11 +192,11 @@ begin
   if not exists(select 1 from fact_revisions where fact_revision_id=p_fact_revision_id and finalized_at is null) then
     raise exception 'NEWS_FACT_REVISION_NOT_OPEN' using errcode='55006';
   end if;
-  return query update fact_revisions
+  return query update fact_revisions as fr
     set as_known_at=greatest(server_now,coalesce(dependency_max, '-infinity'::timestamptz)),
         committed_at=clock_timestamp(), finalized_at=clock_timestamp()
-    where fact_revision_id=p_fact_revision_id and finalized_at is null
-    returning fact_revisions.as_known_at,fact_revisions.committed_at;
+    where fr.fact_revision_id=p_fact_revision_id and fr.finalized_at is null
+    returning fr.as_known_at,fr.committed_at;
 end
 $$;
 revoke all on function news_core.finalize_fact_revision(text) from public,news_reader;
