@@ -39,6 +39,25 @@ const sha256 = (value: string): string => createHash("sha256").update(value, "ut
 const stable = (value: unknown): string => { if (value === null || typeof value !== "object") return JSON.stringify(value); if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`; return `{${Object.keys(value as Record<string, unknown>).sort().map(key => `${JSON.stringify(key)}:${stable((value as Record<string, unknown>)[key])}`).join(",")}}`; };
 const ISO = (value: unknown): value is string => typeof value === "string" && Number.isFinite(Date.parse(value));
 const pairKey = (left: string, right: string): string => [left, right].sort().join("::");
+const connectedClaimKeys = (input: CorroborationInputV1, claims: Map<string, ClaimIdentityV1>, proofs: Map<string, VerificationProofV1>): Set<string> => {
+  const connected = new Set([input.claimKey]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const relation of input.claimEquivalences.slice().sort((left, right) => `${left.leftClaimKey}:${left.rightClaimKey}`.localeCompare(`${right.leftClaimKey}:${right.rightClaimKey}`))) {
+      const left = claims.get(relation.leftClaimKey);
+      const right = claims.get(relation.rightClaimKey);
+      const visible = left && right && Date.parse(left.asKnownAt) <= Date.parse(input.cutoffAsKnownAt) && Date.parse(right.asKnownAt) <= Date.parse(input.cutoffAsKnownAt) && Date.parse(relation.asKnownAt) <= Date.parse(input.cutoffAsKnownAt) && relation.evidenceRefs.every(ref => { const proof = proofs.get(ref); return Boolean(proof && Date.parse(proof.availableAsKnownAt) <= Date.parse(input.cutoffAsKnownAt)); });
+      if (visible && (connected.has(relation.leftClaimKey) || connected.has(relation.rightClaimKey))) {
+        const before = connected.size;
+        connected.add(relation.leftClaimKey);
+        connected.add(relation.rightClaimKey);
+        changed ||= connected.size !== before;
+      }
+    }
+  }
+  return connected;
+};
 
 /** Publication-local identity. Cross-publication matching requires ClaimEquivalenceV1. */
 export function claimKeyV1(proposal: ClassificationProposalV1): string { return sha256(stable({ category: proposal.category, claimType: proposal.claimType, statement: proposal.statement, subjectRef: proposal.subjectRef, objectRef: proposal.objectRef, occurredAt: proposal.occurredAt, scheduledFor: proposal.scheduledFor, polarity: proposal.polarity, publicationRevisionId: proposal.publicationRevisionId })); }
@@ -60,18 +79,18 @@ function validateInput(input: CorroborationInputV1): void {
     if (proof.kind === "CLAIM_EQUIVALENCE" && (proof.claimKeys.length !== 2 || !proof.canonicalClaimId)) throw new Error("N3B_EQUIVALENCE_PROOF_INVALID");
     proofs.set(proof.proofId, proof);
   }
-  const validClaimKeys = new Set([input.claimKey]);
   for (const relation of input.claimEquivalences) {
     if (!claims.has(relation.leftClaimKey) || !claims.has(relation.rightClaimKey) || relation.leftClaimKey === relation.rightClaimKey || claims.get(relation.leftClaimKey)?.canonicalClaimId !== relation.canonicalClaimId || claims.get(relation.rightClaimKey)?.canonicalClaimId !== relation.canonicalClaimId || !ISO(relation.asKnownAt) || relation.evidenceRefs.length === 0) throw new Error("N3B_EQUIVALENCE_INVALID");
     for (const ref of relation.evidenceRefs) { const proof = proofs.get(ref); if (!proof || proof.kind !== "CLAIM_EQUIVALENCE" || proof.claimKeys.slice().sort().join("::") !== [relation.leftClaimKey, relation.rightClaimKey].sort().join("::") || proof.canonicalClaimId !== relation.canonicalClaimId) throw new Error("N3B_EQUIVALENCE_PROOF_MISMATCH"); }
-    if (Date.parse(relation.asKnownAt) <= Date.parse(input.cutoffAsKnownAt) && relation.evidenceRefs.every(ref => Date.parse((proofs.get(ref) as VerificationProofV1).availableAsKnownAt) <= Date.parse(input.cutoffAsKnownAt)) && (validClaimKeys.has(relation.leftClaimKey) || validClaimKeys.has(relation.rightClaimKey))) { validClaimKeys.add(relation.leftClaimKey); validClaimKeys.add(relation.rightClaimKey); }
   }
   const evidenceIds = new Set<string>();
   for (const evidence of input.evidence) {
     const origin = input.origins.find(item => item.originId === evidence.originId);
-    if (evidenceIds.has(evidence.evidenceId) || !origin || !claims.has(evidence.claimKey) || evidence.sourceDocumentRef !== origin.sourceDocumentRef || evidence.publicationRevisionId !== origin.publicationRevisionId || evidence.provenanceRef !== origin.provenanceRef || !evidence.contentLocator || !evidence.statementHash || !ISO(evidence.asKnownAt) || !ISO(evidence.availableAsKnownAt) || Date.parse(evidence.asKnownAt) > Date.parse(evidence.availableAsKnownAt)) throw new Error("N3B_EVIDENCE_INVALID");
+    const supportedClaim = claims.get(evidence.claimKey);
+    if (evidenceIds.has(evidence.evidenceId) || !origin || !supportedClaim || evidence.publicationRevisionId !== supportedClaim.publicationRevisionId || evidence.sourceDocumentRef !== origin.sourceDocumentRef || evidence.publicationRevisionId !== origin.publicationRevisionId || evidence.provenanceRef !== origin.provenanceRef || !evidence.contentLocator || !evidence.statementHash || !ISO(evidence.asKnownAt) || !ISO(evidence.availableAsKnownAt) || Date.parse(evidence.asKnownAt) > Date.parse(evidence.availableAsKnownAt)) throw new Error("N3B_EVIDENCE_INVALID");
     if (evidence.proposalEvidenceId) { const proposalRef = input.proposal.evidenceRefs.find(ref => ref.evidenceId === evidence.proposalEvidenceId); if (!proposalRef || proposalRef.sourceDocumentRef !== evidence.sourceDocumentRef || proposalRef.contentLocator !== evidence.contentLocator) throw new Error("N3B_PROPOSAL_EVIDENCE_MISMATCH"); }
-    if (evidence.publicationRevisionId === input.proposal.publicationRevisionId && !evidence.proposalEvidenceId) throw new Error("N3B_PROPOSAL_EVIDENCE_REQUIRED");
+    const belongsToProposal = evidence.publicationRevisionId === input.proposal.publicationRevisionId && input.proposal.evidenceRefs.some(ref => ref.sourceDocumentRef === evidence.sourceDocumentRef);
+    if (belongsToProposal && !evidence.proposalEvidenceId) throw new Error("N3B_PROPOSAL_EVIDENCE_REQUIRED");
     evidenceIds.add(evidence.evidenceId);
   }
   for (const origin of input.origins) for (const competence of origin.competence) if (competence.status === "COMPETENT") { const requiredAuthority = competence.basis === "PRIMARY_RECORD" ? "PRIMARY" : "COMPETENT"; if (!competence.evidenceRefs.length || competence.claimKey !== input.claimKey || competence.evidenceRefs.some(ref => !evidenceIds.has(ref) || !input.evidence.find(evidence => evidence.evidenceId === ref && evidence.originId === origin.originId && evidence.claimKey === input.claimKey && evidence.support === "SUPPORTS")) || ![...proofs.values()].some(proof => proof.kind === "ORIGIN_AUTHORITY" && proof.originId === origin.originId && proof.claimKeys.length === 1 && proof.claimKeys[0] === input.claimKey && proof.authorityLevel === requiredAuthority && proof.sourceDocumentRef === origin.sourceDocumentRef && proof.provenanceRef === origin.provenanceRef && Date.parse(proof.availableAsKnownAt) <= Date.parse(input.cutoffAsKnownAt))) throw new Error("N3B_COMPETENCE_PROOF_MISSING"); }
@@ -89,8 +108,7 @@ export class DeterministicEvidenceCorroboratorV1 implements EvidenceCorroborator
     validateInput(input);
     const origins = new Map(input.origins.map(origin => [origin.originId, origin]));
     const focal = input.claimIdentities.find(claim => claim.claimKey === input.claimKey) as ClaimIdentityV1;
-    const validClaimKeys = new Set([input.claimKey]);
-    for (const relation of input.claimEquivalences) if (Date.parse(relation.asKnownAt) <= Date.parse(input.cutoffAsKnownAt) && relation.evidenceRefs.every(ref => Date.parse((input.verificationProofs.find(proof => proof.proofId === ref) as VerificationProofV1).availableAsKnownAt) <= Date.parse(input.cutoffAsKnownAt)) && (validClaimKeys.has(relation.leftClaimKey) || validClaimKeys.has(relation.rightClaimKey))) { validClaimKeys.add(relation.leftClaimKey); validClaimKeys.add(relation.rightClaimKey); }
+    const validClaimKeys = connectedClaimKeys(input, new Map(input.claimIdentities.map(claim => [claim.claimKey, claim])), new Map(input.verificationProofs.map(proof => [proof.proofId, proof])));
     const validEvidence = input.evidence.filter(evidence => validClaimKeys.has(evidence.claimKey) && Date.parse(evidence.availableAsKnownAt) <= Date.parse(input.cutoffAsKnownAt) && Date.parse((origins.get(evidence.originId) as SourceOriginV1).availableAsKnownAt) <= Date.parse(input.cutoffAsKnownAt));
     const supportingOriginIds = [...new Set(validEvidence.filter(evidence => evidence.support === "SUPPORTS").map(evidence => evidence.originId))];
     const contestingOriginIds = [...new Set(validEvidence.filter(evidence => evidence.support === "CONTESTS").map(evidence => evidence.originId))];
@@ -104,7 +122,7 @@ export class DeterministicEvidenceCorroboratorV1 implements EvidenceCorroborator
     const independence: EditorialIndependenceV1 = allPairsIndependent ? "PROVEN_INDEPENDENT" : "UNKNOWN";
     const reasons = confirmationStatus === "PRIMARY_CONFIRMED" ? ["A competent primary origin directly supports the exact claim with resolved authority evidence."] : confirmationStatus === "CORROBORATED" ? ["Equivalent claims have positive PIT-visible evidence of independence and support from distinct editorial origins."] : confirmationStatus === "DISPUTED" ? ["Persisted evidence materially contests the claim; prior support remains represented."] : confirmationStatus === "REPORTED" ? ["An identified source supports the exact claim, but verified primary authority or independent corroboration is insufficient."] : ["No valid pre-cutoff evidence supports the exact claim."];
     const logicalProposal = { contractVersion: input.proposal.contractVersion, taxonomyVersion: input.proposal.taxonomyVersion, ruleSetVersion: input.proposal.ruleSetVersion, category: input.proposal.category, claimType: input.proposal.claimType, statement: input.proposal.statement, subjectRef: input.proposal.subjectRef, objectRef: input.proposal.objectRef, occurredAt: input.proposal.occurredAt, scheduledFor: input.proposal.scheduledFor, confirmationStatus: input.proposal.confirmationStatus, lifecycleStatus: input.proposal.lifecycleStatus, polarity: input.proposal.polarity, publicationRevisionId: input.proposal.publicationRevisionId, evidenceIds: input.proposal.evidenceIds, evidenceRefs: input.proposal.evidenceRefs, dependencyAsKnownAt: input.proposal.dependencyAsKnownAt, ruleId: input.proposal.ruleId, qualityFlags: input.proposal.qualityFlags, inputFingerprint: input.proposal.inputFingerprint };
-    const fingerprint = sha256(stable({ contractVersion: input.contractVersion, ruleSetVersion: input.ruleSetVersion, claimKey: input.claimKey, canonicalClaimId: focal.canonicalClaimId, cutoffAsKnownAt: input.cutoffAsKnownAt, proposal: logicalProposal, evidence: validEvidence, proofs: input.verificationProofs.filter(proof => Date.parse(proof.availableAsKnownAt) <= Date.parse(input.cutoffAsKnownAt)), origins: input.origins, independence: input.independence.filter(relation => Date.parse(relation.asKnownAt) <= Date.parse(input.cutoffAsKnownAt)), claimEquivalences: input.claimEquivalences.filter(relation => Date.parse(relation.asKnownAt) <= Date.parse(input.cutoffAsKnownAt)) }));
+    const fingerprint = sha256(stable({ contractVersion: input.contractVersion, ruleSetVersion: input.ruleSetVersion, claimKey: input.claimKey, canonicalClaimId: focal.canonicalClaimId, cutoffAsKnownAt: input.cutoffAsKnownAt, proposal: logicalProposal, evidence: [...validEvidence].sort((left, right) => left.evidenceId.localeCompare(right.evidenceId)), proofs: input.verificationProofs.filter(proof => Date.parse(proof.availableAsKnownAt) <= Date.parse(input.cutoffAsKnownAt)).sort((left, right) => left.proofId.localeCompare(right.proofId)), origins: [...input.origins].sort((left, right) => left.originId.localeCompare(right.originId)), independence: input.independence.filter(relation => Date.parse(relation.asKnownAt) <= Date.parse(input.cutoffAsKnownAt)).sort((left, right) => `${left.leftOriginId}:${left.rightOriginId}:${left.status}`.localeCompare(`${right.leftOriginId}:${right.rightOriginId}:${right.status}`)), claimEquivalences: input.claimEquivalences.filter(relation => Date.parse(relation.asKnownAt) <= Date.parse(input.cutoffAsKnownAt)).sort((left, right) => `${left.leftClaimKey}:${left.rightClaimKey}`.localeCompare(`${right.leftClaimKey}:${right.rightClaimKey}`)) }));
     return { contractVersion: input.contractVersion, ruleSetVersion: input.ruleSetVersion, claimKey: input.claimKey, canonicalClaimId: focal.canonicalClaimId, confirmationStatus, lifecycleStatus: input.proposal.lifecycleStatus, polarity: input.proposal.polarity, supportingOriginIds, contestingOriginIds, countedEditorialGroups, independence, reasons, evaluatedAt: input.evaluatedAt, fingerprint };
   }
 }
