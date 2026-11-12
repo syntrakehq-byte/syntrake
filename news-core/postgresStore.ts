@@ -324,6 +324,7 @@ export class PostgresNewsStore {
         if (!row || row.publication_revision_id !== revision.publicationRevisionId || row.publication_id !== revision.publicationId || row.revision_no !== revision.revisionNo || row.title !== revision.title || optionalIso(row.published_at) !== optionalIso(revision.publishedAt) || row.form !== revision.form || row.content_fingerprint !== revision.contentFingerprint || row.source_document_ref !== revision.sourceDocumentRef || !sameJsonFlags(row.quality_flags, revision.qualityFlags) || row.supersedes_revision_id !== revision.supersedesRevisionId) throw new Error("NEWS_REVISION_CONFLICT");
         await this.assertRevisionProvenance(client, revision, provenance);
         await client.query("commit"); committed = true;
+        client.release();
         return { inserted: false, publicationRevisionId: revision.publicationRevisionId };
       }
       await client.query(
