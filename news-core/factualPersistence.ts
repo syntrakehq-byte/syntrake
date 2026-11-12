@@ -104,6 +104,18 @@ export class PostgresFactualStore {
     } catch (error) { await client.query("rollback").catch(() => undefined); throw error; } finally { client.release(); }
   }
 
+  async readFilteredAsOf(asOf: string, targets: readonly string[], eventTypes: readonly string[], from: string | null, to: string | null): Promise<FactAsOfRowV1[]> {
+    const client = await this.pool.connect();
+    try { await client.query("begin"); if (this.databaseRole) await client.query(`set local role ${this.databaseRole}`); const result = await client.query<FactAsOfRowV1>("select * from news_core.read_fact_revisions_filtered_as_of($1,$2::text[],$3::text[],$4::timestamptz,$5::timestamptz)", [asOf, targets, eventTypes, from, to]); await client.query("commit"); return result.rows; }
+    catch (error) { await client.query("rollback").catch(() => undefined); throw error; } finally { client.release(); }
+  }
+
+  async readHistoryFilteredAsOf(asOf: string, targets: readonly string[], from: string | null, to: string | null): Promise<FactAsOfRowV1[]> {
+    const client = await this.pool.connect();
+    try { await client.query("begin"); if (this.databaseRole) await client.query(`set local role ${this.databaseRole}`); const result = await client.query<FactAsOfRowV1>("select * from news_core.read_fact_history_filtered_as_of($1,$2::text[],$3::timestamptz,$4::timestamptz)", [asOf, targets, from, to]); await client.query("commit"); return result.rows; }
+    catch (error) { await client.query("rollback").catch(() => undefined); throw error; } finally { client.release(); }
+  }
+
   async readHistoryAsOf(asOf: string, factEventId: string): Promise<FactAsOfRowV1[]> {
     const client = await this.pool.connect();
     try {

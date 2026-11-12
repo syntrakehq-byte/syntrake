@@ -34,10 +34,10 @@ test("N5 PostgreSQL 17 read API is PIT, role-scoped, paginated and append-only c
     const committed = (await admin.query<{ committed_at: Date }>("select committed_at from news_core.fact_revisions where fact_revision_id=$1", [factRevisionId])).rows[0].committed_at;
     const visibleAsOf = new Date(committed.valueOf() + 1).toISOString();
     const api = new NewsConsumptionApiV1({ news, factual }, "0123456789abcdef", "n5-test-credential"); const auth = { serviceId: "news_reader" as const, credential: "n5-test-credential" };
-    const discovered = await api.discoverNews(auth, { asOf: visibleAsOf }); assert.ok(discovered.data.some(row => row.publicationRevisionId === revisionId));
-    const events = await api.getNewsEvents(auth, { asOf: visibleAsOf }); const eventRow = events.data.find(row => row.factRevisionId === factRevisionId); assert.ok(eventRow); assert.equal(eventRow.confirmationStatus, "REPORTED");
-    const evidence = await api.getEventEvidence(auth, factRevisionId, { asOf: visibleAsOf }); assert.equal(evidence.data[0].sourceDocumentRef, document);
-    const history = await api.getNewsHistory(auth, eventId, { asOf: visibleAsOf }); assert.equal(history.data.length, 1);
+    const discovered = await api.discoverNews(auth, { asOf: visibleAsOf, filters: { sourceIds: [sourceId], forms: ["8-K"] } }); assert.ok(discovered.data.some(row => row.publicationRevisionId === revisionId));
+    const events = await api.getNewsEvents(auth, { asOf: visibleAsOf, targets: [eventId] }); const eventRow = events.data.find(row => row.factRevisionId === factRevisionId); assert.ok(eventRow); assert.equal(eventRow.confirmationStatus, "REPORTED");
+    const evidence = await api.getEventEvidence(auth, { eventId, asOf: visibleAsOf }); assert.equal(evidence.data[0].sourceDocumentRef, document);
+    const history = await api.getNewsHistory(auth, { targets: [eventId], asOf: visibleAsOf }); assert.equal(history.data.length, 1);
     const before = await api.getNewsEvents(auth, { asOf: new Date(Date.parse(known) - 1000).toISOString() }); assert.equal(before.data.some(row => row.factRevisionId === factRevisionId), false);
     await admin.query("set role news_service"); await assert.rejects(admin.query("select * from news_core.fact_revisions"), /permission denied/); await admin.query("reset role");
   } finally { await admin.query("reset role").catch(() => undefined); await Promise.all([news.close(), factual.close(), admin.end()]); }

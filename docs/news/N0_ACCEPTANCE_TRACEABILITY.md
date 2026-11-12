@@ -54,13 +54,13 @@ Esta matriz preserva os critérios N0-T01..T37. `PASS` significa que existe uma 
 
 ## Evidência N5
 
-`n5Api.test.ts` prova a forma canónica `news-envelope-v1`, autenticação de serviço, limites, cutoff futuro, paginação com cursor HMAC e rejeição de adulteração. A migration `20261112150000_news_core_n5_read_api.sql` expõe apenas funções PIT de leitura para histórico e evidência, mantendo as tabelas factuais sem privilégios de leitura direta. O gate PG17 N5 deve aplicar N1, N2-A e N3-C antes desta migration e executar com uma role de serviço não administrativa.
+`n5Api.test.ts` prova a forma canónica `NewsEnvelope` versão `1.0`, `requestId`, autenticação de serviço, filtros, limites, cutoff futuro, paginação com cursor HMAC e rejeição de adulteração. A migration `20261112150000_news_core_n5_read_api.sql` expõe apenas funções PIT de leitura para histórico, evidência e filtros, mantendo as tabelas factuais sem privilégios de leitura direta. O gate PG17 N5 aplica N1, N2-A e N3-C antes desta migration e executa com uma role de serviço não administrativa.
 
 O circuito completo sem sessão, duas recolhas SEC live, recuperação autónoma de OPEN e compatibilidade Investing+Trading continuam `NOT_PROVEN` nesta fase: a N5 não fabrica uma prova end-to-end quando o worker existente não encadeia automaticamente N3-A/B nem há isolamento de produção do `news_factual_writer`. DNS rebinding/TOCTOU e operação 24/7 permanecem pendentes.
 
 O mesmo ensaio comprova que `news_service` não pode ler tabelas factuais nem selar revisões, que as três roles são `NOLOGIN` e que `news_factual_writer` não herda memberships. Também regista explicitamente a limitação de confiança: o writer dedicado ainda possui INSERT bruto e EXECUTE da selagem. Essa capacidade é `BLOCKED` para uma afirmação de isolamento de produção; não é convertida em PASS por uma conexão administrativa com `SET ROLE`.
 
-Não foram executados neste PR: fornecedores externos alternativos, DNS rebinding em rede controlada, operação autónoma 24/7, APIs N5, deploy ou migrações remotas.
+Não foram executados neste PR: fornecedores externos alternativos, DNS rebinding em rede controlada, operação autónoma 24/7, integração automática N3-A/B→N5, deploy ou migrações remotas. As APIs N5 foram executadas nos gates unitário, PG17 e SEC live deste PR; isso não promove os critérios pendentes a PASS.
 
 ## Evidência N4
 

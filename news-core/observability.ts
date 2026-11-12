@@ -4,9 +4,10 @@ export type NewsOperationalMetricsV1 = Readonly<{
   checkpointsAdvanced: number; backlog: number; lastSuccessAt: string | null;
 }>;
 
-const safeError = (error: unknown): string => {
-  const message = error instanceof Error ? error.message : "unknown error";
-  return message.replaceAll(/(authorization|cookie|token|secret|password|api[-_]?key)\s*[:=]\s*[^\s,;]+/gi, "$1=[REDACTED]").slice(0, 240);
+const ERROR_CODES = new Set(["NEWS_N5_READ_UNAVAILABLE", "NEWS_SOURCE_UNAVAILABLE", "NEWS_PROCESSING_FAILED", "NEWS_RETRY_EXHAUSTED"]);
+const safeErrorCode = (error: unknown): string => {
+  const candidate = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  return ERROR_CODES.has(candidate) ? candidate : "NEWS_OPERATION_FAILED";
 };
 
 export class NewsObservabilityV1 {
@@ -19,7 +20,7 @@ export class NewsObservabilityV1 {
   recordRetry(): void { this.values.retries++; }
   recordCheckpoint(): void { this.values.checkpointsAdvanced++; }
   setBacklog(count: number): void { this.values.backlog = Math.max(0, Math.floor(count)); }
-  recordError(error: unknown, state: "PROCESSING_ERROR" | "SOURCE_UNAVAILABLE" = "PROCESSING_ERROR"): void { this.values.errors++; this.currentState = state; this.lastErrorCode = safeError(error); }
+  recordError(error: unknown, state: "PROCESSING_ERROR" | "SOURCE_UNAVAILABLE" = "PROCESSING_ERROR"): void { this.values.errors++; this.currentState = state; this.lastErrorCode = safeErrorCode(error); }
   markSuccess(): void { this.values.lastSuccessAt = new Date().toISOString(); }
   snapshot(): Readonly<{ state: NewsOperationalStateV1; metrics: NewsOperationalMetricsV1; lastErrorCode: string | null }> { return { state: this.currentState, metrics: { ...this.values }, lastErrorCode: this.lastErrorCode }; }
 }

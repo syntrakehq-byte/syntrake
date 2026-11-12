@@ -576,6 +576,11 @@ export class PostgresNewsStore {
     }));
   }
 
+  async readPublicationRevisionsFilteredAsOf(asOf: string, query: string | null, sourceIds: readonly string[], forms: readonly string[]): Promise<NewsPublicationRevision[]> {
+    const result = await this.pool.query<NewsPublicationRevision>("select * from news_core.read_publication_revisions_filtered_as_of($1::timestamptz,$2::text,$3::text[],$4::text[])", [asOf, query, sourceIds, forms]);
+    return result.rows.map(row => ({ ...row, publishedAt: optionalIso(row.publishedAt), ingestedAt: optionalIso(row.ingestedAt), asKnownAt: optionalIso(row.asKnownAt), qualityFlags: flags(row.qualityFlags) }));
+  }
+
   async readEntityLinksAsOf(asOf: string, publicationId?: string): Promise<readonly Record<string, unknown>[]> {
     const result = await this.pool.query(
       "select * from news_core.read_entity_links_as_of($1::timestamptz,$2::text)", [asOf, publicationId ?? null],
