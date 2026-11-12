@@ -155,12 +155,20 @@ const hasFutureLanguage = (text: string, rule: Rule): boolean => Boolean(rule.fu
 const hasUncertainLanguage = (text: string): boolean => /\b(?:could|may|might|if|would|rumou?r|speculation|speculative|possibly|potentially|hypothetical)\b/i.test(text);
 const splitSentences = (text: string): string[] => text.split(/(?<=[.!?])\s+/).map(normalizedText).filter(Boolean);
 const negativeForRule = (text: string, match: RegExpExecArray, rule: Rule): boolean => {
-  const before = text.slice(Math.max(0, match.index - 80), match.index + match[0].length);
+  if (rule.claimType !== "EVENT_OCCURRENCE" && !["DIVIDEND_ANNOUNCEMENT", "MERGER_ACQUISITION"].includes(rule.category)) return false;
+  const boundary = Math.max(text.lastIndexOf(".", match.index - 1), text.lastIndexOf(";", match.index - 1), text.lastIndexOf(", but ", match.index - 1), text.lastIndexOf(", however ", match.index - 1), text.lastIndexOf(", and ", match.index - 1), text.lastIndexOf(", while ", match.index - 1));
+  const proposition = text.slice(boundary + 1, match.index + match[0].length);
+  const targetByCategory: Partial<Record<FactCategoryV1, string>> = {
+    DIVIDEND_ANNOUNCEMENT: "dividend",
+    MERGER_ACQUISITION: "merger|acqui(?:re|sition)|takeover|combination|speculation",
+    OPERATIONAL_DISRUPTION: "outage|disruption|service interruption|shutdown",
+    LEGAL_REGULATORY: "fine|fined|sanction|sanctioned|charge|charged|lawsuit|sued|settlement|settled|convicted|approved|cleared|order|ordered",
+    GEOPOLITICAL_EVENT: "ceasefire|sanctions?|invasion|military operation|armed conflict|treaty",
+  };
+  const target = targetByCategory[rule.category];
+  if (!target) return false;
   const negation = "(?:did not|does not|do not|not|no|never|denies?|denied|rejects?|rejected)";
-  if (rule.category === "DIVIDEND_ANNOUNCEMENT") return new RegExp(`\\b${negation}\\b.{0,60}\\bdividend\\b`, "i").test(before);
-  if (rule.category === "MERGER_ACQUISITION") return new RegExp(`\\b${negation}\\b.{0,60}\\b(?:merger|acqui(?:re|sition)|takeover|combination|speculation)\\b`, "i").test(before);
-  if (rule.category === "OPERATIONAL_DISRUPTION") return new RegExp(`\\b${negation}\\b.{0,60}\\b(?:outage|disruption|service interruption|shutdown)\\b`, "i").test(before);
-  return false;
+  return new RegExp(`\\b${negation}\\b(?:\\s+[\\w'-]+){0,8}\\s+\\b(?:${target})\\b`, "i").test(proposition);
 };
 const logicalInputFingerprint = (input: ClassificationInputV1): string => sha256(stable({ contractVersion: input.contractVersion, taxonomyVersion: input.taxonomyVersion, ruleSetVersion: input.ruleSetVersion, publicationRevision: input.publicationRevision, evidence: input.evidence }));
 
