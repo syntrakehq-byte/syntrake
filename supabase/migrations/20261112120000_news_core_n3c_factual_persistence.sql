@@ -2,6 +2,12 @@
 -- This migration stores N3-A proposals and N3-B evaluations; it does not
 -- change the N1/N2 publication or editorial models.
 
+do $$ begin
+  if not exists (select 1 from pg_roles where rolname = 'news_factual_writer') then
+    create role news_factual_writer nologin nocreatedb nocreaterole noinherit;
+  end if;
+end $$;
+
 create table if not exists news_core.fact_events (
   fact_event_id text primary key,
   canonical_claim_id text not null unique,
@@ -163,16 +169,16 @@ alter table news_core.fact_revision_publications force row level security;
 alter table news_core.fact_revision_relations enable row level security;
 alter table news_core.fact_revision_relations force row level security;
 
-revoke all on news_core.fact_events,news_core.fact_revisions,news_core.fact_revision_evidence,news_core.fact_revision_dependencies,news_core.fact_revision_publications,news_core.fact_revision_relations from public,news_reader;
-grant usage on schema news_core to news_service,news_reader;
-grant select,insert on news_core.fact_events,news_core.fact_revisions,news_core.fact_revision_evidence,news_core.fact_revision_dependencies,news_core.fact_revision_publications,news_core.fact_revision_relations to news_service;
+revoke all on news_core.fact_events,news_core.fact_revisions,news_core.fact_revision_evidence,news_core.fact_revision_dependencies,news_core.fact_revision_publications,news_core.fact_revision_relations from public,news_reader,news_service;
+grant usage on schema news_core to news_service,news_reader,news_factual_writer;
+grant select,insert on news_core.fact_events,news_core.fact_revisions,news_core.fact_revision_evidence,news_core.fact_revision_dependencies,news_core.fact_revision_publications,news_core.fact_revision_relations to news_factual_writer;
 
-create policy fact_events_service on news_core.fact_events for all to news_service using (true) with check (true);
-create policy fact_revisions_service on news_core.fact_revisions for all to news_service using (true) with check (true);
-create policy fact_revision_evidence_service on news_core.fact_revision_evidence for all to news_service using (true) with check (true);
-create policy fact_revision_dependencies_service on news_core.fact_revision_dependencies for all to news_service using (true) with check (true);
-create policy fact_revision_publications_service on news_core.fact_revision_publications for all to news_service using (true) with check (true);
-create policy fact_revision_relations_service on news_core.fact_revision_relations for all to news_service using (true) with check (true);
+create policy fact_events_writer on news_core.fact_events for all to news_factual_writer using (true) with check (true);
+create policy fact_revisions_writer on news_core.fact_revisions for all to news_factual_writer using (true) with check (true);
+create policy fact_revision_evidence_writer on news_core.fact_revision_evidence for all to news_factual_writer using (true) with check (true);
+create policy fact_revision_dependencies_writer on news_core.fact_revision_dependencies for all to news_factual_writer using (true) with check (true);
+create policy fact_revision_publications_writer on news_core.fact_revision_publications for all to news_factual_writer using (true) with check (true);
+create policy fact_revision_relations_writer on news_core.fact_revision_relations for all to news_factual_writer using (true) with check (true);
 
 create or replace function news_core.finalize_fact_revision(p_fact_revision_id text)
 returns table(assigned_as_known_at timestamptz, assigned_committed_at timestamptz)
@@ -199,8 +205,8 @@ begin
     returning fr.as_known_at,fr.committed_at;
 end
 $$;
-revoke all on function news_core.finalize_fact_revision(text) from public,news_reader;
-grant execute on function news_core.finalize_fact_revision(text) to news_service;
+revoke all on function news_core.finalize_fact_revision(text) from public,news_reader,news_service;
+grant execute on function news_core.finalize_fact_revision(text) to news_factual_writer;
 
 create or replace function news_core.read_fact_revisions_as_of(p_as_of timestamptz)
 returns table("factEventId" text,"factRevisionId" text,"revisionNo" integer,"canonicalClaimId" text,"category" text,"claimType" text,"statement" text,"occurredAt" timestamptz,"scheduledFor" timestamptz,"confirmationStatus" text,"lifecycleStatus" text,"polarity" text,"asKnownAt" timestamptz,"committedAt" timestamptz)
