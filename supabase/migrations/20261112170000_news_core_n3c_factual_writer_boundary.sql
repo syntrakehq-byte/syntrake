@@ -255,7 +255,7 @@ begin
     p->>'focalClaimKey',p->>'publicationRevisionId',coalesce(p->'qualityFlags','[]'::jsonb),
     case when next_revision > 1 then event_id || ':revision:' || (next_revision-1)::text end
   );
-  update news_core.fact_revisions set staged_txid=txid_current() where fact_revision_id=revision_id;
+  update news_core.fact_revisions fr set staged_txid=txid_current() where fr.fact_revision_id=revision_id;
   for evidence in select value from jsonb_array_elements(p->'evidence') loop
     insert into news_core.fact_revision_evidence(fact_revision_id,evidence_id,evidence_kind,claim_key,publication_revision_id,source_document_ref,content_locator,provenance_ref,evidence_as_known_at)
     values (revision_id,evidence->>'evidenceId',evidence->>'evidenceKind',evidence->>'claimKey',evidence->>'publicationRevisionId',evidence->>'sourceDocumentRef',evidence->>'contentLocator',evidence->>'provenanceRef',(evidence->>'asKnownAt')::timestamptz);
