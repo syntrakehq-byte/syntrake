@@ -505,9 +505,9 @@ export class PostgresNewsStore {
       const editorialGroupRevisionId = `${result.groupId}:editorial:${result.resolverVersion}:${revisionNo}`;
       await client.query(
         `insert into news_core.editorial_group_revisions
-          (editorial_group_revision_id,group_id,revision_no,resolver_contract_version,resolver_version,resolution_fingerprint,match_status,relation_type,reason,pending_transaction_id,supersedes_editorial_group_revision_id)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,(select editorial_group_revision_id from news_core.editorial_group_revisions where group_id=$2 and resolver_version=$5 and revision_no=$3-1))`,
-        [editorialGroupRevisionId, result.groupId, revisionNo, result.contractVersion, result.resolverVersion, fingerprint, result.status, result.relationType, result.reason, txid],
+          (editorial_group_revision_id,group_id,revision_no,resolver_contract_version,resolver_version,resolution_fingerprint,operation,match_status,relation_type,reason,pending_transaction_id,supersedes_editorial_group_revision_id)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,(select editorial_group_revision_id from news_core.editorial_group_revisions where group_id=$2 and resolver_version=$5 and revision_no=$3-1))`,
+        [editorialGroupRevisionId, result.groupId, revisionNo, result.contractVersion, result.resolverVersion, fingerprint, result.operation, result.status, result.relationType, result.reason, txid],
       );
       for (const publicationRevisionId of result.publicationRevisionIds) await client.query("insert into news_core.editorial_group_members(editorial_group_revision_id,publication_revision_id) values ($1,$2)", [editorialGroupRevisionId, publicationRevisionId]);
       for (const evidence of result.evidence) await client.query("insert into news_core.editorial_group_evidence(editorial_group_revision_id,evidence_id,evidence_kind,source_ref,observed_at) values ($1,$2,$3,$4,$5::timestamptz)", [editorialGroupRevisionId, evidence.evidenceId, evidence.evidenceKind, evidence.sourceRef, evidence.observedAt]);
@@ -541,9 +541,9 @@ export class PostgresNewsStore {
       const publicationEventLinkRevisionId = `${result.structuralEventId}:event-link:${result.resolverVersion}:${revisionNo}`;
       await client.query(
         `insert into news_core.publication_event_link_revisions
-          (publication_event_link_revision_id,structural_event_id,revision_no,resolver_contract_version,resolver_version,resolution_fingerprint,match_status,relation_type,reason,pending_transaction_id,supersedes_publication_event_link_revision_id)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,(select publication_event_link_revision_id from news_core.publication_event_link_revisions where structural_event_id=$2 and resolver_version=$5 and revision_no=$3-1))`,
-        [publicationEventLinkRevisionId, result.structuralEventId, revisionNo, result.contractVersion, result.resolverVersion, fingerprint, result.status, result.relationType, result.reason, txid],
+          (publication_event_link_revision_id,structural_event_id,revision_no,resolver_contract_version,resolver_version,resolution_fingerprint,operation,match_status,relation_type,reason,pending_transaction_id,supersedes_publication_event_link_revision_id)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,(select publication_event_link_revision_id from news_core.publication_event_link_revisions where structural_event_id=$2 and resolver_version=$5 and revision_no=$3-1))`,
+        [publicationEventLinkRevisionId, result.structuralEventId, revisionNo, result.contractVersion, result.resolverVersion, fingerprint, result.operation, result.status, result.relationType, result.reason, txid],
       );
       for (const publicationRevisionId of result.publicationRevisionIds) await client.query("insert into news_core.publication_event_link_members(publication_event_link_revision_id,publication_revision_id) values ($1,$2)", [publicationEventLinkRevisionId, publicationRevisionId]);
       for (const evidence of result.evidence) await client.query("insert into news_core.publication_event_link_evidence(publication_event_link_revision_id,evidence_id,evidence_kind,source_ref,observed_at) values ($1,$2,$3,$4,$5::timestamptz)", [publicationEventLinkRevisionId, evidence.evidenceId, evidence.evidenceKind, evidence.sourceRef, evidence.observedAt]);
