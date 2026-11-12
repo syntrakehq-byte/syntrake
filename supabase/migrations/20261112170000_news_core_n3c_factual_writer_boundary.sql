@@ -220,12 +220,16 @@ create or replace function news_core.publish_fact_revision_v1(p_fact_revision_id
 returns table(assigned_as_known_at timestamptz, assigned_committed_at timestamptz)
 language plpgsql volatile security definer set search_path=pg_catalog,news_core as $$
 declare attestation jsonb;
+  revision record;
 begin
   select a.payload into attestation from news_core.fact_pipeline_attestations a where a.attestation_id=p_attestation_id;
-  if not found or not exists (
-    select 1 from news_core.fact_revisions fr
+  if not found then
+    raise exception 'NEWS_FACT_REVISION_NOT_AUTHORIZED' using errcode='42501';
+  end if;
+  select fr.fact_revision_id,fr.finalized_at,fr.as_known_at,fr.committed_at into revision
+    from news_core.fact_revisions fr
     join news_core.fact_events fe using (fact_event_id)
-    where fr.fact_revision_id=p_fact_revision_id and fr.finalized_at is null
+   where fr.fact_revision_id=p_fact_revision_id
       and fe.canonical_claim_id=attestation->>'canonicalClaimId'
       and fr.logical_fingerprint=attestation->>'logicalFingerprint'
       and fr.publication_revision_id=attestation->>'publicationRevisionId'
@@ -239,9 +243,13 @@ begin
          where frd.fact_revision_id=fr.fact_revision_id
            and frd.dependency_type='N2_PUBLICATION_REVISION'
            and frd.dependency_ref=attestation->>'publicationRevisionId'
-      )
-  ) then
+      );
+  if not found then
     raise exception 'NEWS_FACT_REVISION_NOT_AUTHORIZED' using errcode='42501';
+  end if;
+  if revision.finalized_at is not null then
+    return query select revision.as_known_at,revision.committed_at;
+    return;
   end if;
   return query select * from news_core.finalize_fact_revision(p_fact_revision_id);
 end
