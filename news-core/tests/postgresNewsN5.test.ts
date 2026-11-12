@@ -46,7 +46,7 @@ test("N5 PostgreSQL 17 read API is PIT, role-scoped, paginated and append-only c
     await news.ingestPublicationRevision({ revision: { publicationRevisionId: publicationRevision2Id, publicationId, revisionNo: 2, title: "N5 corrected fixture", publishedAt: null, form: "8-K", contentFingerprint: `corrected:${suffix}`, sourceDocumentRef: `${document}:corrected`, qualityFlags: [], supersedesRevisionId: revisionId }, provenance: { provenanceId: `${publicationId}:provenance:2`, publicationRevisionId: publicationRevision2Id, sourceId, providerKey: "n5-fixture", providerObservationKey: `obs:${suffix}:revision:2`, originalUrl: `${document}:corrected`, sourceDocumentRef: `${document}:corrected`, retrievedAt: new Date().toISOString(), qualityFlags: [] } });
     const publication2Known = (await admin.query<{ as_known_at: Date }>("select as_known_at from news_core.publication_revisions where publication_revision_id=$1", [publicationRevision2Id])).rows[0].as_known_at;
     const factRevision2Id = `${eventId}:revision:2`;
-    await persistFixture("The company was fined, later corrected.", `fp2:${suffix}`, publicationRevision2Id, `evidence2:${suffix}`, publication2Known.toISOString());
+    await persistFixture("The company was fined, later corrected.", `fp2:${suffix}`, publicationRevision2Id, `evidence2:${suffix}`, new Date().toISOString());
     const fact2Committed = (await admin.query<{ committed_at: Date }>("select committed_at from news_core.fact_revisions where fact_revision_id=$1", [factRevision2Id])).rows[0].committed_at;
     await new Promise(resolve => setTimeout(resolve, 3000));
     const afterSecond = new Date(Date.now() - 500).toISOString();
