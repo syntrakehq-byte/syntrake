@@ -176,6 +176,12 @@ grant select,insert on news_core.fact_events,news_core.fact_revisions,news_core.
 -- but receives no write privilege on the N1/N2 publication model.
 grant select on news_core.publication_revisions to news_factual_writer;
 
+drop policy if exists fact_events_writer on news_core.fact_events;
+drop policy if exists fact_revisions_writer on news_core.fact_revisions;
+drop policy if exists fact_revision_evidence_writer on news_core.fact_revision_evidence;
+drop policy if exists fact_revision_dependencies_writer on news_core.fact_revision_dependencies;
+drop policy if exists fact_revision_publications_writer on news_core.fact_revision_publications;
+drop policy if exists fact_revision_relations_writer on news_core.fact_revision_relations;
 create policy fact_events_writer on news_core.fact_events for all to news_factual_writer using (true) with check (true);
 create policy fact_revisions_writer on news_core.fact_revisions for all to news_factual_writer using (true) with check (true);
 create policy fact_revision_evidence_writer on news_core.fact_revision_evidence for all to news_factual_writer using (true) with check (true);
