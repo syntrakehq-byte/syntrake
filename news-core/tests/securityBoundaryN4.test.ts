@@ -12,7 +12,7 @@ test("N4 non-administrative runtime identity cannot reach the factual writer", {
   const password = `n4-password-${suffix}`;
   try {
     await admin.connect();
-    const createRole = await admin.query<{ ddl: string }>("select format('create role %I login password %L nosuperuser nocreatedb nocreaterole inherit', $1, $2) ddl", [runtimeRole, password]);
+    const createRole = await admin.query<{ ddl: string }>("select format('create role %I login password %L nosuperuser nocreatedb nocreaterole inherit', $1::text, $2::text) ddl", [runtimeRole, password]);
     await admin.query(createRole.rows[0].ddl);
     await admin.query(`grant news_service to ${runtimeRole}`);
     const runtimeUrl = new URL(DB_URL as string);
