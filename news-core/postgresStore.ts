@@ -307,7 +307,7 @@ export class PostgresNewsStore {
         const prior = await client.query<{ publication_id: string; visibility_state: string; as_known_at: Date | null }>(
           "select publication_id,visibility_state,as_known_at from news_core.publication_revisions where publication_revision_id=$1 for share", [revision.supersedesRevisionId],
         );
-        if (prior.rowCount !== 1 || prior.rows[0].publication_id !== revision.publicationId || prior.rows[0].visibility_state !== "COMMITTED" || !prior.rows[0].as_known_at || prior.rows[0].as_known_at.getTime() > Date.now()) throw new Error("NEWS_REVISION_DEPENDENCY_INVALID");
+        if (prior.rowCount !== 1 || prior.rows[0].publication_id !== revision.publicationId || prior.rows[0].visibility_state !== "COMMITTED" || !prior.rows[0].as_known_at) throw new Error("NEWS_REVISION_DEPENDENCY_INVALID");
       }
       const inserted = await client.query(
         `insert into news_core.publication_revisions
