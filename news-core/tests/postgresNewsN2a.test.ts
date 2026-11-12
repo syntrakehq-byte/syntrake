@@ -64,7 +64,19 @@ test("News Core N2-A PostgreSQL 17 immutable revisions/PIT/concurrency", { skip:
       checkpoint: { sourceId, collectionScopeKey: scope, cursor: JSON.stringify({ watermark: `2026-01-01:${suffix}` }), updatedAt: now },
     });
     stage("new publication persisted");
-    assert.deepEqual((await store.readPublicationRevisionsAsOf(new Date(Date.now() + 5_000).toISOString(), newPublicationId)).map(row => row.revisionNo), [1], "post-migration publication receives revision 1");
+    stage("read new publication start");
+    const probe = new Client({ connectionString: DB_URL });
+    const watchdog = setTimeout(async () => {
+      await probe.connect().catch(() => undefined);
+      const activity = await probe.query("select pid,state,wait_event_type,wait_event,query from pg_stat_activity where datname=current_database() and pid<>pg_backend_pid()").catch(() => ({ rows: [] }));
+      console.log(`[N2A activity] ${JSON.stringify(activity.rows)}`);
+      await probe.end().catch(() => undefined);
+    }, 5_000);
+    const newRows = await store.readPublicationRevisionsAsOf(new Date(Date.now() + 5_000).toISOString(), newPublicationId);
+    clearTimeout(watchdog);
+    await probe.end().catch(() => undefined);
+    stage("read new publication complete");
+    assert.deepEqual(newRows.map(row => row.revisionNo), [1], "post-migration publication receives revision 1");
 
     const original = await store.readPublicationRevisionsAsOf(new Date(Date.now() + 5_000).toISOString(), publicationId);
     assert.equal(original.length, 1, "N1 compatibility backfill creates exactly one truthful revision");
