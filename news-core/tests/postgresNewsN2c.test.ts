@@ -87,7 +87,7 @@ test("News Core N2-C conservative editorial equivalence, structural many-to-many
     await store.ingestStructuralEventLinks(eventTwo);
     const eventRead = await store.readStructuralEventLinksAsOf(new Date(Date.now() + 10_000).toISOString());
     assert.equal(eventRead.filter(row => row.publicationRevisionId === revisionIds[0]).length, 2, "one publication may relate to multiple structural events");
-    const eventCutoffBeforeRevisionTwo = new Date(Date.now() + 10_000).toISOString();
+    const eventCutoffBeforeRevisionTwo = new Date(Math.max(...eventRead.filter(row => row.structuralEventId === eventOne.structuralEventId).map(row => Date.parse(String(row.asKnownAt)))) + 1).toISOString();
 
     const eventRevisionTwo: StructuralEventLinkResolutionV1 = { ...eventOne, publicationRevisionIds: [revisionIds[1], revisionIds[2]], reason: "EVENT_MEMBERSHIP_CORRECTION", evidence: [{ evidenceId: "event-membership-proof", evidenceKind: "OFFICIAL_SOURCE", sourceRef: "https://publisher.example/event/correction", observedAt: now, verified: true }] };
     await store.ingestStructuralEventLinks(eventRevisionTwo);
