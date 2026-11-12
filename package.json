@@ -19,6 +19,7 @@
     "test:news:n3a": "tsx --test news-core/tests/factualClassification.test.ts",
     "test:news:n3b": "tsx --test news-core/tests/evidenceCorroboration.test.ts",
     "test:news:n3c": "tsx --test --test-timeout=180000 news-core/tests/postgresNewsN3c.test.ts",
+    "test:news:n3d": "tsx --test --test-timeout=180000 news-core/tests/postgresNewsN3d.test.ts",
     "test:news:pg17": "tsx --test --test-timeout=180000 news-core/tests/postgresNews.test.ts && tsx --test --test-timeout=180000 news-core/tests/postgresNewsN2a.test.ts && tsx --test --test-timeout=180000 news-core/tests/postgresNewsN2b.test.ts && tsx --test --test-timeout=180000 news-core/tests/postgresNewsN2c.test.ts && tsx --test --test-timeout=180000 news-core/tests/postgresNewsN3c.test.ts",
     "news:worker": "tsx scripts/news-postgres-worker.ts"
   },
