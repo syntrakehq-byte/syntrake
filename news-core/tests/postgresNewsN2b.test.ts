@@ -59,7 +59,9 @@ test("News Core N2-B canonical bridge, conservative matches and PIT", { skip: !D
     };
     stage("ambiguous start"); const ambiguousOutcome = await store.ingestEntityResolution(revisionId, ambiguous); stage("ambiguous complete");
     assert.equal(ambiguousOutcome.inserted, true);
+    stage("read ambiguous");
     const allLinks = await store.readEntityLinksAsOf(new Date(Date.now() + 10_000).toISOString(), publicationId);
+    stage("read ambiguous complete");
     assert.deepEqual(allLinks.map(row => row.identityStatus), ["EXACT", "AMBIGUOUS"]);
     assert.equal(allLinks[1].listingId, null);
     const beforeAmbiguous = new Date(Date.parse(String(allLinks[1].asKnownAt)) - 1).toISOString();
@@ -69,7 +71,7 @@ test("News Core N2-B canonical bridge, conservative matches and PIT", { skip: !D
       contractVersion: "market-core-identity-v1", resolverVersion: "fixture-issuer", status: "EXACT", selectedCandidateRef: "issuer-acme", reason: "ISSUER_ONLY_MATCH",
       candidates: [{ candidateRef: "issuer-acme", targetScope: "ISSUER", relationType: "MENTION", issuerId: "issuer-acme", instrumentId: null, listingId: null, evidence: [{ evidenceId: "e-issuer", evidenceKind: "OFFICIAL_REGISTRY", sourceRef: "sec:cik:0000000001", observedAt: now, verified: true }] }],
     };
-    await store.ingestEntityResolution(revisionId, issuerOnly);
+    stage("issuer start"); await store.ingestEntityResolution(revisionId, issuerOnly); stage("issuer complete");
     const issuerLink = (await store.readEntityLinksAsOf(new Date(Date.now() + 10_000).toISOString(), publicationId)).find(row => row.resolverVersion === "fixture-issuer");
     assert.equal(issuerLink?.issuerId, "issuer-acme");
     assert.equal(issuerLink?.instrumentId, null, "issuer news does not imply a listing");
@@ -78,7 +80,7 @@ test("News Core N2-B canonical bridge, conservative matches and PIT", { skip: !D
       contractVersion: "market-core-identity-v1", resolverVersion: "fixture-etf", status: "EXACT", selectedCandidateRef: "etf-acme", reason: "ETF_HOLDING_EVIDENCE",
       candidates: [{ candidateRef: "etf-acme", targetScope: "INSTRUMENT", relationType: "INDIRECT_EXPOSURE", issuerId: "issuer-etf", instrumentId: "instrument-etf", listingId: null, evidence: [{ evidenceId: "e-etf", evidenceKind: "PROVIDER_CATALOG", sourceRef: "catalog:holdings:etf-acme", observedAt: now, verified: true }] }],
     };
-    await store.ingestEntityResolution(revisionId, indirectEtf);
+    stage("etf start"); await store.ingestEntityResolution(revisionId, indirectEtf); stage("etf complete");
     const etfLink = (await store.readEntityLinksAsOf(new Date(Date.now() + 10_000).toISOString(), publicationId)).find(row => row.resolverVersion === "fixture-etf");
     assert.equal(etfLink?.relationType, "INDIRECT_EXPOSURE");
     assert.equal(etfLink?.identityStatus, "EXACT");
@@ -89,21 +91,22 @@ test("News Core N2-B canonical bridge, conservative matches and PIT", { skip: !D
     await assert.rejects(store.ingestEntityResolution(revisionId, { ...exact, candidates: [{ ...exact.candidates[0], listingId: null }] }), /NEWS_ENTITY_SCOPE_INVALID/);
 
     const rollback = { ...exact, resolverVersion: "fixture-v2", reason: "ROLLBACK_PROBE" };
-    await assert.rejects(store.ingestEntityResolution(revisionId, rollback, { failurePoint: "before-commit" }), /INJECTED_FAILURE_BEFORE_COMMIT/);
+    stage("rollback start"); await assert.rejects(store.ingestEntityResolution(revisionId, rollback, { failurePoint: "before-commit" }), /INJECTED_FAILURE_BEFORE_COMMIT/); stage("rollback complete");
     assert.equal((await admin.query("select count(*)::int n from news_core.entity_link_revisions where resolver_version='fixture-v2' and publication_revision_id=$1", [revisionId])).rows[0].n, 0);
 
     const recovery = { ...exact, resolverVersion: "fixture-v3", reason: "RECOVERY_PROBE" };
-    await assert.rejects(store.ingestEntityResolution(revisionId, recovery, { failurePoint: "after-commit-before-finalize" }), /INJECTED_FAILURE_AFTER_COMMIT_BEFORE_FINALIZE/);
+    stage("recovery start"); await assert.rejects(store.ingestEntityResolution(revisionId, recovery, { failurePoint: "after-commit-before-finalize" }), /INJECTED_FAILURE_AFTER_COMMIT_BEFORE_FINALIZE/); stage("recovery committed");
     assert.equal((await admin.query("select count(*)::int n from news_core.entity_link_revisions where resolver_version='fixture-v3' and visibility_state='PENDING'", [])).rows[0].n, 1);
-    await store.getCheckpoint(scope);
+    stage("recover pending"); await store.getCheckpoint(scope); stage("recover complete");
     assert.equal((await store.readEntityLinksAsOf(new Date(Date.now() + 10_000).toISOString(), publicationId)).filter(row => row.resolverVersion === "fixture-v3").length, 1);
 
-    await admin.query("set role news_reader");
+    stage("reader role"); await admin.query("set role news_reader");
     await assert.rejects(admin.query("select * from news_core.entity_link_revisions"), /permission denied/);
-    const readerLink = await admin.query("select * from news_core.read_entity_links_as_of($1::timestamptz,$2::text)", [new Date(Date.now() + 10_000).toISOString(), publicationId]);
+    stage("reader function"); const readerLink = await admin.query("select * from news_core.read_entity_links_as_of($1::timestamptz,$2::text)", [new Date(Date.now() + 10_000).toISOString(), publicationId]); stage("reader function complete");
     assert.ok(readerLink.rows.length >= 3);
     await admin.query("reset role");
   } finally {
+    stage("cleanup");
     await admin.query("reset role").catch(() => undefined);
     await admin.query("delete from news_core.entity_link_evidence where entity_link_revision_id like $1", [`${publicationId}%`]).catch(() => undefined);
     await admin.query("delete from news_core.entity_link_candidates where entity_link_revision_id like $1", [`${publicationId}%`]).catch(() => undefined);
