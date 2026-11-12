@@ -118,9 +118,10 @@ returns trigger language plpgsql security definer set search_path=pg_catalog,new
 declare parent_known timestamptz;
 begin
   select as_known_at into parent_known from news_core.fact_revisions where fact_revision_id=new.fact_revision_id;
-  if parent_known is null or new.dependency_as_known_at > parent_known then
-    raise exception 'NEWS_FACT_FUTURE_DEPENDENCY' using errcode='22023';
-  end if;
+  if not found then raise exception 'NEWS_FACT_REVISION_NOT_FOUND' using errcode='23503'; end if;
+  -- The parent is open during the atomic write. Its server-assigned
+  -- as_known_at is established by finalize_fact_revision after all children
+  -- have been validated and inserted.
   return new;
 end
 $$;
@@ -177,14 +178,22 @@ create or replace function news_core.finalize_fact_revision(p_fact_revision_id t
 returns table(as_known_at timestamptz, committed_at timestamptz)
 language plpgsql volatile security definer set search_path=pg_catalog,news_core as $$
 declare dependency_max timestamptz;
+declare server_now timestamptz;
 begin
   perform set_config('news_core.fact_sealing','on',true);
-  select max(dependency_as_known_at) into dependency_max from fact_revision_dependencies where fact_revision_id=p_fact_revision_id;
+  select clock_timestamp() into server_now;
+  select greatest(
+    coalesce((select max(dependency_as_known_at) from fact_revision_dependencies where fact_revision_id=p_fact_revision_id), '-infinity'::timestamptz),
+    coalesce((select max(evidence_as_known_at) from fact_revision_evidence where fact_revision_id=p_fact_revision_id), '-infinity'::timestamptz),
+    coalesce((select max(as_known_at) from fact_revision_publications where fact_revision_id=p_fact_revision_id), '-infinity'::timestamptz),
+    coalesce((select max(as_known_at) from fact_revision_relations where fact_revision_id=p_fact_revision_id), '-infinity'::timestamptz)
+  ) into dependency_max;
+  if dependency_max > server_now then raise exception 'NEWS_FACT_FUTURE_DEPENDENCY' using errcode='22023'; end if;
   if not exists(select 1 from fact_revisions where fact_revision_id=p_fact_revision_id and finalized_at is null) then
     raise exception 'NEWS_FACT_REVISION_NOT_OPEN' using errcode='55006';
   end if;
   return query update fact_revisions
-    set as_known_at=greatest(clock_timestamp(),coalesce(dependency_max, '-infinity'::timestamptz)),
+    set as_known_at=greatest(server_now,coalesce(dependency_max, '-infinity'::timestamptz)),
         committed_at=clock_timestamp(), finalized_at=clock_timestamp()
     where fact_revision_id=p_fact_revision_id and finalized_at is null
     returning fact_revisions.as_known_at,fact_revisions.committed_at;
