@@ -12,6 +12,7 @@ const n2Migration = new URL("../../supabase/migrations/20261111170000_news_core_
 const n2bMigration = new URL("../../supabase/migrations/20261111180000_news_core_n2b_entity_links.sql", import.meta.url);
 
 test("News Core N2-B canonical bridge, conservative matches and PIT", { skip: !DB_URL && "NEWS_DATABASE_URL or TEST_DATABASE_URL required: real PG17 only" }, async () => {
+  const stage = (value: string) => console.log(`[N2B stage] ${value}`);
   const admin = new Client({ connectionString: DB_URL });
   const pool = new Pool({ connectionString: DB_URL, max: 8 });
   const store = new PostgresNewsStore(pool);
@@ -22,23 +23,23 @@ test("News Core N2-B canonical bridge, conservative matches and PIT", { skip: !D
   const revisionId = `${publicationId}:revision:1`;
   const now = new Date().toISOString();
   try {
-    await admin.connect();
+    stage("connect"); await admin.connect();
     assert.match((await admin.query<{ v: string }>("select current_setting('server_version') v")).rows[0].v, /^17\./);
-    await admin.query(await readFile(n1Migration, "utf8"));
+    stage("n1"); await admin.query(await readFile(n1Migration, "utf8"));
     await admin.query("insert into news_core.sources(source_id,provider_key,source_type) values ($1,'n2b-fixture','SEC_EDGAR')", [sourceId]);
     const frontier = await admin.query<{ frontier_id: string; published_at: Date }>("insert into news_core.visibility_frontiers default values returning frontier_id,published_at");
     await admin.query("insert into news_core.publications(publication_id,source_id,origin_fingerprint,external_id,original_url,title,first_seen_at,ingested_at,as_known_at,form,visibility_state,visibility_frontier_id) values ($1,$2,$3,$4,$5,$6,$7,$8,$8,'8-K','COMMITTED',$9)", [publicationId, sourceId, `origin-${publicationId}`, publicationId, "https://www.sec.gov/Archives/edgar/data/1/n2b.htm", "Issuer event", now, frontier.rows[0].published_at, frontier.rows[0].frontier_id]);
     await admin.query("insert into news_core.observations(observation_id,provider_key,provider_observation_key,publication_id,observed_at,retrieved_at,publisher_key,visibility_state,visibility_frontier_id) values ($1,'n2b-fixture',$2,$3,$4,$4,'n2b','COMMITTED',$5)", [`observation-${publicationId}`, `observation-${publicationId}`, publicationId, now, frontier.rows[0].frontier_id]);
-    await admin.query(await readFile(n2Migration, "utf8"));
-    await admin.query(await readFile(n2bMigration, "utf8"));
+    stage("n2"); await admin.query(await readFile(n2Migration, "utf8"));
+    stage("n2b"); await admin.query(await readFile(n2bMigration, "utf8"));
 
     const exact: MarketCoreResolutionV1 = {
       contractVersion: "market-core-identity-v1", resolverVersion: "fixture-v1", status: "EXACT", selectedCandidateRef: "listing-xnas", reason: "CANONICAL_REGISTRY_MATCH",
       candidates: [{ candidateRef: "listing-xnas", targetScope: "LISTING", relationType: "DIRECT", issuerId: "issuer-acme", instrumentId: "instrument-acme", listingId: "listing-xnas", evidence: [{ evidenceId: "evidence-cik", evidenceKind: "OFFICIAL_REGISTRY", sourceRef: "sec:cik:0000000001", observedAt: now, verified: true }] }],
     };
-    const exactOutcome = await store.ingestEntityResolution(revisionId, exact);
+    stage("exact start"); const exactOutcome = await store.ingestEntityResolution(revisionId, exact); stage("exact complete");
     assert.equal(exactOutcome.inserted, true);
-    const afterExact = await store.readEntityLinksAsOf(new Date(Date.now() + 10_000).toISOString(), publicationId);
+    stage("read exact"); const afterExact = await store.readEntityLinksAsOf(new Date(Date.now() + 10_000).toISOString(), publicationId); stage("read exact complete");
     assert.equal(afterExact.length, 1);
     assert.equal(afterExact[0].identityStatus, "EXACT");
     assert.equal(afterExact[0].issuerId, "issuer-acme");
@@ -56,7 +57,7 @@ test("News Core N2-B canonical bridge, conservative matches and PIT", { skip: !D
         { candidateRef: "listing-xlse", targetScope: "LISTING", relationType: "MENTION", issuerId: "issuer-other", instrumentId: "instrument-other", listingId: "listing-xlse", evidence: [{ evidenceId: "e-xlse", evidenceKind: "EXCHANGE_REFERENCE", sourceRef: "exchange:xlse", observedAt: now, verified: true }] },
       ],
     };
-    const ambiguousOutcome = await store.ingestEntityResolution(revisionId, ambiguous);
+    stage("ambiguous start"); const ambiguousOutcome = await store.ingestEntityResolution(revisionId, ambiguous); stage("ambiguous complete");
     assert.equal(ambiguousOutcome.inserted, true);
     const allLinks = await store.readEntityLinksAsOf(new Date(Date.now() + 10_000).toISOString(), publicationId);
     assert.deepEqual(allLinks.map(row => row.identityStatus), ["EXACT", "AMBIGUOUS"]);
