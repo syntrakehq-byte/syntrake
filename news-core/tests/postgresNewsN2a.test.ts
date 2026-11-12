@@ -96,7 +96,9 @@ test("News Core N2-A PostgreSQL 17 immutable revisions/PIT/concurrency", { skip:
       revision: { publicationRevisionId: `${publicationId}:revision:2`, publicationId, revisionNo: 2, title: "Corrected filing", publishedAt: null, form: "8-K", contentFingerprint: "sha256:corrected", sourceDocumentRef: "https://www.sec.gov/Archives/edgar/data/1/n2a-corrected.htm", qualityFlags: [], supersedesRevisionId: original[0].publicationRevisionId },
       provenance: { provenanceId: `${publicationId}:provenance:2`, publicationRevisionId: `${publicationId}:revision:2`, sourceId, providerKey: "n2a-provider", providerObservationKey: `observation-${publicationId}:revision-2`, originalUrl: "https://www.sec.gov/Archives/edgar/data/1/n2a-corrected.htm", sourceDocumentRef: "https://www.sec.gov/Archives/edgar/data/1/n2a-corrected.htm", retrievedAt: new Date().toISOString(), qualityFlags: [] },
     };
+    stage("insert revision 2 start");
     const inserted2 = await store.ingestPublicationRevision(revision2);
+    stage("insert revision 2 complete");
     assert.deepEqual(inserted2, { inserted: true, publicationRevisionId: revision2.revision.publicationRevisionId });
     const after2 = await store.readPublicationRevisionsAsOf(new Date(Date.now() + 5_000).toISOString(), publicationId);
     assert.deepEqual(after2.map(row => row.revisionNo), [1, 2], "T02 preserves the prior revision");
