@@ -53,8 +53,10 @@ export type ClassificationEvidenceV1 = Readonly<{
   contentLocator: string;
   excerpt: string | null;
   excerptHash: string | null;
+  hashSemantics: "LOCAL_CONTENT_HASH_ONLY" | "SOURCE_ASSERTED_HASH";
   structuredField: string | null;
   structuredValue: string | null;
+  structuredAuthority: "ADAPTER_ASSERTED" | "SOURCE_ASSERTED" | null;
   observedAt: string;
   retrievedAt: string;
   asKnownAt: string;
@@ -131,11 +133,11 @@ const RULES: readonly Rule[] = [
   { id: "N3A-GUIDANCE-CHANGE-001", category: "GUIDANCE_CHANGE", claimType: "DECLARATION", pattern: /\b(?:raises?|raised|lowers?|lowered|updates?|updated|revises?|revised)\b.{0,80}\bguidance\b/i, statement: text => text },
   { id: "N3A-EARNINGS-REPORTED-001", category: "EARNINGS", claimType: "DECLARATION", pattern: /\b(?:reports?|reported|announces?|announced)\b.{0,100}\b(?:earnings|revenue|net income|profit|loss)\b/i, statement: text => text },
   { id: "N3A-CENTRAL-BANK-DECISION-001", category: "CENTRAL_BANK_DECISION", claimType: "DECLARATION", pattern: /\b(?:raises?|raised|cuts?|cut|holds?|held|maintains?|maintained)\b.{0,80}\b(?:interest rate|policy rate|rates)\b/i, statement: text => text },
-  { id: "N3A-LEGAL-REGULATORY-001", category: "LEGAL_REGULATORY", claimType: "EVENT_OCCURRENCE", pattern: /\b(?:fined|sanctioned|charged|sued|settled|convicted|approved by|cleared by|ordered by)\b/i, statement: text => text },
-  { id: "N3A-OPERATIONAL-DISRUPTION-001", category: "OPERATIONAL_DISRUPTION", claimType: "EVENT_OCCURRENCE", pattern: /\b(?:outage|disruption|suspends?|suspended|halted|shutdown|service interruption)\b/i, statement: text => text },
+  { id: "N3A-LEGAL-REGULATORY-001", category: "LEGAL_REGULATORY", claimType: "EVENT_OCCURRENCE", pattern: /\b(?:was|were|is|are|has|have|had|received|fined|sanctioned|charged|sued|settled|convicted|approved|cleared|ordered)\b.{0,80}\b(?:fine|fined|sanction|sanctioned|charge|charged|lawsuit|sued|settlement|settled|convicted|approved|cleared|order|ordered)\b/i, statement: text => text },
+  { id: "N3A-OPERATIONAL-DISRUPTION-001", category: "OPERATIONAL_DISRUPTION", claimType: "EVENT_OCCURRENCE", pattern: /\b(?:experienced?|reported|occurred|there was|there were|suspended?|halted|shut(?:s|ting)? down)\b.{0,80}\b(?:outage|disruption|service interruption|shutdown)\b/i, statement: text => text },
   { id: "N3A-MACRO-RELEASE-001", category: "MACROECONOMIC_RELEASE", claimType: "DECLARATION", pattern: /\b(?:released?|release of|published?)\b.{0,100}\b(?:inflation|gdp|gross domestic product|unemployment|cpi|pmi)\b/i, statement: text => text },
   { id: "N3A-ETF-CHANGE-001", category: "ETF_FUND_CHANGE", claimType: "DECLARATION", pattern: /\b(?:etf|fund)\b.{0,100}\b(?:holdings|rebalanced|launched|launches|changed|changes)\b/i, statement: text => text },
-  { id: "N3A-GEOPOLITICAL-001", category: "GEOPOLITICAL_EVENT", claimType: "EVENT_OCCURRENCE", pattern: /\b(?:ceasefire|sanctions?|invasion|military operation|armed conflict|treaty)\b/i, statement: text => text },
+  { id: "N3A-GEOPOLITICAL-001", category: "GEOPOLITICAL_EVENT", claimType: "EVENT_OCCURRENCE", pattern: /\b(?:signed|declared|announced|imposed|lifted|entered|occurred|began|continued|reported)\b.{0,80}\b(?:ceasefire|sanctions?|invasion|military operation|armed conflict|treaty)\b/i, statement: text => text },
 ];
 
 const ISO = (value: unknown): value is string => typeof value === "string" && Number.isFinite(Date.parse(value));
@@ -148,7 +150,16 @@ const stable = (value: unknown): string => {
 };
 const normalizedText = (text: string): string => text.replace(/\s+/g, " ").trim();
 const hasFutureLanguage = (text: string, rule: Rule): boolean => Boolean(rule.futurePattern?.test(text) || /\b(?:will|plans? to|expects? to|scheduled to|set to)\b/i.test(text));
-const hasNegativeLanguage = (text: string): boolean => /\b(?:denies?|denied|rejects?|rejected|not|no|never)\b/i.test(text);
+const hasUncertainLanguage = (text: string): boolean => /\b(?:could|may|might|if|would|rumou?r|speculation|speculative|possibly|potentially|hypothetical)\b/i.test(text);
+const splitSentences = (text: string): string[] => text.split(/(?<=[.!?])\s+/).map(normalizedText).filter(Boolean);
+const negativeForRule = (text: string, match: RegExpExecArray, rule: Rule): boolean => {
+  const before = text.slice(Math.max(0, match.index - 80), match.index + match[0].length);
+  if (!/\b(?:denies?|denied|rejects?|rejected)\b/i.test(before)) return false;
+  if (rule.category === "DIVIDEND_ANNOUNCEMENT") return /\b(?:denies?|denied|rejects?|rejected)\b.{0,60}\bdividend\b/i.test(before);
+  if (rule.category === "MERGER_ACQUISITION") return /\b(?:denies?|denied|rejects?|rejected)\b.{0,60}\b(?:merger|acqui(?:re|sition)|takeover|combination)\b/i.test(before);
+  return true;
+};
+const logicalInputFingerprint = (input: ClassificationInputV1): string => sha256(stable({ contractVersion: input.contractVersion, taxonomyVersion: input.taxonomyVersion, ruleSetVersion: input.ruleSetVersion, publicationRevision: input.publicationRevision, evidence: input.evidence }));
 
 function validateInput(input: ClassificationInputV1): void {
   if (input.contractVersion !== FACT_CLASSIFICATION_CONTRACT_V1 || input.taxonomyVersion !== FACT_TAXONOMY_V1 || input.ruleSetVersion !== DETERMINISTIC_RULES_V1) throw new Error("N3A_CONTRACT_VERSION_UNSUPPORTED");
@@ -158,9 +169,12 @@ function validateInput(input: ClassificationInputV1): void {
   const ids = new Set<string>();
   for (const evidence of input.evidence) {
     if (ids.has(evidence.evidenceId) || evidence.publicationRevisionId !== revision.publicationRevisionId || !evidence.sourceDocumentRef || !evidence.contentLocator || !evidence.provenanceRef || !ISO(evidence.observedAt) || !ISO(evidence.retrievedAt) || !ISO(evidence.asKnownAt)) throw new Error("N3A_EVIDENCE_INVALID");
-    if (evidence.kind === "DOCUMENT_EXCERPT" && (!evidence.excerpt || !evidence.excerptHash)) throw new Error("N3A_EXCERPT_REQUIRED");
+    if (evidence.kind === "DOCUMENT_EXCERPT" && (!evidence.excerpt || !evidence.excerptHash || evidence.hashSemantics !== "LOCAL_CONTENT_HASH_ONLY")) throw new Error("N3A_EXCERPT_REQUIRED");
     if (evidence.kind === "STRUCTURED_FIELD" && (!evidence.structuredField || evidence.structuredValue === null)) throw new Error("N3A_STRUCTURED_FIELD_REQUIRED");
+    if (evidence.kind === "STRUCTURED_FIELD" && (evidence.structuredField === "occurredAt" || evidence.structuredField === "scheduledFor") && evidence.structuredAuthority !== "SOURCE_ASSERTED") throw new Error("N3A_STRUCTURED_AUTHORITY_REQUIRED");
     if (evidence.kind === "STRUCTURED_FIELD" && (evidence.structuredField === "occurredAt" || evidence.structuredField === "scheduledFor") && !ISO(evidence.structuredValue)) throw new Error("N3A_STRUCTURED_DATE_INVALID");
+    if (evidence.sourceDocumentRef !== revision.sourceDocumentRef) throw new Error("N3A_EVIDENCE_SOURCE_MISMATCH");
+    if (Date.parse(evidence.observedAt) > Date.parse(evidence.retrievedAt) || Date.parse(evidence.retrievedAt) > Date.parse(evidence.asKnownAt)) throw new Error("N3A_EVIDENCE_TIME_INVALID");
     if (Date.parse(evidence.asKnownAt) < Date.parse(revision.asKnownAt)) throw new Error("N3A_EVIDENCE_PRECEDES_REVISION");
     if (evidence.excerpt && evidence.excerptHash !== sha256(evidence.excerpt)) throw new Error("N3A_EXCERPT_HASH_MISMATCH");
     ids.add(evidence.evidenceId);
@@ -172,27 +186,33 @@ export class DeterministicFactClassifierV1 implements FactClassifierV1 {
   classify(input: ClassificationInputV1): ClassificationResultV1 {
     validateInput(input);
     const revision = input.publicationRevision;
-    const evidenceText = input.evidence.filter(evidence => evidence.kind === "DOCUMENT_EXCERPT" && evidence.excerpt).map(evidence => evidence.excerpt as string).join(" ");
+    const logicalFingerprint = logicalInputFingerprint(input);
+    const hasExcerpts = input.evidence.some(evidence => evidence.kind === "DOCUMENT_EXCERPT" && evidence.excerpt);
     const documentaryEvidence = input.evidence.filter(evidence => evidence.kind === "STRUCTURED_FIELD" && evidence.structuredField === "document-observation");
     const documentaryObservations = documentaryEvidence.length > 0 || input.evidence.some(evidence => evidence.kind === "STRUCTURED_FIELD" && evidence.structuredField === "form")
-      ? [{ publicationRevisionId: revision.publicationRevisionId, sourceDocumentRef: revision.sourceDocumentRef, form: revision.form, evidenceIds: input.evidence.filter(evidence => evidence.kind === "STRUCTURED_FIELD").map(evidence => evidence.evidenceId), inputFingerprint: sha256(stable(input)), reason: "document-observation-only" }]
+      ? [{ publicationRevisionId: revision.publicationRevisionId, sourceDocumentRef: revision.sourceDocumentRef, form: revision.form, evidenceIds: input.evidence.filter(evidence => evidence.kind === "STRUCTURED_FIELD").map(evidence => evidence.evidenceId), inputFingerprint: logicalFingerprint, reason: "document-observation-only" }]
       : [];
-    if (!evidenceText) return { proposals: [], documentaryObservations, refusalReasons: ["N3A_FACTUAL_EXCERPT_UNAVAILABLE"] };
 
-    const text = normalizedText(evidenceText);
     const proposals: ClassificationProposalV1[] = [];
-    for (const rule of RULES) {
-      if (!rule.pattern.test(text)) continue;
-      const future = hasFutureLanguage(text, rule);
-      const negative = hasNegativeLanguage(text);
-      const evidenceRefs = input.evidence.filter(evidence => evidence.kind === "DOCUMENT_EXCERPT" && evidence.excerpt).map(evidence => ({ evidenceId: evidence.evidenceId, sourceDocumentRef: evidence.sourceDocumentRef, contentLocator: evidence.contentLocator }));
+    for (const evidence of input.evidence.filter(item => item.kind === "DOCUMENT_EXCERPT" && item.excerpt)) {
+      for (const text of splitSentences(evidence.excerpt as string)) {
+        for (const rule of RULES) {
+          const match = rule.pattern.exec(text);
+          if (!match) continue;
+          const uncertain = hasUncertainLanguage(text);
+          const future = hasFutureLanguage(text, rule);
+          if (uncertain && rule.claimType === "EVENT_OCCURRENCE" && !future) continue;
+          const negative = negativeForRule(text, match, rule);
+          const evidenceRefs = [{ evidenceId: evidence.evidenceId, sourceDocumentRef: evidence.sourceDocumentRef, contentLocator: evidence.contentLocator }];
       const dependencyAsKnownAt = new Date(Math.max(Date.parse(revision.asKnownAt), ...input.evidence.map(evidence => Date.parse(evidence.asKnownAt)))).toISOString();
       const scheduledFor = input.evidence.find(evidence => evidence.kind === "STRUCTURED_FIELD" && evidence.structuredField === "scheduledFor")?.structuredValue ?? null;
       const occurredAt = input.evidence.find(evidence => evidence.kind === "STRUCTURED_FIELD" && evidence.structuredField === "occurredAt")?.structuredValue ?? null;
-      const proposalBase = { contractVersion: FACT_CLASSIFICATION_CONTRACT_V1, taxonomyVersion: FACT_TAXONOMY_V1, ruleSetVersion: DETERMINISTIC_RULES_V1, category: rule.category, claimType: future ? "SCHEDULED_EVENT" as const : negative ? "DENIAL" as const : rule.claimType, statement: rule.statement(text), subjectRef: null, objectRef: null, occurredAt: future ? null : occurredAt, scheduledFor: future ? scheduledFor : null, confirmationStatus: "REPORTED" as const, lifecycleStatus: "ACTIVE" as const, polarity: negative ? "NEGATIVE" as const : "AFFIRMATIVE" as const, publicationRevisionId: revision.publicationRevisionId, evidenceIds: evidenceRefs.map(evidence => evidence.evidenceId), evidenceRefs, dependencyAsKnownAt, proposedAt: input.proposedAt, ruleId: rule.id, justification: `Matched ${rule.id} against a persisted document excerpt.`, qualityFlags: [...revision.qualityFlags], inputFingerprint: "" };
-      proposals.push({ ...proposalBase, inputFingerprint: sha256(stable(proposalBase)) });
+          const proposalBase = { contractVersion: FACT_CLASSIFICATION_CONTRACT_V1, taxonomyVersion: FACT_TAXONOMY_V1, ruleSetVersion: DETERMINISTIC_RULES_V1, category: rule.category, claimType: future ? "SCHEDULED_EVENT" as const : negative ? "DENIAL" as const : rule.claimType, statement: rule.statement(text), subjectRef: null, objectRef: null, occurredAt: future ? null : occurredAt, scheduledFor: future ? scheduledFor : null, confirmationStatus: "REPORTED" as const, lifecycleStatus: "ACTIVE" as const, polarity: negative ? "NEGATIVE" as const : "AFFIRMATIVE" as const, publicationRevisionId: revision.publicationRevisionId, evidenceIds: evidenceRefs.map(item => item.evidenceId), evidenceRefs, dependencyAsKnownAt, ruleId: rule.id, justification: `Matched ${rule.id} against one persisted evidence unit.`, qualityFlags: [...revision.qualityFlags, "EXCERPT_HASH_LOCAL_ONLY"], inputFingerprint: logicalFingerprint };
+          proposals.push({ ...proposalBase, proposedAt: input.proposedAt, inputFingerprint: sha256(stable(proposalBase)) });
+        }
+      }
     }
-    return { proposals, documentaryObservations, refusalReasons: proposals.length === 0 ? ["N3A_NO_CONTROLLED_RULE_MATCH"] : [] };
+    return { proposals, documentaryObservations, refusalReasons: proposals.length === 0 ? [hasExcerpts ? "N3A_NO_CONTROLLED_RULE_MATCH" : "N3A_FACTUAL_EXCERPT_UNAVAILABLE"] : [] };
   }
 }
 
