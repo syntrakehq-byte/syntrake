@@ -124,9 +124,20 @@ export class PostgresNewsStore {
       }
       if (onFrontierCreated) await onFrontierCreated();
       if (delayBeforeCommitMs > 0) await new Promise(resolve => setTimeout(resolve, delayBeforeCommitMs));
+      let dependencyMinimum = minimumPublishedAt;
+      if (entityTables) {
+        const dependency = await client.query<{ minimum: Date | string | null }>(
+          `select max(r.as_known_at) as minimum
+             from news_core.entity_link_revisions l
+             join news_core.publication_revisions r on r.publication_revision_id=l.publication_revision_id
+            where l.pending_transaction_id=$1 and l.visibility_state='PENDING'`, [txid],
+        );
+        const parentMinimum = dependency.rows[0]?.minimum ? iso(dependency.rows[0].minimum) : null;
+        if (parentMinimum && (!dependencyMinimum || Date.parse(parentMinimum) > Date.parse(dependencyMinimum))) dependencyMinimum = parentMinimum;
+      }
       const published = await client.query<{ published_at: Date | string }>(
         "select news_core.seal_visibility_frontier($1::bigint,$2::timestamptz) as published_at",
-        [frontierId, minimumPublishedAt && Date.parse(minimumPublishedAt) > Date.parse(availabilityAt) ? minimumPublishedAt : availabilityAt],
+        [frontierId, dependencyMinimum && Date.parse(dependencyMinimum) > Date.parse(availabilityAt) ? dependencyMinimum : availabilityAt],
       );
       const publishedAt = iso(published.rows[0].published_at);
       await client.query(
@@ -455,6 +466,13 @@ export class PostgresNewsStore {
   async readEntityLinksAsOf(asOf: string, publicationId?: string): Promise<readonly Record<string, unknown>[]> {
     const result = await this.pool.query(
       "select * from news_core.read_entity_links_as_of($1::timestamptz,$2::text)", [asOf, publicationId ?? null],
+    );
+    return result.rows.map(row => ({ ...row, asKnownAt: optionalIso(row.asKnownAt) }));
+  }
+
+  async readEntityLinkHistoryAsOf(asOf: string, publicationId?: string): Promise<readonly Record<string, unknown>[]> {
+    const result = await this.pool.query(
+      "select * from news_core.read_entity_link_history_as_of($1::timestamptz,$2::text)", [asOf, publicationId ?? null],
     );
     return result.rows.map(row => ({ ...row, asKnownAt: optionalIso(row.asKnownAt) }));
   }

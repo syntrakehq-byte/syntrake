@@ -61,12 +61,13 @@ export function validateEntityResolution(query: EntityResolutionQuery, result: M
     if (!validId(candidate.candidateRef) || !["ISSUER", "INSTRUMENT", "LISTING"].includes(candidate.targetScope) || !["DIRECT", "MENTION", "SUBSIDIARY", "INDIRECT_EXPOSURE"].includes(candidate.relationType)) throw new Error("NEWS_ENTITY_CANDIDATE_INVALID");
     if (candidateRefs.has(candidate.candidateRef)) throw new Error("NEWS_ENTITY_CANDIDATE_DUPLICATE");
     candidateRefs.add(candidate.candidateRef);
-    if (candidate.targetScope === "ISSUER" && (candidate.instrumentId !== null || candidate.listingId !== null) || candidate.targetScope === "LISTING" && candidate.instrumentId === null || candidate.targetScope !== "ISSUER" && candidate.targetScope !== "LISTING" && candidate.instrumentId === null) throw new Error("NEWS_ENTITY_SCOPE_INVALID");
-    if (candidate.targetScope === "ISSUER" && candidate.issuerId === null || candidate.targetScope === "INSTRUMENT" && candidate.instrumentId === null || candidate.targetScope === "LISTING" && candidate.listingId === null) throw new Error("NEWS_ENTITY_SCOPE_INVALID");
+    if (candidate.targetScope === "ISSUER" && (candidate.instrumentId !== null || candidate.listingId !== null || !validId(candidate.issuerId))) throw new Error("NEWS_ENTITY_SCOPE_INVALID");
+    if (candidate.targetScope === "INSTRUMENT" && (candidate.listingId !== null || !validId(candidate.instrumentId) || (candidate.issuerId !== null && !validId(candidate.issuerId)))) throw new Error("NEWS_ENTITY_SCOPE_INVALID");
+    if (candidate.targetScope === "LISTING" && (!validId(candidate.instrumentId) || !validId(candidate.listingId) || (candidate.issuerId !== null && !validId(candidate.issuerId)))) throw new Error("NEWS_ENTITY_SCOPE_INVALID");
     if (!Array.isArray(candidate.evidence) || candidate.evidence.length === 0) throw new Error("NEWS_ENTITY_EVIDENCE_MISSING");
     const evidenceIds = new Set<string>();
     for (const evidence of candidate.evidence) {
-      if (!validId(evidence.evidenceId) || !validId(evidence.sourceRef) || !validIso(evidence.observedAt) || typeof evidence.verified !== "boolean" || evidenceIds.has(evidence.evidenceId)) throw new Error("NEWS_ENTITY_EVIDENCE_INVALID");
+      if (!validId(evidence.evidenceId) || !validId(evidence.sourceRef) || !validIso(evidence.observedAt) || Date.parse(evidence.observedAt) > Date.now() || typeof evidence.verified !== "boolean" || evidenceIds.has(evidence.evidenceId)) throw new Error("NEWS_ENTITY_EVIDENCE_INVALID");
       evidenceIds.add(evidence.evidenceId);
     }
   }

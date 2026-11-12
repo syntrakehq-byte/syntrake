@@ -58,11 +58,18 @@ test("News Core N2-B canonical bridge, conservative matches and PIT", { skip: !D
     };
     const ambiguousOutcome = await store.ingestEntityResolution(revisionId, ambiguous);
     assert.equal(ambiguousOutcome.inserted, true);
-    const allLinks = await store.readEntityLinksAsOf(new Date(Date.now() + 10_000).toISOString(), publicationId);
-    assert.deepEqual(allLinks.map(row => row.identityStatus), ["EXACT", "AMBIGUOUS"]);
-    assert.equal(allLinks[1].listingId, null);
-    const beforeAmbiguous = new Date(Date.parse(String(allLinks[1].asKnownAt)) - 1).toISOString();
+    const effectiveLinks = await store.readEntityLinksAsOf(new Date(Date.now() + 10_000).toISOString(), publicationId);
+    assert.deepEqual(effectiveLinks.filter(row => row.resolverVersion === "fixture-v1").map(row => row.identityStatus), ["AMBIGUOUS"]);
+    assert.equal(effectiveLinks.find(row => row.resolverVersion === "fixture-v1")?.listingId, null);
+    const historyLinks = await store.readEntityLinkHistoryAsOf(new Date(Date.now() + 10_000).toISOString(), publicationId);
+    assert.deepEqual(historyLinks.filter(row => row.resolverVersion === "fixture-v1").map(row => row.identityStatus), ["EXACT", "AMBIGUOUS"]);
+    const beforeAmbiguous = new Date(Date.parse(String(historyLinks.find(row => row.identityStatus === "AMBIGUOUS" && row.resolverVersion === "fixture-v1")?.asKnownAt)) - 1).toISOString();
     assert.deepEqual((await store.readEntityLinksAsOf(beforeAmbiguous, publicationId)).map(row => row.identityStatus), ["EXACT"]);
+
+    const candidateId = (await admin.query<{ candidate_id: string }>("select candidate_id from news_core.entity_link_candidates where entity_link_revision_id=$1 limit 1", [exactOutcome.entityLinkRevisionId])).rows[0].candidate_id;
+    await admin.query("set role news_service");
+    await assert.rejects(admin.query("update news_core.entity_link_candidates set listing_id='changed' where candidate_id=$1", [candidateId]), /permission denied|NEWS_ENTITY_CANDIDATE_IMMUTABLE/);
+    await admin.query("reset role");
 
     const issuerOnly: MarketCoreResolutionV1 = {
       contractVersion: "market-core-identity-v1", resolverVersion: "fixture-issuer", status: "EXACT", selectedCandidateRef: "issuer-acme", reason: "ISSUER_ONLY_MATCH",
@@ -86,6 +93,8 @@ test("News Core N2-B canonical bridge, conservative matches and PIT", { skip: !D
     validateEntityResolution({ publicationId, publicationRevisionId: revisionId, title: "Issuer event", sourceDocumentRef: "https://www.sec.gov/Archives/edgar/data/1/n2b.htm", publishedAt: null }, unresolved);
     await assert.rejects(Promise.resolve().then(() => validateEntityResolution({ publicationId, publicationRevisionId: revisionId, title: "Issuer event", sourceDocumentRef: "https://www.sec.gov/Archives/edgar/data/1/n2b.htm", publishedAt: null }, { ...exact, selectedCandidateRef: null })), /NEWS_ENTITY_EXACT_SELECTION_INVALID/);
     await assert.rejects(store.ingestEntityResolution(revisionId, { ...exact, candidates: [{ ...exact.candidates[0], listingId: null }] }), /NEWS_ENTITY_SCOPE_INVALID/);
+    await assert.rejects(store.ingestEntityResolution(revisionId, { ...exact, resolverVersion: "fixture-future", candidates: [{ ...exact.candidates[0], evidence: [{ ...exact.candidates[0].evidence[0], observedAt: "2099-01-01T00:00:00.000Z" }] }] }), /NEWS_ENTITY_EVIDENCE_INVALID/);
+    await assert.rejects(store.ingestEntityResolution(revisionId, { ...exact, resolverVersion: "fixture-empty-id", candidates: [{ ...exact.candidates[0], instrumentId: "" }] }), /NEWS_ENTITY_SCOPE_INVALID/);
 
     const rollback = { ...exact, resolverVersion: "fixture-v2", reason: "ROLLBACK_PROBE" };
     await assert.rejects(store.ingestEntityResolution(revisionId, rollback, { failurePoint: "before-commit" }), /INJECTED_FAILURE_BEFORE_COMMIT/);

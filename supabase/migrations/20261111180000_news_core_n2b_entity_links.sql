@@ -19,10 +19,13 @@ create table if not exists news_core.entity_link_revisions (
   as_known_at timestamptz,
   supersedes_entity_link_revision_id text references news_core.entity_link_revisions(entity_link_revision_id),
   unique (publication_revision_id, resolver_version, resolution_fingerprint),
+  check (issuer_id is null or issuer_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'),
+  check (instrument_id is null or instrument_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'),
+  check (listing_id is null or listing_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'),
   check ((identity_status = 'EXACT' and
     ((target_scope = 'ISSUER' and issuer_id is not null and instrument_id is null and listing_id is null) or
      (target_scope = 'INSTRUMENT' and instrument_id is not null and listing_id is null) or
-     (target_scope = 'LISTING' and listing_id is not null))) or
+     (target_scope = 'LISTING' and instrument_id is not null and listing_id is not null))) or
     (identity_status <> 'EXACT' and issuer_id is null and instrument_id is null and listing_id is null))
 );
 
@@ -41,7 +44,13 @@ create table if not exists news_core.entity_link_candidates (
   instrument_id text,
   listing_id text,
   candidate_payload jsonb not null,
-  unique (entity_link_revision_id, candidate_ref)
+  unique (entity_link_revision_id, candidate_ref),
+  check (issuer_id is null or issuer_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'),
+  check (instrument_id is null or instrument_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'),
+  check (listing_id is null or listing_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'),
+  check ((target_scope='ISSUER' and issuer_id is not null and instrument_id is null and listing_id is null)
+      or (target_scope='INSTRUMENT' and instrument_id is not null and listing_id is null)
+      or (target_scope='LISTING' and instrument_id is not null and listing_id is not null))
 );
 
 create table if not exists news_core.entity_link_evidence (
@@ -70,15 +79,26 @@ begin
   return new;
 end $$;
 
+create or replace function news_core.reject_entity_link_candidate_mutation()
+returns trigger language plpgsql security definer set search_path = pg_catalog, news_core as $$
+begin
+  raise exception 'NEWS_ENTITY_CANDIDATE_IMMUTABLE';
+end $$;
+
 drop trigger if exists entity_link_revision_append_only on news_core.entity_link_revisions;
 create trigger entity_link_revision_append_only before update on news_core.entity_link_revisions
 for each row execute function news_core.reject_committed_entity_link_mutation();
 drop trigger if exists entity_link_evidence_append_only on news_core.entity_link_evidence;
 create trigger entity_link_evidence_append_only before update on news_core.entity_link_evidence
 for each row execute function news_core.reject_committed_entity_link_mutation();
+drop trigger if exists entity_link_candidate_append_only on news_core.entity_link_candidates;
+create trigger entity_link_candidate_append_only before update on news_core.entity_link_candidates
+for each row execute function news_core.reject_entity_link_candidate_mutation();
 
 revoke all on news_core.entity_link_revisions, news_core.entity_link_candidates, news_core.entity_link_evidence from public, news_reader;
-grant select, insert, update on news_core.entity_link_revisions, news_core.entity_link_candidates, news_core.entity_link_evidence to news_service;
+grant select, insert, update on news_core.entity_link_revisions, news_core.entity_link_evidence to news_service;
+grant select, insert on news_core.entity_link_candidates to news_service;
+revoke update, delete on news_core.entity_link_candidates from news_service;
 
 create or replace function news_core.seal_visibility_frontier(p_frontier_id bigint, p_published_at timestamptz)
 returns timestamptz language sql volatile security definer set search_path = pg_catalog, news_core as $$
@@ -96,7 +116,7 @@ $$;
 revoke all on function news_core.seal_visibility_frontier(bigint,timestamptz) from public;
 grant execute on function news_core.seal_visibility_frontier(bigint,timestamptz) to news_service;
 
-create or replace function news_core.read_entity_links_as_of(p_as_of timestamptz, p_publication_id text default null)
+create or replace function news_core.read_entity_link_history_as_of(p_as_of timestamptz, p_publication_id text default null)
 returns table(
   "entityLinkRevisionId" text, "publicationRevisionId" text, "revisionNo" integer,
   "targetScope" text, "identityStatus" text, "relationType" text,
@@ -110,10 +130,36 @@ language sql stable security definer set search_path = pg_catalog, news_core as 
     join news_core.publication_revisions r on r.publication_revision_id=l.publication_revision_id
     join news_core.publications p on p.publication_id=r.publication_id
     join news_core.visibility_frontiers f on f.frontier_id=l.visibility_frontier_id
+    join news_core.visibility_frontiers rf on rf.frontier_id=r.visibility_frontier_id
+    join news_core.visibility_frontiers pf on pf.frontier_id=p.visibility_frontier_id
    where l.visibility_state='COMMITTED' and r.visibility_state='COMMITTED' and p.visibility_state='COMMITTED'
-     and l.as_known_at is not null and l.as_known_at <= p_as_of and f.published_at <= p_as_of
+     and l.as_known_at is not null and l.as_known_at <= p_as_of
+     and r.as_known_at is not null and r.as_known_at <= p_as_of
+     and p.as_known_at is not null and p.as_known_at <= p_as_of
+     and f.published_at <= p_as_of and rf.published_at <= p_as_of and pf.published_at <= p_as_of
+     and not exists (
+       select 1
+         from news_core.entity_link_evidence e
+         join news_core.visibility_frontiers ef on ef.frontier_id=e.visibility_frontier_id
+        where e.entity_link_revision_id=l.entity_link_revision_id
+          and (e.visibility_state <> 'COMMITTED' or e.as_known_at is null or e.as_known_at > p_as_of or ef.published_at > p_as_of)
+     )
      and (p_publication_id is null or r.publication_id=p_publication_id)
    order by l.publication_revision_id,l.revision_no
 $$;
+create or replace function news_core.read_entity_links_as_of(p_as_of timestamptz, p_publication_id text default null)
+returns table(
+  "entityLinkRevisionId" text, "publicationRevisionId" text, "revisionNo" integer,
+  "targetScope" text, "identityStatus" text, "relationType" text,
+  "issuerId" text, "instrumentId" text, "listingId" text,
+  "resolverVersion" text, reason text, "asKnownAt" timestamptz
+)
+language sql stable security definer set search_path = pg_catalog, news_core as $$
+  select distinct on (h."publicationRevisionId",h."resolverVersion") h.*
+    from news_core.read_entity_link_history_as_of(p_as_of,p_publication_id) h
+   order by h."publicationRevisionId",h."resolverVersion",h."revisionNo" desc
+$$;
+revoke all on function news_core.read_entity_link_history_as_of(timestamptz,text) from public;
+grant execute on function news_core.read_entity_link_history_as_of(timestamptz,text) to news_reader, news_service;
 revoke all on function news_core.read_entity_links_as_of(timestamptz,text) from public;
 grant execute on function news_core.read_entity_links_as_of(timestamptz,text) to news_reader, news_service;
