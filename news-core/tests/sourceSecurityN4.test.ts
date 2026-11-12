@@ -9,6 +9,15 @@ test("N4 source policy rejects unsafe schemes, hosts and private literals", asyn
   await assert.rejects(assertSafeExternalUrl("https://example.invalid/a"), /NEWS_SOURCE_URL_NOT_ALLOWED/);
 });
 
+test("N4 source policy classifies special IPv4/IPv6 results without DNS", async () => {
+  const resolver = (address: string) => async () => [{ address, family: (address.includes(":") ? 6 : 4) as 4 | 6 }];
+  for (const address of ["100.64.0.1", "192.0.0.1", "::", "::1", "fe80::1", "fd00::1", "::ffff:127.0.0.1", "::ffff:192.168.1.1"]) {
+    await assert.rejects(assertSafeExternalUrl("https://data.sec.gov/a", undefined, resolver(address)), /NEWS_SOURCE_PRIVATE_ADDRESS/);
+  }
+  await assert.doesNotReject(assertSafeExternalUrl("https://data.sec.gov/a", undefined, resolver("8.8.8.8")));
+  await assert.doesNotReject(assertSafeExternalUrl("https://data.sec.gov/a", undefined, resolver("2001:4860:4860::8888")));
+});
+
 test("N4 source policy validates redirects before following them", async () => {
   const response = new Response(null, { status: 302, headers: { location: "https://127.0.0.1/internal" } });
   await assert.rejects(fetchSafeExternal("https://data.sec.gov/submissions/CIK0000320193.json", undefined, async () => response), /NEWS_SOURCE_(PRIVATE_ADDRESS|URL_NOT_ALLOWED)/);

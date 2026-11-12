@@ -58,6 +58,6 @@ jobs:
       - run: npm run test:news:n4:live
         env:
           N4_REAL_SOURCE: "1"
-          SEC_USER_AGENT: "syntrake-n4-ci/1.0 security@syntrake.example"
+          SEC_USER_AGENT: "SYNTRAKE N4 CI/1.0 security@syntrake.com"
       - run: npx tsc --noEmit
       - run: npm run lint -- --quiet
