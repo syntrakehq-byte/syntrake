@@ -20,8 +20,11 @@ test("News Core N2-B canonical bridge, conservative matches and PIT", { skip: !D
   const sourceId = `n2b-source-${suffix}`;
   const scope = `n2b-scope-${suffix}`;
   const revisionId = `${publicationId}:revision:1`;
+  const futurePublicationId = `n2b-future-publication-${suffix}`;
+  const futureRevisionId = `${futurePublicationId}:revision:1`;
   const now = new Date().toISOString();
-  let dependencyFutureFrontierId: string | null = null;
+  const future = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  let futureFrontierId: string | null = null;
   try {
     await admin.connect();
     assert.match((await admin.query<{ v: string }>("select current_setting('server_version') v")).rows[0].v, /^17\./);
@@ -30,6 +33,9 @@ test("News Core N2-B canonical bridge, conservative matches and PIT", { skip: !D
     const frontier = await admin.query<{ frontier_id: string; published_at: Date }>("insert into news_core.visibility_frontiers default values returning frontier_id,published_at");
     await admin.query("insert into news_core.publications(publication_id,source_id,origin_fingerprint,external_id,original_url,title,first_seen_at,ingested_at,as_known_at,form,visibility_state,visibility_frontier_id) values ($1,$2,$3,$4,$5,$6,$7,$8,$8,'8-K','COMMITTED',$9)", [publicationId, sourceId, `origin-${publicationId}`, publicationId, "https://www.sec.gov/Archives/edgar/data/1/n2b.htm", "Issuer event", now, frontier.rows[0].published_at, frontier.rows[0].frontier_id]);
     await admin.query("insert into news_core.observations(observation_id,provider_key,provider_observation_key,publication_id,observed_at,retrieved_at,publisher_key,visibility_state,visibility_frontier_id) values ($1,'n2b-fixture',$2,$3,$4,$4,'n2b','COMMITTED',$5)", [`observation-${publicationId}`, `observation-${publicationId}`, publicationId, now, frontier.rows[0].frontier_id]);
+    const futureFrontier = await admin.query<{ frontier_id: string }>("insert into news_core.visibility_frontiers(published_at) values ($1::timestamptz) returning frontier_id", [future]);
+    futureFrontierId = futureFrontier.rows[0].frontier_id;
+    await admin.query("insert into news_core.publications(publication_id,source_id,origin_fingerprint,external_id,original_url,title,first_seen_at,ingested_at,as_known_at,form,visibility_state,visibility_frontier_id) values ($1,$2,$3,$4,$5,$6,$7,$8,$8,'8-K','COMMITTED',$9)", [futurePublicationId, sourceId, `origin-${futurePublicationId}`, futurePublicationId, "https://www.sec.gov/Archives/edgar/data/1/future.htm", "Future parent event", now, future, future, futureFrontierId]);
     await admin.query(await readFile(n2Migration, "utf8"));
     await admin.query(await readFile(n2bMigration, "utf8"));
 
@@ -104,14 +110,16 @@ test("News Core N2-B canonical bridge, conservative matches and PIT", { skip: !D
     const recovery = { ...exact, resolverVersion: "fixture-v3", reason: "RECOVERY_PROBE" };
     await assert.rejects(store.ingestEntityResolution(revisionId, recovery, { failurePoint: "after-commit-before-finalize" }), /INJECTED_FAILURE_AFTER_COMMIT_BEFORE_FINALIZE/);
     assert.equal((await admin.query("select count(*)::int n from news_core.entity_link_revisions where resolver_version='fixture-v3' and visibility_state='PENDING'", [])).rows[0].n, 1);
-    const future = new Date(Date.now() + 60 * 60 * 1000).toISOString();
-    const futureFrontier = await admin.query<{ frontier_id: string }>("insert into news_core.visibility_frontiers(published_at) values ($1::timestamptz) returning frontier_id", [future]);
-    dependencyFutureFrontierId = futureFrontier.rows[0].frontier_id;
-    await admin.query("update news_core.publication_revisions set as_known_at=$1::timestamptz,visibility_frontier_id=$2 where publication_revision_id=$3", [future, dependencyFutureFrontierId, revisionId]);
     await store.getCheckpoint(scope);
-    const recoveredDependency = await admin.query<{ as_known_at: Date }>("select as_known_at from news_core.entity_link_revisions where entity_link_revision_id=$1", [`${revisionId}:entity-link:fixture-v3:1`]);
+    assert.equal((await store.readEntityLinksAsOf(new Date(Date.now() + 10_000).toISOString(), publicationId)).filter(row => row.resolverVersion === "fixture-v3").length, 1);
+
+    const futureRecovery = { ...exact, resolverVersion: "fixture-future-recovery", reason: "FUTURE_PARENT_RECOVERY" };
+    await assert.rejects(store.ingestEntityResolution(futureRevisionId, futureRecovery, { failurePoint: "after-commit-before-finalize" }), /INJECTED_FAILURE_AFTER_COMMIT_BEFORE_FINALIZE/);
+    await store.getCheckpoint(scope);
+    const recoveredDependency = await admin.query<{ as_known_at: Date }>("select as_known_at from news_core.entity_link_revisions where entity_link_revision_id=$1", [`${futureRevisionId}:entity-link:fixture-future-recovery:1`]);
     assert.ok(recoveredDependency.rows[0].as_known_at.getTime() >= Date.parse(future), "recovery must retain the parent's future availability boundary");
-    assert.deepEqual((await store.readEntityLinksAsOf(new Date(Date.now() + 10_000).toISOString(), publicationId)).filter(row => row.resolverVersion === "fixture-v3"), []);
+    assert.deepEqual((await store.readEntityLinksAsOf(new Date(Date.now() + 10_000).toISOString(), futurePublicationId)).filter(row => row.resolverVersion === "fixture-future-recovery"), []);
+    assert.equal((await store.readEntityLinksAsOf(new Date(Date.parse(future) + 10_000).toISOString(), futurePublicationId)).filter(row => row.resolverVersion === "fixture-future-recovery").length, 1);
 
     await admin.query("set role news_reader");
     await assert.rejects(admin.query("select * from news_core.entity_link_revisions"), /permission denied/);
@@ -120,14 +128,17 @@ test("News Core N2-B canonical bridge, conservative matches and PIT", { skip: !D
     await admin.query("reset role");
   } finally {
     await admin.query("reset role").catch(() => undefined);
-    await admin.query("delete from news_core.entity_link_evidence where entity_link_revision_id like $1", [`${publicationId}%`]).catch(() => undefined);
-    await admin.query("delete from news_core.entity_link_candidates where entity_link_revision_id like $1", [`${publicationId}%`]).catch(() => undefined);
-    await admin.query("delete from news_core.entity_link_revisions where publication_revision_id=$1", [revisionId]).catch(() => undefined);
+    await admin.query("delete from news_core.entity_link_evidence where entity_link_revision_id like $1 or entity_link_revision_id like $2", [`${publicationId}%`, `${futurePublicationId}%`]).catch(() => undefined);
+    await admin.query("delete from news_core.entity_link_candidates where entity_link_revision_id like $1 or entity_link_revision_id like $2", [`${publicationId}%`, `${futurePublicationId}%`]).catch(() => undefined);
+    await admin.query("delete from news_core.entity_link_revisions where publication_revision_id=$1 or publication_revision_id=$2", [revisionId, futureRevisionId]).catch(() => undefined);
     await admin.query("delete from news_core.publication_revision_provenance where publication_revision_id=$1", [revisionId]).catch(() => undefined);
+    await admin.query("delete from news_core.publication_revision_provenance where publication_revision_id=$1", [futureRevisionId]).catch(() => undefined);
     await admin.query("delete from news_core.publication_revisions where publication_id=$1", [publicationId]).catch(() => undefined);
-    if (dependencyFutureFrontierId) await admin.query("delete from news_core.visibility_frontiers where frontier_id=$1", [dependencyFutureFrontierId]).catch(() => undefined);
     await admin.query("delete from news_core.observations where publication_id=$1", [publicationId]).catch(() => undefined);
     await admin.query("delete from news_core.publications where publication_id=$1", [publicationId]).catch(() => undefined);
+    await admin.query("delete from news_core.publication_revisions where publication_id=$1", [futurePublicationId]).catch(() => undefined);
+    await admin.query("delete from news_core.publications where publication_id=$1", [futurePublicationId]).catch(() => undefined);
+    if (futureFrontierId) await admin.query("delete from news_core.visibility_frontiers where frontier_id=$1", [futureFrontierId]).catch(() => undefined);
     await admin.query("delete from news_core.sources where source_id=$1", [sourceId]).catch(() => undefined);
     await Promise.all([store.close(), admin.end()]);
   }
