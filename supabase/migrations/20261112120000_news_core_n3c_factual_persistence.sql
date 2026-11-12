@@ -224,4 +224,4 @@ language sql stable security definer set search_path=pg_catalog,news_core as $$
     from visible where n=1 order by fact_event_id
 $$;
 revoke all on function news_core.read_fact_revisions_as_of(timestamptz) from public;
-grant execute on function news_core.read_fact_revisions_as_of(timestamptz) to news_reader,news_service;
+grant execute on function news_core.read_fact_revisions_as_of(timestamptz) to news_reader,news_service,news_factual_writer;
