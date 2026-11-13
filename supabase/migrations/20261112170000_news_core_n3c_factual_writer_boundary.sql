@@ -13,6 +13,7 @@ end $$;
 
 alter table news_core.fact_revisions add column if not exists staged_txid bigint;
 alter table news_core.fact_revisions add column if not exists published_txid bigint;
+alter table news_core.fact_revisions add column if not exists visible_txid bigint;
 
 create table if not exists news_core.fact_pipeline_attestations (
   attestation_id text primary key,
@@ -93,6 +94,7 @@ begin
      and new.quality_flags is not distinct from old.quality_flags and new.supersedes_revision_id is not distinct from old.supersedes_revision_id
      and new.staged_txid is not distinct from old.staged_txid
      and (old.finalized_at is null or new.published_txid is not distinct from old.published_txid)
+     and (old.committed_at is null or new.visible_txid is not distinct from old.visible_txid)
      and ((old.finalized_at is null and new.finalized_at is not null)
        or (old.finalized_at is not null and old.committed_at is null and new.finalized_at is not null and new.committed_at is not null)) then
     return new;
@@ -373,7 +375,7 @@ begin
     raise exception 'NEWS_FACT_PUBLISH_VISIBLE_SAME_TRANSACTION' using errcode='55006';
   end if;
   perform set_config('news_core.fact_sealing','on',true);
-  return query update news_core.fact_revisions fr set committed_at=clock_timestamp()
+  return query update news_core.fact_revisions fr set committed_at=clock_timestamp(),visible_txid=txid_current()
    where fr.fact_revision_id=p_fact_revision_id and fr.finalized_at is not null and fr.committed_at is null
    returning fr.committed_at;
 end
