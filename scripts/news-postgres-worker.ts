@@ -12,7 +12,13 @@ const store = new PostgresNewsStore(pool);
 const factualVerifierUrl = process.env.NEWS_PIPELINE_VERIFIER_DATABASE_URL;
 const factualAttestorUrl = process.env.NEWS_FACTUAL_ATTESTOR_DATABASE_URL;
 const factualWriterUrl = process.env.NEWS_FACTUAL_WRITER_DATABASE_URL;
-const factualPipeline = factualVerifierUrl && factualAttestorUrl && factualWriterUrl
+const executionMode = process.env.NEWS_EXECUTION_MODE ?? "FACTUAL";
+const factualConfigured = Boolean(factualVerifierUrl && factualAttestorUrl && factualWriterUrl);
+if (executionMode !== "FACTUAL" && executionMode !== "N1_ONLY") throw new Error("NEWS_EXECUTION_MODE_INVALID");
+if (executionMode === "FACTUAL" && !factualConfigured) throw new Error("NEWS_FACTUAL_PIPELINE_CONFIG_INCOMPLETE");
+if (executionMode === "N1_ONLY" && factualConfigured) throw new Error("NEWS_N1_ONLY_WITH_FACTUAL_CREDENTIALS");
+console.log(`NEWS_EXECUTION_MODE=${executionMode}`);
+const factualPipeline = executionMode === "FACTUAL"
   ? new NewsFactualPipelineV1({ news: store, verifierPool: new Pool({ connectionString: factualVerifierUrl, max: 2, application_name: "syntrake-news-verifier" }), attestorPool: new Pool({ connectionString: factualAttestorUrl, max: 2, application_name: "syntrake-news-attestor" }), writerPool: new Pool({ connectionString: factualWriterUrl, max: 2, application_name: "syntrake-news-writer" }), userAgent, maxDocuments: Number(process.env.NEWS_FACTUAL_DOCUMENT_LIMIT ?? 20) })
   : undefined;
 const abort = new AbortController();

@@ -253,6 +253,55 @@ export class PostgresNewsStore {
     const row = result.rows[0]; return row ? { cursor: row.cursor, updatedAt: row.updated_at.toISOString() } : null;
   }
 
+  async enqueueFactualBacklog(publications: readonly NewsPublication[]): Promise<number> {
+    let inserted = 0;
+    for (const publication of publications) {
+      const result = await this.pool.query(
+        `insert into news_core.factual_pipeline_backlog(publication_id,publication_payload)
+         values ($1,$2::jsonb) on conflict (publication_id) do nothing`,
+        [publication.publicationId, JSON.stringify(publication)],
+      );
+      inserted += result.rowCount ?? 0;
+    }
+    return inserted;
+  }
+
+  async claimFactualBacklog(limit: number): Promise<NewsPublication[]> {
+    const result = await this.pool.query<{ publication_payload: NewsPublication }>(
+      `with candidates as (
+         select publication_id from news_core.factual_pipeline_backlog
+          where (state='PENDING' or (state='PROCESSING' and lease_until < clock_timestamp()))
+          order by created_at, publication_id
+          for update skip locked limit $1
+       )
+       update news_core.factual_pipeline_backlog b
+          set state='PROCESSING', attempts=b.attempts+1,
+              lease_until=clock_timestamp()+interval '10 minutes',
+              last_error=null, updated_at=clock_timestamp()
+         from candidates c where b.publication_id=c.publication_id
+       returning b.publication_payload`, [Math.max(1, Math.min(limit, 1000))],
+    );
+    return result.rows.map(row => row.publication_payload);
+  }
+
+  async finishFactualBacklog(publicationId: string, status: "PERSISTED" | "REFUSED", error?: string): Promise<void> {
+    await this.pool.query(
+      `update news_core.factual_pipeline_backlog
+          set state='DONE', completed_status=$2, completed_at=clock_timestamp(),
+              lease_until=null, last_error=$3, updated_at=clock_timestamp()
+        where publication_id=$1 and state='PROCESSING'`, [publicationId, status, error ?? null],
+    );
+  }
+
+  async retryFactualBacklog(publicationId: string, error: unknown): Promise<void> {
+    await this.pool.query(
+      `update news_core.factual_pipeline_backlog
+          set state='PENDING', lease_until=null, last_error=$2, updated_at=clock_timestamp()
+        where publication_id=$1 and state='PROCESSING'`,
+      [publicationId, error instanceof Error ? error.message.slice(0, 1000) : "NEWS_FACTUAL_RETRYABLE_FAILURE"],
+    );
+  }
+
   private async assertLease(client: PoolClient, lease: ExecutionLease): Promise<void> {
     const result = await client.query(
       `update news_core.collection_targets t set lease_until=clock_timestamp()+($1::int * interval '1 second'),updated_at=clock_timestamp()

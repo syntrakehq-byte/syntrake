@@ -19,7 +19,18 @@ async function runTarget(store: PostgresNewsStore, target: ClaimedTarget, option
     publications: result.publications, observations: result.observations,
     checkpoint: { sourceId: "sec-edgar", collectionScopeKey: target.collectionScopeKey, cursor: result.nextCursor, updatedAt: observedAt },
   }, { lease });
-  const factualOutcomes = options.factualPipeline ? await options.factualPipeline.processPublications(result.publications, signal) : [];
+  const factualOutcomes = options.factualPipeline
+    ? await (async () => {
+        await store.enqueueFactualBacklog(result.publications);
+        const publications = await store.claimFactualBacklog(options.factualPipeline!.maxDocuments);
+        const outcomes = await options.factualPipeline!.processPublications(publications, signal);
+        for (const outcome of outcomes) {
+          if (outcome.status === "FAILED_RETRYABLE") await store.retryFactualBacklog(outcome.publicationId, outcome.reason);
+          else await store.finishFactualBacklog(outcome.publicationId, outcome.status, outcome.reason);
+        }
+        return outcomes;
+      })()
+    : [];
   for (const outcome of factualOutcomes) console.log(JSON.stringify({ pipeline: "SEC>N1>N2>N3A>N3B>N3C>N5", publicationId: outcome.publicationId, status: outcome.status, reason: outcome.reason, factEventId: outcome.factEventId ?? null, confirmationStatus: outcome.confirmationStatus ?? null, documentSha256: outcome.documentSha256 ?? null }));
   return { ingested: committed.insertedPublications, factualOutcomes };
 }
