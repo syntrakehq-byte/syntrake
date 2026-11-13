@@ -130,7 +130,12 @@ test("News Core N3-C append-only factual persistence, PIT, idempotence and secur
       await admin.query("set role news_factual_writer");
       await admin.query("select * from news_core.materialize_fact_revision_visibility_v1($1)", [pendingRevisionId]);
       await admin.query("reset role");
-      assert.equal((await readerStore.readAsOf(new Date(Date.now() + 1000).toISOString())).some(row => row.factRevisionId === pendingRevisionId), true);
+      const durableRead = await readerStore.readAsOf(new Date(Date.now() + 1000).toISOString());
+      const durableRow = durableRead.find(row => row.factRevisionId === pendingRevisionId);
+      assert.ok(durableRow?.committedAt);
+      assert.equal((await admin.query<{ ts: Date | null }>("select pg_xact_commit_timestamp('1'::xid) ts")).rows[0].ts, null);
+      const retainedRead = await readerStore.readAsOf(new Date(Date.now() + 1000).toISOString());
+      assert.equal(retainedRead.find(row => row.factRevisionId === pendingRevisionId)?.committedAt, durableRow?.committedAt);
     } finally { visibilityClient.release(); }
     assert.equal((await store.persist(crashedInput)).inserted, false);
     assert.equal((await admin.query<{ n: number }>("select count(*)::int n from news_core.fact_revisions where fact_event_id=$1", [first.factEventId])).rows[0].n, 6);

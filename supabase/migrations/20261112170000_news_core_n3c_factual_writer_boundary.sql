@@ -29,6 +29,17 @@ begin
 end
 $$;
 
+do $$
+begin
+  if exists (
+    select 1 from news_core.fact_revisions
+     where finalized_at is not null and committed_at is not null and pit_visibility_state='LEGACY_UNVERIFIED'
+  ) then
+    raise exception 'NEWS_PIT_LEGACY_VISIBILITY_UNVERIFIED' using errcode='55006';
+  end if;
+end
+$$;
+
 create table if not exists news_core.fact_pipeline_attestations (
   attestation_id text primary key,
   canonical_claim_id text not null,
