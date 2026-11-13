@@ -64,7 +64,7 @@ test("News Core N3-C append-only factual persistence, PIT, idempotence and secur
     const beforeFirstCommit = new Date(Date.now() - 1000).toISOString();
     const first = await store.persist(await attest(input("The company was fined.", knownOne)));
     assert.equal(first.inserted, true);
-    const firstCommitted = await admin.query<{ committed_at: Date }>("select pg_xact_commit_timestamp(xmin) as committed_at from news_core.fact_revisions where fact_revision_id=$1", [first.factRevisionId]);
+    const firstCommitted = await admin.query<{ committed_at: Date }>("select committed_at from news_core.fact_revisions where fact_revision_id=$1", [first.factRevisionId]);
     const afterFirstCommit = new Date(firstCommitted.rows[0].committed_at.getTime() + 1).toISOString();
     assert.equal((await store.readAsOf(afterFirstCommit)).length, 1);
     assert.equal((await store.readAsOf(beforeFirstCommit)).length, 0);
@@ -127,6 +127,9 @@ test("News Core N3-C append-only factual persistence, PIT, idempotence and secur
       assert.equal((await readerStore.readAsOf(cutoffDuringVisibility)).some(row => row.factRevisionId === pendingRevisionId), false);
       await visibilityClient.query("commit");
       assert.equal((await readerStore.readAsOf(cutoffDuringVisibility)).some(row => row.factRevisionId === pendingRevisionId), false);
+      await admin.query("set role news_factual_writer");
+      await admin.query("select * from news_core.materialize_fact_revision_visibility_v1($1)", [pendingRevisionId]);
+      await admin.query("reset role");
       assert.equal((await readerStore.readAsOf(new Date(Date.now() + 1000).toISOString())).some(row => row.factRevisionId === pendingRevisionId), true);
     } finally { visibilityClient.release(); }
     assert.equal((await store.persist(crashedInput)).inserted, false);

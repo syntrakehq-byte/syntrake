@@ -5,7 +5,7 @@ language sql stable security definer set search_path=pg_catalog,news_core as $$
   select r.fact_event_id,r.fact_revision_id,r.revision_no,e.canonical_claim_id,e.category,r.claim_type,r.statement,r.occurred_at,r.scheduled_for,r.confirmation_status,r.lifecycle_status,r.polarity,r.as_known_at,r.committed_at
     from news_core.fact_revisions r join news_core.fact_events e using (fact_event_id)
    where r.fact_event_id=p_fact_event_id and r.finalized_at is not null
-     and r.visible_txid is not null and r.as_known_at <= p_as_of and pg_xact_commit_timestamp(r.visible_txid::text::xid) <= p_as_of
+     and r.pit_visibility_state='DURABLE' and r.committed_at is not null and r.as_known_at <= p_as_of and r.committed_at <= p_as_of
    order by r.revision_no
 $$;
 
@@ -15,7 +15,7 @@ language sql stable security definer set search_path=pg_catalog,news_core as $$
   select e.fact_revision_id,e.evidence_id,e.evidence_kind,e.claim_key,e.publication_revision_id,e.source_document_ref,e.content_locator,e.provenance_ref,e.evidence_as_known_at
     from news_core.fact_revision_evidence e join news_core.fact_revisions r using (fact_revision_id)
    where e.fact_revision_id=p_fact_revision_id and r.finalized_at is not null
-     and r.visible_txid is not null and r.as_known_at <= p_as_of and pg_xact_commit_timestamp(r.visible_txid::text::xid) <= p_as_of
+     and r.pit_visibility_state='DURABLE' and r.committed_at is not null and r.as_known_at <= p_as_of and r.committed_at <= p_as_of
      and e.evidence_as_known_at <= p_as_of
    order by e.evidence_id
 $$;
@@ -47,8 +47,8 @@ returns table("factEventId" text,"factRevisionId" text,"revisionNo" integer,"can
 language sql stable security definer set search_path=pg_catalog,news_core as $$
   with candidates as (select r.*,r.xmin as row_xmin,e.canonical_claim_id,e.category
     from news_core.fact_revisions r join news_core.fact_events e using (fact_event_id)
-   where r.finalized_at is not null and r.visible_txid is not null and r.as_known_at <= p_as_of and pg_xact_commit_timestamp(r.visible_txid::text::xid) <= p_as_of),
-  visible as materialized (select candidates.*,row_number() over(partition by fact_event_id order by revision_no desc,as_known_at desc,pg_xact_commit_timestamp(visible_txid::text::xid) desc) n from candidates)
+   where r.finalized_at is not null and r.pit_visibility_state='DURABLE' and r.committed_at is not null and r.as_known_at <= p_as_of and r.committed_at <= p_as_of),
+  visible as materialized (select candidates.*,row_number() over(partition by fact_event_id order by revision_no desc,as_known_at desc,committed_at desc) n from candidates)
   select fact_event_id,fact_revision_id,revision_no,canonical_claim_id,category,claim_type,statement,occurred_at,scheduled_for,confirmation_status,lifecycle_status,polarity,as_known_at,committed_at
     from visible where n=1
      and (coalesce(cardinality(p_targets),0)=0 or fact_event_id = any(p_targets) or canonical_claim_id = any(p_targets) or category = any(p_targets))
@@ -63,7 +63,7 @@ returns table("factEventId" text,"factRevisionId" text,"revisionNo" integer,"can
 language sql stable security definer set search_path=pg_catalog,news_core as $$
   select r.fact_event_id,r.fact_revision_id,r.revision_no,e.canonical_claim_id,e.category,r.claim_type,r.statement,r.occurred_at,r.scheduled_for,r.confirmation_status,r.lifecycle_status,r.polarity,r.as_known_at,r.committed_at
     from news_core.fact_revisions r join news_core.fact_events e using (fact_event_id)
-   where r.finalized_at is not null and r.visible_txid is not null and r.as_known_at <= p_as_of and pg_xact_commit_timestamp(r.visible_txid::text::xid) <= p_as_of
+   where r.finalized_at is not null and r.pit_visibility_state='DURABLE' and r.committed_at is not null and r.as_known_at <= p_as_of and r.committed_at <= p_as_of
      and (coalesce(cardinality(p_targets),0)=0 or r.fact_event_id = any(p_targets) or e.canonical_claim_id = any(p_targets) or e.category = any(p_targets))
      and (p_from is null or coalesce(r.occurred_at,r.scheduled_for,r.committed_at) >= p_from)
      and (p_to is null or coalesce(r.occurred_at,r.scheduled_for,r.committed_at) <= p_to)

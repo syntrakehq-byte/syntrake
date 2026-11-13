@@ -14,6 +14,18 @@ end $$;
 alter table news_core.fact_revisions add column if not exists staged_txid bigint;
 alter table news_core.fact_revisions add column if not exists published_txid bigint;
 alter table news_core.fact_revisions add column if not exists visible_txid bigint;
+alter table news_core.fact_revisions add column if not exists pit_visibility_state text not null default 'LEGACY_UNVERIFIED';
+
+do $$
+begin
+  update news_core.fact_revisions fr
+     set committed_at=pg_xact_commit_timestamp(fr.visible_txid::text::xid),
+         pit_visibility_state='DURABLE'
+   where fr.visible_txid is not null
+     and fr.committed_at is not null
+     and pg_xact_commit_timestamp(fr.visible_txid::text::xid) is not null;
+end
+$$;
 
 create table if not exists news_core.fact_pipeline_attestations (
   attestation_id text primary key,
@@ -95,8 +107,9 @@ begin
      and new.staged_txid is not distinct from old.staged_txid
      and (old.finalized_at is null or new.published_txid is not distinct from old.published_txid)
      and (old.committed_at is null or new.visible_txid is not distinct from old.visible_txid)
-     and ((old.finalized_at is null and new.finalized_at is not null)
-       or (old.finalized_at is not null and old.committed_at is null and new.finalized_at is not null and new.committed_at is not null)) then
+     and ((old.finalized_at is null and new.finalized_at is not null and new.pit_visibility_state='LEGACY_UNVERIFIED')
+       or (old.finalized_at is not null and old.committed_at is null and new.finalized_at is not null and new.committed_at is null and old.visible_txid is null and new.visible_txid is not null and new.pit_visibility_state='PENDING_COMMIT_TIMESTAMP')
+       or (old.finalized_at is not null and old.committed_at is null and new.finalized_at is not null and new.committed_at is not null and old.visible_txid is not null and new.visible_txid is not distinct from old.visible_txid and old.pit_visibility_state='PENDING_COMMIT_TIMESTAMP' and new.pit_visibility_state='DURABLE')) then
     return new;
   end if;
   raise exception 'NEWS_FACT_HISTORY_APPEND_ONLY' using errcode='55006';
@@ -273,13 +286,13 @@ begin
     insert into news_core.fact_revisions(
     fact_revision_id,fact_event_id,revision_no,logical_fingerprint,rule_set_version,claim_type,statement,
     subject_ref,object_ref,occurred_at,scheduled_for,confirmation_status,lifecycle_status,polarity,
-    focal_claim_key,publication_revision_id,quality_flags,supersedes_revision_id,staged_txid
+    focal_claim_key,publication_revision_id,quality_flags,supersedes_revision_id,staged_txid,pit_visibility_state
   ) values (
     revision_id,event_id,next_revision,p->>'logicalFingerprint',p->>'ruleSetVersion',p->>'claimType',p->>'statement',
     nullif(p->>'subjectRef',''),nullif(p->>'objectRef',''),nullif(p->>'occurredAt','')::timestamptz,
     nullif(p->>'scheduledFor','')::timestamptz,p->>'confirmationStatus',p->>'lifecycleStatus',p->>'polarity',
     p->>'focalClaimKey',p->>'publicationRevisionId',coalesce(p->'qualityFlags','[]'::jsonb),
-    case when next_revision > 1 then event_id || ':revision:' || (next_revision-1)::text end,txid_current()
+    case when next_revision > 1 then event_id || ':revision:' || (next_revision-1)::text end,txid_current(),'PENDING_COMMIT_TIMESTAMP'
   );
   for evidence in select value from jsonb_array_elements(p->'evidence') loop
     insert into news_core.fact_revision_evidence(fact_revision_id,evidence_id,evidence_kind,claim_key,publication_revision_id,source_document_ref,content_locator,provenance_ref,evidence_as_known_at)
@@ -375,9 +388,33 @@ begin
     raise exception 'NEWS_FACT_PUBLISH_VISIBLE_SAME_TRANSACTION' using errcode='55006';
   end if;
   perform set_config('news_core.fact_sealing','on',true);
-  return query update news_core.fact_revisions fr set committed_at=clock_timestamp(),visible_txid=txid_current()
+  return query update news_core.fact_revisions fr set visible_txid=txid_current(),pit_visibility_state='PENDING_COMMIT_TIMESTAMP'
    where fr.fact_revision_id=p_fact_revision_id and fr.finalized_at is not null and fr.committed_at is null
    returning fr.committed_at;
+end
+$$;
+
+create or replace function news_core.materialize_fact_revision_visibility_v1(p_fact_revision_id text)
+returns table(committed_at timestamptz)
+language plpgsql volatile security definer set search_path=pg_catalog,news_core as $$
+declare revision record; durable_at timestamptz;
+begin
+  select fr.committed_at,fr.visible_txid,fr.pit_visibility_state
+    into revision from news_core.fact_revisions fr where fr.fact_revision_id=p_fact_revision_id;
+  if not found then raise exception 'NEWS_FACT_REVISION_NOT_FOUND' using errcode='23503'; end if;
+  if revision.pit_visibility_state='DURABLE' and revision.committed_at is not null then
+    return query select revision.committed_at; return;
+  end if;
+  if revision.visible_txid is null or revision.pit_visibility_state <> 'PENDING_COMMIT_TIMESTAMP' then
+    raise exception 'NEWS_PIT_VISIBILITY_UNPROVEN' using errcode='55006';
+  end if;
+  durable_at := pg_xact_commit_timestamp(revision.visible_txid::text::xid);
+  if durable_at is null then raise exception 'NEWS_PIT_COMMIT_TIMESTAMP_UNAVAILABLE' using errcode='55006'; end if;
+  perform set_config('news_core.fact_sealing','on',true);
+  return query update news_core.fact_revisions fr
+    set committed_at=durable_at,pit_visibility_state='DURABLE'
+    where fr.fact_revision_id=p_fact_revision_id and fr.committed_at is null and fr.pit_visibility_state='PENDING_COMMIT_TIMESTAMP'
+    returning fr.committed_at;
 end
 $$;
 
@@ -387,3 +424,4 @@ revoke all on news_core.fact_events,news_core.fact_revisions,news_core.fact_revi
 revoke all on function news_core.finalize_fact_revision(text) from news_factual_writer;
 revoke all on function news_core.persist_fact_revision_v1(jsonb),news_core.publish_fact_revision_v1(text,text),news_core.make_fact_revision_visible_v1(text,text) from public,news_reader,news_service;
 grant execute on function news_core.persist_fact_revision_v1(jsonb),news_core.publish_fact_revision_v1(text,text),news_core.make_fact_revision_visible_v1(text,text) to news_factual_writer;
+grant execute on function news_core.materialize_fact_revision_visibility_v1(text) to news_factual_writer;

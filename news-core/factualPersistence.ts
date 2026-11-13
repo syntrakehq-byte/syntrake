@@ -33,6 +33,13 @@ export class PostgresFactualStore {
       await visible.query("select * from news_core.make_fact_revision_visible_v1($1,$2)", [revisionId, attestationId]);
       await visible.query("commit");
     } catch (error) { await visible.query("rollback").catch(() => undefined); throw error; } finally { visible.release(); }
+    const materializer = await this.pool.connect();
+    try {
+      await materializer.query("begin");
+      await materializer.query(`set local role ${this.databaseRole}`);
+      await materializer.query("select * from news_core.materialize_fact_revision_visibility_v1($1)", [revisionId]);
+      await materializer.query("commit");
+    } catch (error) { await materializer.query("rollback").catch(() => undefined); throw error; } finally { materializer.release(); }
   }
 
   async persist(input: PersistFactualInputV1, failurePoint: "none" | "before-commit" | "after-commit" = "none", holdBeforeCommitMs = 0): Promise<PersistFactualResultV1> {

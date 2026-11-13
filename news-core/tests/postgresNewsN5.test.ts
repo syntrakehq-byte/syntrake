@@ -42,6 +42,7 @@ test("N5 PostgreSQL 17 read API is PIT, role-scoped, paginated and append-only c
       await admin.query("reset role");
       await admin.query("set role news_factual_writer");
       await admin.query("select * from news_core.make_fact_revision_visible_v1($1,$2)", [staged.fact_revision_id, attestationId]);
+      await admin.query("select * from news_core.materialize_fact_revision_visibility_v1($1)", [staged.fact_revision_id]);
       await admin.query("reset role");
     };
     const publication1Meta = (await admin.query<{ source_document_ref: string; as_known_at: Date }>("select source_document_ref,as_known_at from news_core.publication_revisions where publication_revision_id=$1", [revisionId])).rows[0];

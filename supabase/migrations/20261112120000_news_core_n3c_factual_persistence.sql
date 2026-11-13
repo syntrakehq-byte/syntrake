@@ -36,12 +36,14 @@ create table if not exists news_core.fact_revisions (
   as_known_at timestamptz,
   committed_at timestamptz,
   visible_txid bigint,
+  pit_visibility_state text not null default 'LEGACY_UNVERIFIED' check (pit_visibility_state in ('LEGACY_UNVERIFIED','PENDING_COMMIT_TIMESTAMP','DURABLE')),
   finalized_at timestamptz,
   quality_flags jsonb not null default '[]'::jsonb,
   supersedes_revision_id text references news_core.fact_revisions(fact_revision_id),
   check (occurred_at is null or scheduled_for is null),
   check (jsonb_typeof(quality_flags) = 'array'),
   check (supersedes_revision_id is null or supersedes_revision_id <> fact_revision_id),
+  check ((pit_visibility_state = 'DURABLE') = (committed_at is not null)),
   unique (fact_event_id, revision_no),
   unique (fact_event_id, logical_fingerprint)
 );
@@ -223,11 +225,11 @@ returns table("factEventId" text,"factRevisionId" text,"revisionNo" integer,"can
 language sql stable security definer set search_path=pg_catalog,news_core as $$
   with visible as (
     select r.*,r.xmin as row_xmin,e.canonical_claim_id,e.category,
-           row_number() over (partition by r.fact_event_id order by r.as_known_at desc,r.revision_no desc,pg_xact_commit_timestamp(r.visible_txid::text::xid) desc) as n
+           row_number() over (partition by r.fact_event_id order by r.as_known_at desc,r.revision_no desc,r.committed_at desc) as n
       from news_core.fact_revisions r join news_core.fact_events e using (fact_event_id)
-     where r.finalized_at is not null and r.visible_txid is not null and r.as_known_at <= p_as_of and pg_xact_commit_timestamp(r.visible_txid::text::xid) <= p_as_of
+     where r.finalized_at is not null and r.pit_visibility_state='DURABLE' and r.committed_at is not null and r.as_known_at <= p_as_of and r.committed_at <= p_as_of
   )
-    select fact_event_id,fact_revision_id,revision_no,canonical_claim_id,category,claim_type,statement,occurred_at,scheduled_for,confirmation_status,lifecycle_status,polarity,as_known_at,pg_xact_commit_timestamp(visible_txid::text::xid)
+    select fact_event_id,fact_revision_id,revision_no,canonical_claim_id,category,claim_type,statement,occurred_at,scheduled_for,confirmation_status,lifecycle_status,polarity,as_known_at,committed_at
     from visible where n=1 order by fact_event_id
 $$;
 revoke all on function news_core.read_fact_revisions_as_of(timestamptz) from public;
