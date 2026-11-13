@@ -63,10 +63,13 @@ export class NewsFactualPipelineV1 {
       if (!excerpt) return { publicationId: publication.publicationId, status: "REFUSED", reason: "N3A_NO_CONTROLLED_RULE_MATCH", documentSha256: sha256(body) };
       const retrievedAt = new Date().toISOString();
       const asOf = new Date(Date.now() + 3_000).toISOString();
-      const prior = (await this.options.news.readPublicationRevisionsAsOf(asOf, publication.publicationId))[0];
+      const revisions = await this.options.news.readPublicationRevisionsAsOf(asOf, publication.publicationId);
+      const prior = revisions[0];
       if (!prior) return { publicationId: publication.publicationId, status: "REFUSED", reason: "N2_PUBLICATION_REVISION_UNAVAILABLE", documentSha256: sha256(body) };
-      const revisionId = `${publication.publicationId}:revision:2`;
-      await this.options.news.ingestPublicationRevision({ revision: { publicationRevisionId: revisionId, publicationId: publication.publicationId, revisionNo: 2, title: publication.title, publishedAt: publication.publishedAt, form: publication.form, contentFingerprint: sha256(body), sourceDocumentRef: publication.originalUrl, qualityFlags: [], supersedesRevisionId: prior.publicationRevisionId }, provenance: { provenanceId: `${publication.publicationId}:provenance:2`, publicationRevisionId: revisionId, sourceId: publication.sourceId, providerKey: "sec", providerObservationKey: `${publication.externalId}:document`, originalUrl: publication.originalUrl, sourceDocumentRef: publication.originalUrl, retrievedAt, qualityFlags: [] } });
+      const documentFingerprint = sha256(body);
+      const matchingRevision = revisions.find(item => item.contentFingerprint === documentFingerprint && item.sourceDocumentRef === publication.originalUrl);
+      const revisionId = matchingRevision?.publicationRevisionId ?? `${publication.publicationId}:revision:${prior.revisionNo + 1}`;
+      if (!matchingRevision) await this.options.news.ingestPublicationRevision({ revision: { publicationRevisionId: revisionId, publicationId: publication.publicationId, revisionNo: prior.revisionNo + 1, title: publication.title, publishedAt: publication.publishedAt, form: publication.form, contentFingerprint: documentFingerprint, sourceDocumentRef: publication.originalUrl, qualityFlags: [], supersedesRevisionId: prior.publicationRevisionId }, provenance: { provenanceId: `${publication.publicationId}:provenance:${prior.revisionNo + 1}`, publicationRevisionId: revisionId, sourceId: publication.sourceId, providerKey: "sec", providerObservationKey: `${publication.externalId}:document`, originalUrl: publication.originalUrl, sourceDocumentRef: publication.originalUrl, retrievedAt, qualityFlags: [] } });
       const firstRevision = (await this.options.news.readPublicationRevisionsAsOf(new Date(Date.now() + 3_000).toISOString(), publication.publicationId)).find(item => item.publicationRevisionId === revisionId);
       const availabilityDelay = firstRevision?.asKnownAt ? Date.parse(firstRevision.asKnownAt) - Date.now() + 100 : 1_500;
       if (availabilityDelay > 0 && availabilityDelay <= 5_000) await new Promise(resolve => setTimeout(resolve, availabilityDelay));
