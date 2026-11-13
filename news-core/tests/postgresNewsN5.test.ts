@@ -46,8 +46,8 @@ test("N5 PostgreSQL 17 read API is PIT, role-scoped, paginated and append-only c
     };
     const publication1Meta = (await admin.query<{ source_document_ref: string; as_known_at: Date }>("select source_document_ref,as_known_at from news_core.publication_revisions where publication_revision_id=$1", [revisionId])).rows[0];
     await persistFixture("The company was fined.", `fp:${suffix}`, revisionId, `evidence:${suffix}`, publication1Meta.as_known_at.toISOString(), publication1Meta.source_document_ref);
-    const committed = (await admin.query<{ committed_at: Date }>("select committed_at from news_core.fact_revisions where fact_revision_id=$1", [factRevisionId])).rows[0].committed_at;
-    const visibleAsOf = new Date(Date.now() - 1000).toISOString();
+    const committed = (await admin.query<{ committed_at: Date }>("select pg_xact_commit_timestamp(visible_txid::text::xid) as committed_at from news_core.fact_revisions where fact_revision_id=$1", [factRevisionId])).rows[0].committed_at;
+    const visibleAsOf = new Date(committed.getTime() + 1).toISOString();
     const api = new NewsConsumptionApiV1({ news, factual }, "0123456789abcdef", "n5-test-credential"); const auth = { serviceId: "news_reader" as const, credential: "n5-test-credential" };
     const discovered = await api.discoverNews(auth, { asOf: visibleAsOf, filters: { sourceIds: [sourceId], forms: ["8-K"] } }); assert.ok(discovered.data.some(row => row.publicationRevisionId === revisionId));
     const events = await api.getNewsEvents(auth, { asOf: visibleAsOf, targets: [eventId] }); const eventRow = events.data.find(row => row.factRevisionId === factRevisionId); assert.ok(eventRow); assert.equal(eventRow.confirmationStatus, "REPORTED");
