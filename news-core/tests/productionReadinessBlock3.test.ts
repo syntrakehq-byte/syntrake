@@ -60,7 +60,8 @@ test("Production readiness BL3 real SEC to N5 circuit is conservative and idempo
     if (classification.proposals.length === 0) {
       assert.ok(classification.refusalReasons.length > 0);
       const api = new NewsConsumptionApiV1({ news, factual: readerFactual }, "0123456789abcdef", "bl3-test-credential");
-      const empty = await api.getNewsEvents({ serviceId: "news_reader", credential: "bl3-test-credential" }, { targets: [`${publication.publicationId}:no-fact`], asOf: new Date(Date.now() + 2_000).toISOString() });
+      const emptyAsOf = (await admin.query<{ cutoff: string }>("select clock_timestamp()::timestamptz::text cutoff")).rows[0].cutoff;
+      const empty = await api.getNewsEvents({ serviceId: "news_reader", credential: "bl3-test-credential" }, { targets: [`${publication.publicationId}:no-fact`], asOf: emptyAsOf });
       assert.equal(empty.data.length, 0);
       return;
     }
@@ -80,7 +81,7 @@ test("Production readiness BL3 real SEC to N5 circuit is conservative and idempo
     const persisted = await factual.persist({ ...persistInput, attestationId });
     assert.equal(persisted.inserted, true);
     assert.equal((await factual.persist({ ...persistInput, attestationId })).inserted, false);
-    const asOf = new Date(Date.now() + 2_000).toISOString();
+    const asOf = (await admin.query<{ cutoff: string }>("select clock_timestamp()::timestamptz::text cutoff")).rows[0].cutoff;
     const api = new NewsConsumptionApiV1({ news, factual: readerFactual }, "0123456789abcdef", "bl3-test-credential");
     const events = await api.getNewsEvents({ serviceId: "news_reader", credential: "bl3-test-credential" }, { targets: [persisted.factEventId], asOf });
     assert.equal(events.status, "AVAILABLE"); assert.equal(events.data.length, 1); assert.equal(events.data[0].statement, proposal.statement);
