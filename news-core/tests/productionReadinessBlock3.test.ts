@@ -46,7 +46,7 @@ test("Production readiness BL3 real SEC to N5 circuit is conservative and idempo
       if (candidateExcerpt) { publication = candidate; documentBody = body; excerpt = candidateExcerpt; break; }
     }
     assert.ok(excerpt, "real SEC documents must yield a bounded excerpt matching a controlled rule or the test must fail closed");
-    const retrievedAt = new Date().toISOString();
+    const retrievedAt = (await admin.query<{ retrievedAt: string }>("select clock_timestamp()::timestamptz::text as \"retrievedAt\"")).rows[0].retrievedAt;
     const batch: NewsBatch = { publications: [publication], observations: collected.observations.filter(item => item.publicationId === publication.publicationId), checkpoint: { sourceId: "sec-edgar", collectionScopeKey: `bl3-sec-${publication.externalId}`, cursor: collected.nextCursor, updatedAt: retrievedAt } };
     const firstIngest = await news.ingestAdministrative(batch);
     const replayIngest = await news.ingestAdministrative(batch);
@@ -62,8 +62,6 @@ test("Production readiness BL3 real SEC to N5 circuit is conservative and idempo
     assert.ok(committedRevision?.asKnownAt && committedRevision.ingestedAt);
     const evidenceId = `sec-document-excerpt-${publication.externalId}`;
     const proposedAt = committedRevision.asKnownAt;
-    const factualServerNow = (await admin.query<{ cutoff: string }>("select clock_timestamp()::timestamptz::text cutoff")).rows[0].cutoff;
-    console.log(JSON.stringify({ productionReadiness: "BL3-PIT", dependencyAsKnownAt: committedRevision.asKnownAt, proposalAt: proposedAt, serverNow: factualServerNow }));
     const classificationInput: ClassificationInputV1 = { contractVersion: "news-fact-classification-v1", taxonomyVersion: "news-fact-taxonomy-v1", ruleSetVersion: "deterministic-rule-v1", publicationRevision: { ...committedRevision, contentFingerprint: sha256(documentBody), visibilityState: "COMMITTED" }, evidence: [{ evidenceId, publicationRevisionId: revisionTwoId, kind: "DOCUMENT_EXCERPT", sourceDocumentRef: publication.originalUrl, contentLocator: "document:text:live-sec", excerpt, excerptHash: excerptHashV1(excerpt), hashSemantics: "LOCAL_CONTENT_HASH_ONLY", structuredField: null, structuredValue: null, structuredAuthority: null, observedAt: retrievedAt, retrievedAt, asKnownAt: committedRevision.asKnownAt, provenanceRef: `${publication.publicationId}:provenance:2` }], proposedAt };
     const classification = new DeterministicFactClassifierV1().classify(classificationInput);
     console.log(JSON.stringify({ productionReadiness: "BL3", publicationId: publication.publicationId, documentExcerptSha256: sha256(excerpt), proposals: classification.proposals.length, refusalReasons: classification.refusalReasons }));
