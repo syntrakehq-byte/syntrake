@@ -65,7 +65,7 @@ test("News Core N3-C append-only factual persistence, PIT, idempotence and secur
     const first = await store.persist(await attest(input("The company was fined.", knownOne)));
     assert.equal(first.inserted, true);
     const firstCommitted = await admin.query<{ committed_at: Date }>("select pg_xact_commit_timestamp(xmin) as committed_at from news_core.fact_revisions where fact_revision_id=$1", [first.factRevisionId]);
-    const afterFirstCommit = firstCommitted.rows[0].committed_at.toISOString();
+    const afterFirstCommit = new Date(firstCommitted.rows[0].committed_at.getTime() + 1).toISOString();
     assert.equal((await store.readAsOf(afterFirstCommit)).length, 1);
     assert.equal((await store.readAsOf(beforeFirstCommit)).length, 0);
     const sameTransactionInput = await attest(input("same transaction must fail", knownTwo));
