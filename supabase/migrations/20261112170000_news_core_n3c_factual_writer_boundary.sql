@@ -107,7 +107,7 @@ begin
      and new.staged_txid is not distinct from old.staged_txid
      and (old.finalized_at is null or new.published_txid is not distinct from old.published_txid)
      and (old.committed_at is null or new.visible_txid is not distinct from old.visible_txid)
-     and ((old.finalized_at is null and new.finalized_at is not null and new.pit_visibility_state='LEGACY_UNVERIFIED')
+     and ((old.finalized_at is null and new.finalized_at is not null and new.pit_visibility_state='PENDING_COMMIT_TIMESTAMP')
        or (old.finalized_at is not null and old.committed_at is null and new.finalized_at is not null and new.committed_at is null and old.visible_txid is null and new.visible_txid is not null and new.pit_visibility_state='PENDING_COMMIT_TIMESTAMP')
        or (old.finalized_at is not null and old.committed_at is null and new.finalized_at is not null and new.committed_at is not null and old.visible_txid is not null and new.visible_txid is not distinct from old.visible_txid and old.pit_visibility_state='PENDING_COMMIT_TIMESTAMP' and new.pit_visibility_state='DURABLE')) then
     return new;
