@@ -2,12 +2,19 @@ import { Pool } from "pg";
 import { existsSync, unlinkSync } from "node:fs";
 import { PostgresNewsStore } from "../news-core/postgresStore";
 import { registerSecTarget, runNewsExecutorForever } from "../news-core/autonomousExecutor";
+import { NewsFactualPipelineV1 } from "../news-core/factualPipeline";
 
 const url = process.env.NEWS_DATABASE_URL;
 const userAgent = process.env.SEC_USER_AGENT;
 if (!url || !userAgent) throw new Error("NEWS_DATABASE_URL and SEC_USER_AGENT are required");
 const pool = new Pool({ connectionString: url, max: 4, idleTimeoutMillis: 30_000, application_name: "syntrake-news-worker" });
 const store = new PostgresNewsStore(pool);
+const factualVerifierUrl = process.env.NEWS_PIPELINE_VERIFIER_DATABASE_URL;
+const factualAttestorUrl = process.env.NEWS_FACTUAL_ATTESTOR_DATABASE_URL;
+const factualWriterUrl = process.env.NEWS_FACTUAL_WRITER_DATABASE_URL;
+const factualPipeline = factualVerifierUrl && factualAttestorUrl && factualWriterUrl
+  ? new NewsFactualPipelineV1({ news: store, verifierPool: new Pool({ connectionString: factualVerifierUrl, max: 2, application_name: "syntrake-news-verifier" }), attestorPool: new Pool({ connectionString: factualAttestorUrl, max: 2, application_name: "syntrake-news-attestor" }), writerPool: new Pool({ connectionString: factualWriterUrl, max: 2, application_name: "syntrake-news-writer" }), userAgent, maxDocuments: Number(process.env.NEWS_FACTUAL_DOCUMENT_LIMIT ?? 20) })
+  : undefined;
 const abort = new AbortController();
 let executionFailed = false;
 const shutdownFile = process.env.NEWS_SHUTDOWN_FILE;
@@ -30,11 +37,12 @@ if (shutdownFile) {
   }, 100);
 }
 registerSecTarget(store, process.env.SEC_CIK ?? "0000320193")
-  .then(() => runNewsExecutorForever({ store, workerId: process.env.NEWS_WORKER_ID ?? `worker-${process.pid}`, secUserAgent: userAgent, leaseSeconds: Number(process.env.NEWS_LEASE_SECONDS ?? 60), intervalMs: Number(process.env.NEWS_POLL_INTERVAL_MS ?? 30000), signal: abort.signal, onExecutionError: () => { executionFailed = true; } }))
+  .then(() => runNewsExecutorForever({ store, factualPipeline, workerId: process.env.NEWS_WORKER_ID ?? `worker-${process.pid}`, secUserAgent: userAgent, leaseSeconds: Number(process.env.NEWS_LEASE_SECONDS ?? 60), intervalMs: Number(process.env.NEWS_POLL_INTERVAL_MS ?? 30000), signal: abort.signal, onExecutionError: () => { executionFailed = true; } }))
   .catch(error => { console.error(error instanceof Error ? error.message : "NEWS_WORKER_FAILED"); process.exitCode = 1; })
   .finally(async () => {
     if (shutdownPoll) clearInterval(shutdownPoll);
     try {
+      if (factualPipeline) await factualPipeline.close();
       await store.close();
       console.log("NEWS_STORE_CLOSED");
     } catch (error) {

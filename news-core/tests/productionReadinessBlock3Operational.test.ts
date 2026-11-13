@@ -1,0 +1,75 @@
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+import { Client, Pool } from "pg";
+import { NewsConsumptionApiV1 } from "../n5Api";
+import { PostgresFactualStore } from "../factualPersistence";
+import { PostgresNewsStore } from "../postgresStore";
+import { registerSecTarget, runNewsExecutorOnce } from "../autonomousExecutor";
+import { NewsFactualPipelineV1 } from "../factualPipeline";
+
+const DB_URL = process.env.NEWS_DATABASE_URL ?? process.env.TEST_DATABASE_URL;
+const migration = (name: string) => new URL(`../../supabase/migrations/${name}`, import.meta.url);
+const roleUrl = (base: string, role: string): string => { const url = new URL(base); url.username = role; url.password = ""; return url.toString(); };
+
+test("BL3 operational executor runs SEC through N3 and N5 with positive and conservative outcomes", { skip: !DB_URL && "NEWS_DATABASE_URL or TEST_DATABASE_URL required: real PG17 only" }, async () => {
+  assert.ok(DB_URL);
+  const admin = new Client({ connectionString: DB_URL });
+  const newsPool = new Pool({ connectionString: DB_URL, max: 4 });
+  const readerPool = new Pool({ connectionString: DB_URL, max: 2 });
+  const news = new PostgresNewsStore(newsPool);
+  const readerFactual = new PostgresFactualStore(readerPool, "news_service");
+  const suffix = randomUUID().replaceAll("-", "");
+  const verifierRole = `bl3_verifier_${suffix.slice(0, 12)}`;
+  const attestorRole = `bl3_attestor_${suffix.slice(0, 12)}`;
+  const writerRole = `bl3_writer_${suffix.slice(0, 12)}`;
+  const verifierPool = new Pool({ connectionString: roleUrl(DB_URL, verifierRole), max: 2 });
+  const attestorPool = new Pool({ connectionString: roleUrl(DB_URL, attestorRole), max: 2 });
+  const writerPool = new Pool({ connectionString: roleUrl(DB_URL, writerRole), max: 2 });
+  const pipeline = new NewsFactualPipelineV1({ news, verifierPool, attestorPool, writerPool, userAgent: process.env.SEC_USER_AGENT ?? "SYNTRAKE BL3 operational CI/1.0 security@syntrake.com", maxDocuments: 20 });
+  try {
+    await admin.connect();
+    assert.match((await admin.query<{ version: string }>("select current_setting('server_version') version")).rows[0].version, /^17\./);
+    for (const file of ["20261111150000_news_core_postgres_n1.sql", "20261111170000_news_core_n2a_revisions.sql", "20261112120000_news_core_n3c_factual_persistence.sql", "20261112170000_news_core_n3c_factual_writer_boundary.sql", "20261112150000_news_core_n5_read_api.sql"]) await admin.query(await readFile(migration(file), "utf8"));
+    await admin.query(`create role ${verifierRole} login inherit nocreatedb nocreaterole`);
+    await admin.query(`create role ${attestorRole} login inherit nocreatedb nocreaterole`);
+    await admin.query(`create role ${writerRole} login inherit nocreatedb nocreaterole`);
+    await admin.query(`grant news_pipeline_verifier to ${verifierRole}`);
+    await admin.query(`grant news_factual_attestor to ${attestorRole}`);
+    await admin.query(`grant news_factual_writer to ${writerRole}`);
+    const scope = await registerSecTarget(news, "0000320193");
+    const first = await runNewsExecutorOnce({ store: news, factualPipeline: pipeline, workerId: `bl3-operational-${suffix}`, secUserAgent: process.env.SEC_USER_AGENT ?? "SYNTRAKE BL3 operational CI/1.0 security@syntrake.com", collectionScopeKey: scope, fetchTimeoutMs: 120_000 });
+    assert.equal(first.claimed, true);
+    assert.ok(first.factualOutcomes.some(outcome => outcome.status === "PERSISTED"), "operational executor must persist one supported SEC document");
+    assert.ok(first.factualOutcomes.some(outcome => outcome.status === "REFUSED"), "operational executor must record a separate conservative refusal");
+    const persisted = first.factualOutcomes.find(outcome => outcome.status === "PERSISTED");
+    const refused = first.factualOutcomes.find(outcome => outcome.status === "REFUSED");
+    assert.ok(persisted?.factEventId && persisted.documentSha256);
+    await assert.rejects(attestorPool.query("select news_core.issue_fact_attestation_v1($1::jsonb)", [JSON.stringify({ canonicalClaimId: persisted.factEventId, logicalFingerprint: "forged", publicationRevisionId: "forged", evidence: [], dependencies: [], verificationId: "forged" })]), /NEWS_FACT_PIPELINE_ATTESTATION_UNVERIFIED/);
+    await assert.rejects(writerPool.query("select news_core.issue_fact_attestation_v1('{}'::jsonb)"), /permission denied/);
+    const api = new NewsConsumptionApiV1({ news, factual: readerFactual }, "0123456789abcdef", "bl3-operational-credential");
+    const asOf = (await admin.query<{ cutoff: string }>("select clock_timestamp()::timestamptz::text cutoff")).rows[0].cutoff;
+    const events = await api.getNewsEvents({ serviceId: "news_reader", credential: "bl3-operational-credential" }, { targets: [persisted.factEventId], asOf });
+    assert.equal(events.status, "AVAILABLE"); assert.equal(events.data.length, 1); assert.equal(events.data[0].confirmationStatus, "REPORTED");
+    const evidence = await api.getEventEvidence({ serviceId: "news_reader", credential: "bl3-operational-credential" }, { eventId: persisted.factEventId, asOf });
+    assert.ok(evidence.data.length > 0); assert.ok(evidence.sourceRefs.some(ref => ref.startsWith("https://www.sec.gov/Archives/edgar/data/")));
+    const refusedEvents = await api.getNewsEvents({ serviceId: "news_reader", credential: "bl3-operational-credential" }, { targets: [`sec:${refused?.publicationId}`], asOf });
+    assert.equal(refusedEvents.data.length, 0, "conservative refusal must not create an N5 fact");
+    const before = await api.getNewsEvents({ serviceId: "news_reader", credential: "bl3-operational-credential" }, { targets: [persisted.factEventId], asOf: new Date(Date.parse(asOf) - 60_000).toISOString() });
+    assert.equal(before.data.length, 0, "historical cutoff before factual availability must remain empty");
+    await admin.query("update news_core.collection_targets set next_run_at=clock_timestamp(), lease_until=null where collection_scope_key=$1", [scope]);
+    const replay = await runNewsExecutorOnce({ store: news, factualPipeline: pipeline, workerId: `bl3-operational-replay-${suffix}`, secUserAgent: process.env.SEC_USER_AGENT ?? "SYNTRAKE BL3 operational CI/1.0 security@syntrake.com", collectionScopeKey: scope, fetchTimeoutMs: 120_000 });
+    assert.equal(replay.claimed, true);
+    const eventCount = Number((await admin.query("select count(*)::int n from news_core.fact_events where fact_event_id=$1", [persisted.factEventId])).rows[0].n);
+    assert.equal(eventCount, 1, "operational replay must remain idempotent");
+  } finally {
+    await pipeline.close(); await Promise.all([news.close(), readerFactual.close(), admin.end()]);
+    const cleanup = new Client({ connectionString: DB_URL });
+    await cleanup.connect().catch(() => undefined);
+    await cleanup.query(`drop role if exists ${verifierRole}`).catch(() => undefined);
+    await cleanup.query(`drop role if exists ${attestorRole}`).catch(() => undefined);
+    await cleanup.query(`drop role if exists ${writerRole}`).catch(() => undefined);
+    await cleanup.end().catch(() => undefined);
+  }
+});
