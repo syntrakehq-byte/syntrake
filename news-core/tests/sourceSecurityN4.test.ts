@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { lookup as dnsLookup } from "node:dns/promises";
 import test from "node:test";
 import { assertSafeExternalUrl, fetchSafeExternal } from "../sourceSecurity";
 
@@ -28,4 +29,19 @@ test("N4 source policy treats hostile response content as opaque data", async ()
   const response = new Response(body, { status: 200, headers: { "content-type": "text/plain" } });
   const result = await fetchSafeExternal("https://data.sec.gov/submissions/CIK0000320193.json", undefined, async () => response);
   assert.equal(await result.text(), body);
+});
+
+test("BL2 real SEC TLS transport pins the approved address and resists a second DNS resolution", async () => {
+  const resolved = (await dnsLookup("data.sec.gov", { all: true })).map(item => ({ address: item.address, family: item.family as 4 | 6 }));
+  assert.ok(resolved.length > 0);
+  const resolverCalls: string[] = [];
+  const resolver = async (hostname: string) => {
+    resolverCalls.push(hostname);
+    if (resolverCalls.length > 1) return [{ address: "127.0.0.1", family: 4 as const }];
+    return resolved;
+  };
+  const response = await fetchSafeExternal("https://data.sec.gov/submissions/CIK0000320193.json", { headers: { Accept: "application/json", "User-Agent": "SYNTRAKE BL2 test security@syntrake.com" } }, fetch, resolver);
+  assert.equal(response.ok, true);
+  assert.deepEqual(resolverCalls, ["data.sec.gov"]);
+  await response.body?.cancel();
 });

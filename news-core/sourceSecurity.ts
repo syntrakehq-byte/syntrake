@@ -1,8 +1,11 @@
 import { lookup } from "node:dns/promises";
+import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 
 export const SEC_ALLOWED_HOSTS = new Set(["data.sec.gov", "www.sec.gov"]);
 type AddressLookup = (hostname: string, options: { all: true }) => Promise<readonly { address: string; family: 4 | 6 }[]>;
+type ApprovedTarget = { url: URL; address: string; family: 4 | 6 };
+const DEFAULT_TIMEOUT_MS = 20_000, MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
 
 function ipv4Value(address: string): number | null {
   const parts = address.split(".").map(Number);
@@ -53,21 +56,63 @@ function privateAddress(address: string): boolean {
 }
 
 export async function assertSafeExternalUrl(raw: string, allowedHosts: ReadonlySet<string> = SEC_ALLOWED_HOSTS, lookupImpl: AddressLookup = lookup as AddressLookup): Promise<URL> {
+  return (await resolveSafeExternalUrl(raw, allowedHosts, lookupImpl)).url;
+}
+
+async function resolveSafeExternalUrl(raw: string, allowedHosts: ReadonlySet<string>, lookupImpl: AddressLookup): Promise<ApprovedTarget> {
   let url: URL;
   try { url = new URL(raw); } catch { throw new Error("NEWS_SOURCE_URL_INVALID"); }
   if (url.protocol !== "https:" || url.username || url.password || url.port || !allowedHosts.has(url.hostname.toLowerCase())) throw new Error("NEWS_SOURCE_URL_NOT_ALLOWED");
   const addresses = await lookupImpl(url.hostname, { all: true });
   if (!addresses.length || addresses.some(item => privateAddress(item.address))) throw new Error("NEWS_SOURCE_PRIVATE_ADDRESS");
-  return url;
+  const [selected] = [...addresses].sort((left, right) => `${left.family}:${left.address}`.localeCompare(`${right.family}:${right.address}`));
+  return { url, address: selected.address, family: selected.family };
 }
 
-export async function fetchSafeExternal(input: string, init?: RequestInit, fetchImpl: typeof fetch = fetch): Promise<Response> {
-  const initial = await assertSafeExternalUrl(input);
-  const response = await fetchImpl(initial, { ...init, redirect: "manual" });
+function fetchPinnedHttps(target: ApprovedTarget, init?: RequestInit): Promise<Response> {
+  if (init?.body !== undefined && init.body !== null) return Promise.reject(new Error("NEWS_SOURCE_METHOD_UNSUPPORTED"));
+  return new Promise((resolve, reject) => {
+    const headers = new Headers(init?.headers);
+    const req = httpsRequest({
+      hostname: target.url.hostname,
+      port: 443,
+      path: `${target.url.pathname}${target.url.search}`,
+      method: init?.method ?? "GET",
+      headers: Object.fromEntries(headers.entries()),
+      servername: target.url.hostname,
+      rejectUnauthorized: true,
+      agent: false,
+      timeout: DEFAULT_TIMEOUT_MS,
+      signal: init?.signal,
+      lookup: (_hostname, options, callback) => options.all
+        ? callback(null, [{ address: target.address, family: target.family }])
+        : callback(null, target.address, target.family),
+    }, response => {
+      const chunks: Buffer[] = []; let total = 0;
+      response.on("data", chunk => {
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        total += buffer.length;
+        if (total > MAX_RESPONSE_BYTES) { req.destroy(new Error("NEWS_SOURCE_RESPONSE_TOO_LARGE")); return; }
+        chunks.push(buffer);
+      });
+      response.on("end", () => resolve(new Response(Buffer.concat(chunks), { status: response.statusCode ?? 0, headers: response.headers as Record<string, string> })));
+      response.on("error", reject);
+    });
+    req.once("timeout", () => req.destroy(new Error("NEWS_SOURCE_TIMEOUT")));
+    req.once("error", reject);
+    req.end();
+  });
+}
+
+export async function fetchSafeExternal(input: string, init?: RequestInit, fetchImpl: typeof fetch = fetch, lookupImpl: AddressLookup = lookup as AddressLookup): Promise<Response> {
+  const initial = await resolveSafeExternalUrl(input, SEC_ALLOWED_HOSTS, lookupImpl);
+  const response = fetchImpl === fetch
+    ? await fetchPinnedHttps(initial, init)
+    : await fetchImpl(initial.url, { ...init, redirect: "manual" });
   if (response.status >= 300 && response.status < 400) {
     const location = response.headers.get("location");
     if (!location) throw new Error("NEWS_SOURCE_REDIRECT_INVALID");
-    await assertSafeExternalUrl(new URL(location, initial).toString());
+    await resolveSafeExternalUrl(new URL(location, initial.url).toString(), SEC_ALLOWED_HOSTS, lookupImpl);
     throw new Error("NEWS_SOURCE_REDIRECT_REQUIRES_REVALIDATION");
   }
   return response;
