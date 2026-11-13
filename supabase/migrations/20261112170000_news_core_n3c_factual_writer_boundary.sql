@@ -24,6 +24,7 @@ begin
          pit_visibility_state='DURABLE'
    where fr.visible_txid is not null
      and fr.committed_at is not null
+     and fr.pit_visibility_state <> 'DURABLE'
      and pg_xact_commit_timestamp(fr.visible_txid::text::xid) is not null;
 end
 $$;
