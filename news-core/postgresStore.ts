@@ -275,7 +275,7 @@ export class PostgresNewsStore {
          where p.visibility_state='COMMITTED' and p.as_known_at is not null
            and ((b.state='PENDING' and b.next_attempt_at <= clock_timestamp())
              or (b.state='PROCESSING' and b.lease_until < clock_timestamp()))
-          order by next_attempt_at, created_at, publication_id
+          order by b.next_attempt_at, b.created_at, b.publication_id
           for update skip locked limit $1
        )
        update news_core.factual_pipeline_backlog b
