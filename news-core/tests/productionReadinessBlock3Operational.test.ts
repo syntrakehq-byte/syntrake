@@ -6,7 +6,7 @@ import { Client, Pool } from "pg";
 import { NewsConsumptionApiV1 } from "../n5Api";
 import { PostgresFactualStore } from "../factualPersistence";
 import { PostgresNewsStore } from "../postgresStore";
-import { registerSecTarget, runNewsExecutorOnce } from "../autonomousExecutor";
+import { runNewsExecutorOnce } from "../autonomousExecutor";
 import { NewsFactualPipelineV1 } from "../factualPipeline";
 
 const DB_URL = process.env.NEWS_DATABASE_URL ?? process.env.TEST_DATABASE_URL;
@@ -39,7 +39,9 @@ test("BL3 operational executor runs SEC through N3 and N5 with positive and cons
     await admin.query(`grant news_pipeline_verifier to ${verifierRole}`);
     await admin.query(`grant news_factual_attestor to ${attestorRole}`);
     await admin.query(`grant news_factual_writer to ${writerRole}`);
-    const scope = await registerSecTarget(news, "0000320193");
+    const scope = `bl3-operational-sec-${suffix}`;
+    await news.ensureSource("sec-edgar", "sec");
+    await news.upsertTarget({ collectionScopeKey: scope, sourceId: "sec-edgar", providerKey: "sec", entityKey: "0000320193", parameters: { forms: ["10-K", "10-Q", "8-K", "20-F", "6-K"], overlapDays: 7 } });
     const first = await runNewsExecutorOnce({ store: news, factualPipeline: pipeline, workerId: `bl3-operational-${suffix}`, secUserAgent: process.env.SEC_USER_AGENT ?? "SYNTRAKE BL3 operational CI/1.0 security@syntrake.com", collectionScopeKey: scope, fetchTimeoutMs: 120_000 });
     assert.equal(first.claimed, true);
     assert.ok(first.factualOutcomes.some(outcome => outcome.status === "PERSISTED"), "operational executor must persist one supported SEC document");
