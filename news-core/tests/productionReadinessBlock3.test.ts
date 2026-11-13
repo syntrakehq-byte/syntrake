@@ -62,6 +62,8 @@ test("Production readiness BL3 real SEC to N5 circuit is conservative and idempo
     assert.ok(committedRevision?.asKnownAt && committedRevision.ingestedAt);
     const evidenceId = `sec-document-excerpt-${publication.externalId}`;
     const proposedAt = committedRevision.asKnownAt;
+    const factualServerNow = (await admin.query<{ cutoff: string }>("select clock_timestamp()::timestamptz::text cutoff")).rows[0].cutoff;
+    console.log(JSON.stringify({ productionReadiness: "BL3-PIT", dependencyAsKnownAt: committedRevision.asKnownAt, proposalAt: proposedAt, serverNow: factualServerNow }));
     const classificationInput: ClassificationInputV1 = { contractVersion: "news-fact-classification-v1", taxonomyVersion: "news-fact-taxonomy-v1", ruleSetVersion: "deterministic-rule-v1", publicationRevision: { ...committedRevision, contentFingerprint: sha256(documentBody), visibilityState: "COMMITTED" }, evidence: [{ evidenceId, publicationRevisionId: revisionTwoId, kind: "DOCUMENT_EXCERPT", sourceDocumentRef: publication.originalUrl, contentLocator: "document:text:live-sec", excerpt, excerptHash: excerptHashV1(excerpt), hashSemantics: "LOCAL_CONTENT_HASH_ONLY", structuredField: null, structuredValue: null, structuredAuthority: null, observedAt: retrievedAt, retrievedAt, asKnownAt: committedRevision.asKnownAt, provenanceRef: `${publication.publicationId}:provenance:2` }], proposedAt };
     const classification = new DeterministicFactClassifierV1().classify(classificationInput);
     console.log(JSON.stringify({ productionReadiness: "BL3", publicationId: publication.publicationId, documentExcerptSha256: sha256(excerpt), proposals: classification.proposals.length, refusalReasons: classification.refusalReasons }));
