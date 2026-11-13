@@ -34,10 +34,13 @@ test("Production readiness BL3 real SEC to N5 circuit is conservative and idempo
     const collected = await fetchSecFilings({ cik: "0000320193", userAgent, now: new Date(), signal: AbortSignal.timeout(20_000) });
     const candidates = collected.publications.filter(item => item.form === "8-K").slice(0, 20);
     assert.ok(candidates.length > 0, "SEC live collection must provide an 8-K publication");
-    let publication = candidates[0];
+    const existingPublications = (await admin.query<{ publication_id: string }>("select publication_id from news_core.publications where publication_id = any($1::text[])", [candidates.map(item => item.publicationId)])).rows.map(row => row.publication_id);
+    const freshCandidates = candidates.filter(item => !existingPublications.includes(item.publicationId));
+    assert.ok(freshCandidates.length > 0, "BL3 requires a fresh real SEC publication in the isolated PG17 database");
+    let publication = freshCandidates[0];
     let documentBody = "";
     let excerpt: string | undefined;
-    for (const candidate of candidates) {
+    for (const candidate of freshCandidates) {
       const response = await fetchSafeExternal(candidate.originalUrl, { headers: { "User-Agent": userAgent, Accept: "text/html" }, signal: AbortSignal.timeout(20_000) });
       assert.equal(response.ok, true);
       const body = await response.text();
