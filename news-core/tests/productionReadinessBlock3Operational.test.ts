@@ -11,7 +11,8 @@ import { NewsFactualPipelineV1 } from "../factualPipeline";
 
 const DB_URL = process.env.NEWS_DATABASE_URL ?? process.env.TEST_DATABASE_URL;
 const migration = (name: string) => new URL(`../../supabase/migrations/${name}`, import.meta.url);
-const roleUrl = (base: string, role: string): string => { const url = new URL(base); url.username = role; url.password = ""; return url.toString(); };
+const ROLE_PASSWORD = "bl3-operational-test-password";
+const roleUrl = (base: string, role: string): string => { const url = new URL(base); url.username = role; url.password = ROLE_PASSWORD; return url.toString(); };
 
 test("BL3 operational executor runs SEC through N3 and N5 with positive and conservative outcomes", { skip: !DB_URL && "NEWS_DATABASE_URL or TEST_DATABASE_URL required: real PG17 only" }, async () => {
   assert.ok(DB_URL);
@@ -32,9 +33,9 @@ test("BL3 operational executor runs SEC through N3 and N5 with positive and cons
     await admin.connect();
     assert.match((await admin.query<{ version: string }>("select current_setting('server_version') version")).rows[0].version, /^17\./);
     for (const file of ["20261111150000_news_core_postgres_n1.sql", "20261111170000_news_core_n2a_revisions.sql", "20261112120000_news_core_n3c_factual_persistence.sql", "20261112170000_news_core_n3c_factual_writer_boundary.sql", "20261112150000_news_core_n5_read_api.sql"]) await admin.query(await readFile(migration(file), "utf8"));
-    await admin.query(`create role ${verifierRole} login inherit nocreatedb nocreaterole`);
-    await admin.query(`create role ${attestorRole} login inherit nocreatedb nocreaterole`);
-    await admin.query(`create role ${writerRole} login inherit nocreatedb nocreaterole`);
+    await admin.query(`create role ${verifierRole} login inherit password '${ROLE_PASSWORD}' nocreatedb nocreaterole`);
+    await admin.query(`create role ${attestorRole} login inherit password '${ROLE_PASSWORD}' nocreatedb nocreaterole`);
+    await admin.query(`create role ${writerRole} login inherit password '${ROLE_PASSWORD}' nocreatedb nocreaterole`);
     await admin.query(`grant news_pipeline_verifier to ${verifierRole}`);
     await admin.query(`grant news_factual_attestor to ${attestorRole}`);
     await admin.query(`grant news_factual_writer to ${writerRole}`);
