@@ -18,6 +18,7 @@ alter table news_core.fact_revisions add column if not exists pit_visibility_sta
 
 do $$
 begin
+  perform set_config('news_core.fact_sealing','on',true);
   update news_core.fact_revisions fr
      set committed_at=pg_xact_commit_timestamp(fr.visible_txid::text::xid),
          pit_visibility_state='DURABLE'
