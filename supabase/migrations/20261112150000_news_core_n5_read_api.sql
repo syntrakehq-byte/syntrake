@@ -45,10 +45,10 @@ $$;
 create or replace function news_core.read_fact_revisions_filtered_as_of(p_as_of timestamptz, p_targets text[] default '{}', p_event_types text[] default '{}', p_from timestamptz default null, p_to timestamptz default null)
 returns table("factEventId" text,"factRevisionId" text,"revisionNo" integer,"canonicalClaimId" text,"category" text,"claimType" text,"statement" text,"occurredAt" timestamptz,"scheduledFor" timestamptz,"confirmationStatus" text,"lifecycleStatus" text,"polarity" text,"asKnownAt" timestamptz,"committedAt" timestamptz)
 language sql stable security definer set search_path=pg_catalog,news_core as $$
-  with candidates as (select r.*,e.canonical_claim_id,e.category
+  with candidates as (select r.*,r.xmin as row_xmin,e.canonical_claim_id,e.category
     from news_core.fact_revisions r join news_core.fact_events e using (fact_event_id)
    where r.finalized_at is not null and r.as_known_at <= p_as_of and pg_xact_commit_timestamp(r.xmin) <= p_as_of),
-  visible as materialized (select candidates.*,row_number() over(partition by fact_event_id order by revision_no desc,as_known_at desc,pg_xact_commit_timestamp(xmin) desc) n from candidates)
+  visible as materialized (select candidates.*,row_number() over(partition by fact_event_id order by revision_no desc,as_known_at desc,pg_xact_commit_timestamp(row_xmin) desc) n from candidates)
   select fact_event_id,fact_revision_id,revision_no,canonical_claim_id,category,claim_type,statement,occurred_at,scheduled_for,confirmation_status,lifecycle_status,polarity,as_known_at,committed_at
     from visible where n=1
      and (coalesce(cardinality(p_targets),0)=0 or fact_event_id = any(p_targets) or canonical_claim_id = any(p_targets) or category = any(p_targets))
