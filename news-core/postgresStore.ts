@@ -24,6 +24,7 @@ export type NewsRevisionInput = Readonly<{
   provenance: Omit<NewsRevisionProvenance, "ingestedAt" | "asKnownAt">;
 }>;
 export type NewsRevisionIngestResult = Readonly<{ inserted: boolean; publicationRevisionId: string }>;
+export type FactualBacklogClaim = Readonly<{ publication: NewsPublication; claimToken: string }>;
 
 function watermarkKey(batch: NewsBatch): string | null {
   const cursor = batch.checkpoint.cursor;
@@ -266,40 +267,48 @@ export class PostgresNewsStore {
     return inserted;
   }
 
-  async claimFactualBacklog(limit: number): Promise<NewsPublication[]> {
-    const result = await this.pool.query<{ publication_payload: NewsPublication }>(
+  async claimFactualBacklog(limit: number, owner: string, leaseSeconds = 600): Promise<FactualBacklogClaim[]> {
+    const result = await this.pool.query<{ publication_payload: NewsPublication; claim_token: string }>(
       `with candidates as (
-         select publication_id from news_core.factual_pipeline_backlog
-          where (state='PENDING' or (state='PROCESSING' and lease_until < clock_timestamp()))
-          order by created_at, publication_id
+         select b.publication_id from news_core.factual_pipeline_backlog b
+          join news_core.publications p on p.publication_id=b.publication_id
+         where p.visibility_state='COMMITTED' and p.as_known_at is not null
+           and ((b.state='PENDING' and b.next_attempt_at <= clock_timestamp())
+             or (b.state='PROCESSING' and b.lease_until < clock_timestamp()))
+          order by next_attempt_at, created_at, publication_id
           for update skip locked limit $1
        )
        update news_core.factual_pipeline_backlog b
           set state='PROCESSING', attempts=b.attempts+1,
-              lease_until=clock_timestamp()+interval '10 minutes',
+              lease_until=clock_timestamp()+($2::int * interval '1 second'),
+              claim_owner=$3, claim_token=gen_random_uuid(),
               last_error=null, updated_at=clock_timestamp()
          from candidates c where b.publication_id=c.publication_id
-       returning b.publication_payload`, [Math.max(1, Math.min(limit, 1000))],
+       returning b.publication_payload,b.claim_token`, [Math.max(1, Math.min(limit, 1000)), leaseSeconds, owner],
     );
-    return result.rows.map(row => row.publication_payload);
+    return result.rows.map(row => ({ publication: row.publication_payload, claimToken: row.claim_token }));
   }
 
-  async finishFactualBacklog(publicationId: string, status: "PERSISTED" | "REFUSED", error?: string): Promise<void> {
-    await this.pool.query(
+  async finishFactualBacklog(publicationId: string, owner: string, claimToken: string, status: "PERSISTED" | "REFUSED", error?: string): Promise<"FINISHED" | "STALE"> {
+    const result = await this.pool.query(
       `update news_core.factual_pipeline_backlog
           set state='DONE', completed_status=$2, completed_at=clock_timestamp(),
-              lease_until=null, last_error=$3, updated_at=clock_timestamp()
-        where publication_id=$1 and state='PROCESSING'`, [publicationId, status, error ?? null],
+              lease_until=null, claim_owner=null, claim_token=null, last_error=$4, updated_at=clock_timestamp()
+        where publication_id=$1 and state='PROCESSING' and claim_owner=$3 and claim_token=$5::uuid`, [publicationId, status, owner, error ?? null, claimToken],
     );
+    return (result.rowCount ?? 0) === 1 ? "FINISHED" : "STALE";
   }
 
-  async retryFactualBacklog(publicationId: string, error: unknown): Promise<void> {
-    await this.pool.query(
+  async retryFactualBacklog(publicationId: string, owner: string, claimToken: string, error: unknown): Promise<"REQUEUED" | "STALE"> {
+    const result = await this.pool.query(
       `update news_core.factual_pipeline_backlog
-          set state='PENDING', lease_until=null, last_error=$2, updated_at=clock_timestamp()
-        where publication_id=$1 and state='PROCESSING'`,
-      [publicationId, error instanceof Error ? error.message.slice(0, 1000) : "NEWS_FACTUAL_RETRYABLE_FAILURE"],
+          set state='PENDING', lease_until=null, claim_owner=null, claim_token=null,
+              next_attempt_at=clock_timestamp()+least(300, power(2, least(attempts, 8))) * interval '1 second',
+              last_error=$4, updated_at=clock_timestamp()
+        where publication_id=$1 and state='PROCESSING' and claim_owner=$2 and claim_token=$3::uuid`,
+      [publicationId, owner, claimToken, error instanceof Error ? error.message.slice(0, 1000) : "NEWS_FACTUAL_RETRYABLE_FAILURE"],
     );
+    return (result.rowCount ?? 0) === 1 ? "REQUEUED" : "STALE";
   }
 
   private async assertLease(client: PoolClient, lease: ExecutionLease): Promise<void> {
@@ -357,6 +366,16 @@ export class PostgresNewsStore {
          where excluded.watermark_key is not null and (news_core.checkpoints.watermark_key is null or excluded.watermark_key > news_core.checkpoints.watermark_key)`,
         [batch.checkpoint.collectionScopeKey, batch.checkpoint.sourceId, batch.checkpoint.cursor, key, batch.checkpoint.updatedAt, txid],
       );
+      const backlogInstalled = (await client.query<{ installed: boolean }>("select to_regclass('news_core.factual_pipeline_backlog') is not null as installed")).rows[0].installed;
+      if (backlogInstalled) {
+        for (const publication of batch.publications) {
+          await client.query(
+            `insert into news_core.factual_pipeline_backlog(publication_id,publication_payload)
+             values ($1,$2::jsonb) on conflict (publication_id) do nothing`,
+            [publication.publicationId, JSON.stringify(publication)],
+          );
+        }
+      }
       if (options.failurePoint === "delay-before-commit") await new Promise(resolve => setTimeout(resolve, options.delayBeforeCommitMs ?? 150));
       if (options.failurePoint === "before-commit") throw new Error("INJECTED_FAILURE_BEFORE_COMMIT");
       if (lease) await this.assertLease(client, lease);

@@ -22,11 +22,13 @@ async function runTarget(store: PostgresNewsStore, target: ClaimedTarget, option
   const factualOutcomes = options.factualPipeline
     ? await (async () => {
         await store.enqueueFactualBacklog(result.publications);
-        const publications = await store.claimFactualBacklog(options.factualPipeline!.maxDocuments);
-        const outcomes = await options.factualPipeline!.processPublications(publications, signal);
-        for (const outcome of outcomes) {
-          if (outcome.status === "FAILED_RETRYABLE") await store.retryFactualBacklog(outcome.publicationId, outcome.reason);
-          else await store.finishFactualBacklog(outcome.publicationId, outcome.status, outcome.reason);
+        const claims = await store.claimFactualBacklog(options.factualPipeline!.maxDocuments, options.workerId);
+        const outcomes = await options.factualPipeline!.processPublications(claims.map(claim => claim.publication), signal);
+        for (const [index, outcome] of outcomes.entries()) {
+          const claim = claims[index];
+          if (!claim) continue;
+          if (outcome.status === "FAILED_RETRYABLE") await store.retryFactualBacklog(outcome.publicationId, options.workerId, claim.claimToken, outcome.reason);
+          else await store.finishFactualBacklog(outcome.publicationId, options.workerId, claim.claimToken, outcome.status, outcome.reason);
         }
         return outcomes;
       })()
