@@ -57,6 +57,7 @@ test("Production readiness BL3 real SEC to N5 circuit is conservative and idempo
     const evidenceId = `sec-document-excerpt-${publication.externalId}`;
     const classificationInput: ClassificationInputV1 = { contractVersion: "news-fact-classification-v1", taxonomyVersion: "news-fact-taxonomy-v1", ruleSetVersion: "deterministic-rule-v1", publicationRevision: { ...committedRevision, contentFingerprint: sha256(documentBody), visibilityState: "COMMITTED" }, evidence: [{ evidenceId, publicationRevisionId: revisionTwoId, kind: "DOCUMENT_EXCERPT", sourceDocumentRef: publication.originalUrl, contentLocator: "document:text:live-sec", excerpt, excerptHash: excerptHashV1(excerpt), hashSemantics: "LOCAL_CONTENT_HASH_ONLY", structuredField: null, structuredValue: null, structuredAuthority: null, observedAt: retrievedAt, retrievedAt, asKnownAt: committedRevision.asKnownAt, provenanceRef: `${publication.publicationId}:provenance:2` }], proposedAt: new Date(Date.now() + 2_100).toISOString() };
     const classification = new DeterministicFactClassifierV1().classify(classificationInput);
+    console.log(JSON.stringify({ productionReadiness: "BL3", publicationId: publication.publicationId, documentExcerptSha256: sha256(excerpt), proposals: classification.proposals.length, refusalReasons: classification.refusalReasons }));
     if (classification.proposals.length === 0) {
       assert.ok(classification.refusalReasons.length > 0);
       const api = new NewsConsumptionApiV1({ news, factual: readerFactual }, "0123456789abcdef", "bl3-test-credential");
