@@ -49,7 +49,7 @@ test("News Core N3-C append-only factual persistence, PIT, idempotence and secur
   try {
     await admin.connect();
     assert.match((await admin.query<{ v: string }>("select current_setting('server_version') v")).rows[0].v, /^17\./);
-    assert.equal((await admin.query<{ v: string }>("show track_commit_timestamp")).rows[0].v, "on", "strict PIT requires PostgreSQL commit timestamps");
+    assert.equal((await admin.query<{ v: string }>("select current_setting('track_commit_timestamp') as v")).rows[0].v, "on", "strict PIT requires PostgreSQL commit timestamps");
     await admin.query(await readFile(migration("20261111150000_news_core_postgres_n1.sql"), "utf8"));
     await admin.query("insert into news_core.sources(source_id,provider_key,source_type) values ($1,'n3c-fixture','SEC_EDGAR')", [sourceId]);
     const frontier = await admin.query<{ frontier_id: string }>("insert into news_core.visibility_frontiers(published_at) values ($1) returning frontier_id", [knownOne]);
