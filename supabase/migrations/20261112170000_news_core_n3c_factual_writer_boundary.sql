@@ -12,6 +12,7 @@ do $$ begin
 end $$;
 
 alter table news_core.fact_revisions add column if not exists staged_txid bigint;
+alter table news_core.fact_revisions add column if not exists published_txid bigint;
 
 create table if not exists news_core.fact_pipeline_attestations (
   attestation_id text primary key,
@@ -91,6 +92,7 @@ begin
      and new.occurred_at is not distinct from old.occurred_at and new.scheduled_for is not distinct from old.scheduled_for
      and new.quality_flags is not distinct from old.quality_flags and new.supersedes_revision_id is not distinct from old.supersedes_revision_id
      and new.staged_txid is not distinct from old.staged_txid
+     and (old.finalized_at is null or new.published_txid is not distinct from old.published_txid)
      and ((old.finalized_at is null and new.finalized_at is not null)
        or (old.finalized_at is not null and old.committed_at is null and new.finalized_at is not null and new.committed_at is not null)) then
     return new;
@@ -312,7 +314,7 @@ begin
   if not found then
     raise exception 'NEWS_FACT_REVISION_NOT_AUTHORIZED' using errcode='42501';
   end if;
-  select fr.fact_revision_id,fr.staged_txid,fr.finalized_at,fr.as_known_at,fr.committed_at into revision
+  select fr.fact_revision_id,fr.staged_txid,fr.published_txid,fr.finalized_at,fr.as_known_at,fr.committed_at into revision
     from news_core.fact_revisions fr
     join news_core.fact_events fe using (fact_event_id)
    where fr.fact_revision_id=p_fact_revision_id
@@ -344,7 +346,7 @@ begin
     perform set_config('news_core.fact_sealing','on',true);
     update news_core.fact_revisions
        set as_known_at=greatest(clock_timestamp(),coalesce((select max(dependency_as_known_at) from news_core.fact_revision_dependencies where fact_revision_id=p_fact_revision_id), '-infinity'::timestamptz)),
-           finalized_at=clock_timestamp()
+           finalized_at=clock_timestamp(),published_txid=txid_current()
      where fact_revision_id=p_fact_revision_id and finalized_at is null;
   end if;
   return query select fr.as_known_at,fr.committed_at from news_core.fact_revisions fr where fr.fact_revision_id=p_fact_revision_id;
@@ -366,6 +368,9 @@ begin
   if exists (select 1 from news_core.fact_revisions fr where fr.fact_revision_id=p_fact_revision_id and fr.committed_at is not null) then
     return query select fr.committed_at from news_core.fact_revisions fr where fr.fact_revision_id=p_fact_revision_id;
     return;
+  end if;
+  if exists (select 1 from news_core.fact_revisions fr where fr.fact_revision_id=p_fact_revision_id and fr.published_txid=txid_current()) then
+    raise exception 'NEWS_FACT_PUBLISH_VISIBLE_SAME_TRANSACTION' using errcode='55006';
   end if;
   perform set_config('news_core.fact_sealing','on',true);
   return query update news_core.fact_revisions fr set committed_at=clock_timestamp()

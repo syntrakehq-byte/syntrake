@@ -49,6 +49,7 @@ test("News Core N3-C append-only factual persistence, PIT, idempotence and secur
   try {
     await admin.connect();
     assert.match((await admin.query<{ v: string }>("select current_setting('server_version') v")).rows[0].v, /^17\./);
+    assert.equal((await admin.query<{ v: string }>("show track_commit_timestamp")).rows[0].v, "on", "strict PIT requires PostgreSQL commit timestamps");
     await admin.query(await readFile(migration("20261111150000_news_core_postgres_n1.sql"), "utf8"));
     await admin.query("insert into news_core.sources(source_id,provider_key,source_type) values ($1,'n3c-fixture','SEC_EDGAR')", [sourceId]);
     const frontier = await admin.query<{ frontier_id: string }>("insert into news_core.visibility_frontiers(published_at) values ($1) returning frontier_id", [knownOne]);
@@ -64,7 +65,7 @@ test("News Core N3-C append-only factual persistence, PIT, idempotence and secur
     const first = await store.persist(await attest(input("The company was fined.", knownOne)));
     assert.equal(first.inserted, true);
     const firstCommitted = await admin.query<{ committed_at: Date }>("select committed_at from news_core.fact_revisions where fact_revision_id=$1", [first.factRevisionId]);
-    const afterFirstCommit = new Date(firstCommitted.rows[0].committed_at.valueOf() + 1).toISOString();
+    const afterFirstCommit = new Date(Date.now() + 1000).toISOString();
     assert.equal((await store.readAsOf(afterFirstCommit)).length, 1);
     assert.equal((await store.readAsOf(beforeFirstCommit)).length, 0);
     const sameTransactionInput = await attest(input("same transaction must fail", knownTwo));
@@ -102,6 +103,13 @@ test("News Core N3-C append-only factual persistence, PIT, idempotence and secur
     const crashedInput = await attest(input("post commit crash", knownTwo));
     await assert.rejects(store.persist(crashedInput, "after-commit"), /INJECTED_FAILURE_AFTER_COMMIT/);
     const pendingRevisionId = (await admin.query<{ fact_revision_id: string }>("select fact_revision_id from news_core.fact_revisions where fact_event_id=$1 and statement=$2", [`canonical:${suffix}`, "post commit crash"])).rows[0].fact_revision_id;
+    const samePublishVisible = await pool.connect();
+    try {
+      await samePublishVisible.query("begin"); await samePublishVisible.query("set local role news_factual_writer");
+      await samePublishVisible.query("select * from news_core.publish_fact_revision_v1($1,$2)", [pendingRevisionId, crashedInput.attestationId]);
+      await assert.rejects(samePublishVisible.query("select * from news_core.make_fact_revision_visible_v1($1,$2)", [pendingRevisionId, crashedInput.attestationId]), /NEWS_FACT_PUBLISH_VISIBLE_SAME_TRANSACTION/);
+      await samePublishVisible.query("rollback");
+    } finally { samePublishVisible.release(); }
     const heldPublish = await pool.connect();
     try {
       await heldPublish.query("begin"); await heldPublish.query("set local role news_factual_writer");
@@ -112,7 +120,15 @@ test("News Core N3-C append-only factual persistence, PIT, idempotence and secur
       assert.equal((await readerStore.readAsOf(cutoffDuringPublish)).some(row => row.factRevisionId === pendingRevisionId), false);
     } finally { heldPublish.release(); }
     const visibilityClient = await pool.connect();
-    try { await visibilityClient.query("begin"); await visibilityClient.query("set local role news_factual_writer"); await visibilityClient.query("select * from news_core.make_fact_revision_visible_v1($1,$2)", [pendingRevisionId, crashedInput.attestationId]); await visibilityClient.query("commit"); } finally { visibilityClient.release(); }
+    try {
+      await visibilityClient.query("begin"); await visibilityClient.query("set local role news_factual_writer");
+      await visibilityClient.query("select * from news_core.make_fact_revision_visible_v1($1,$2)", [pendingRevisionId, crashedInput.attestationId]);
+      const cutoffDuringVisibility = new Date().toISOString();
+      assert.equal((await readerStore.readAsOf(cutoffDuringVisibility)).some(row => row.factRevisionId === pendingRevisionId), false);
+      await visibilityClient.query("commit");
+      assert.equal((await readerStore.readAsOf(cutoffDuringVisibility)).some(row => row.factRevisionId === pendingRevisionId), false);
+      assert.equal((await readerStore.readAsOf(new Date(Date.now() + 1000).toISOString())).some(row => row.factRevisionId === pendingRevisionId), true);
+    } finally { visibilityClient.release(); }
     assert.equal((await store.persist(crashedInput)).inserted, false);
     assert.equal((await admin.query<{ n: number }>("select count(*)::int n from news_core.fact_revisions where fact_event_id=$1", [first.factEventId])).rows[0].n, 6);
     await assert.rejects(admin.query("update news_core.fact_revisions set statement='tampered' where fact_revision_id=$1", [first.factRevisionId]), /NEWS_FACT_HISTORY_APPEND_ONLY/);
