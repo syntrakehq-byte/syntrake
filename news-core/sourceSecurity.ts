@@ -92,6 +92,12 @@ function fetchPinnedHttps(target: ApprovedTarget, init: RequestInit | undefined,
         ? callback(null, [{ address: target.address, family: target.family }])
         : callback(null, target.address, target.family),
     }, response => {
+      const responseHeaders = response.headers as Record<string, string>;
+      if ([204, 205, 304].includes(response.statusCode ?? 0)) {
+        response.resume();
+        response.once("end", () => finish(() => resolve(new Response(null, { status: response.statusCode ?? 0, headers: responseHeaders }))));
+        return;
+      }
       const chunks: Buffer[] = []; let total = 0;
       response.on("data", chunk => {
         const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
@@ -99,7 +105,7 @@ function fetchPinnedHttps(target: ApprovedTarget, init: RequestInit | undefined,
         if (total > MAX_RESPONSE_BYTES) { req.destroy(new Error("NEWS_SOURCE_RESPONSE_TOO_LARGE")); return; }
         chunks.push(buffer);
       });
-      response.on("end", () => finish(() => resolve(new Response(Buffer.concat(chunks), { status: response.statusCode ?? 0, headers: response.headers as Record<string, string> }))));
+      response.on("end", () => finish(() => resolve(new Response(Buffer.concat(chunks), { status: response.statusCode ?? 0, headers: responseHeaders }))));
       response.on("error", error => finish(() => reject(error)));
     });
     req.once("timeout", () => req.destroy(new Error("NEWS_SOURCE_TIMEOUT")));
@@ -123,17 +129,19 @@ export async function fetchSafeExternal(input: string, init?: RequestInit, fetch
   const deadlineTimer = setTimeout(() => controller.abort(new Error("NEWS_SOURCE_TIMEOUT")), DEFAULT_TIMEOUT_MS);
   const aborted = new Promise<never>((_, reject) => controller.signal.addEventListener("abort", () => reject(controller.signal.reason ?? new Error("NEWS_SOURCE_ABORTED")), { once: true }));
   const requestInit = { ...init, signal: controller.signal };
-  const withinDeadline = <T>(operation: Promise<T>): Promise<T> => Promise.race([operation, aborted]);
+  const withinDeadline = <T>(operation: () => Promise<T>): Promise<T> => controller.signal.aborted
+    ? Promise.reject(controller.signal.reason ?? new Error("NEWS_SOURCE_ABORTED"))
+    : Promise.race([operation(), aborted]);
   try {
-    const initial = await withinDeadline(resolveSafeExternalUrl(input, SEC_ALLOWED_HOSTS, lookupImpl));
+    const initial = await withinDeadline(() => resolveSafeExternalUrl(input, SEC_ALLOWED_HOSTS, lookupImpl));
     const remaining = Math.max(1, deadline - Date.now());
     const response = fetchImpl === fetch
-      ? await withinDeadline(fetchPinnedHttps(initial, requestInit, remaining))
-      : await withinDeadline(fetchImpl(initial.url, { ...requestInit, redirect: "manual" }));
+      ? await withinDeadline(() => fetchPinnedHttps(initial, requestInit, remaining))
+      : await withinDeadline(() => fetchImpl(initial.url, { ...requestInit, redirect: "manual" }));
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get("location");
       if (!location) throw new Error("NEWS_SOURCE_REDIRECT_INVALID");
-      await withinDeadline(resolveSafeExternalUrl(new URL(location, initial.url).toString(), SEC_ALLOWED_HOSTS, lookupImpl));
+      await withinDeadline(() => resolveSafeExternalUrl(new URL(location, initial.url).toString(), SEC_ALLOWED_HOSTS, lookupImpl));
       throw new Error("NEWS_SOURCE_REDIRECT_REQUIRES_REVALIDATION");
     }
     return response;

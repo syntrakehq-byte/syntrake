@@ -106,3 +106,26 @@ test("BL2 external cancellation interrupts a pending DNS phase", async () => {
   try { await assert.rejects(fetchSafeExternal("https://data.sec.gov/cancel", { signal: controller.signal }, fetch, resolver), /AbortError|aborted/i); }
   finally { clearTimeout(cancellation); }
 });
+
+test("BL2 already-aborted signals reject before DNS resolution", async () => {
+  const controller = new AbortController(); controller.abort();
+  let resolverCalled = false;
+  const resolver = async () => { resolverCalled = true; await new Promise(() => undefined); return []; };
+  await assert.rejects(fetchSafeExternal("https://data.sec.gov/already-aborted", { signal: controller.signal }, fetch, resolver), /AbortError|aborted/i);
+  assert.equal(resolverCalled, false);
+});
+
+test("BL2 no-body status responses produce empty Responses", async () => {
+  const cert = await testCertificate();
+  try {
+    for (const status of [204, 205, 304]) {
+      const server = https.createServer({ key: cert.key, cert: cert.certificate }, (_request, response) => { response.writeHead(status); response.end(); });
+      await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", () => resolve()); });
+      try {
+        const port = (server.address() as { port: number }).port;
+        const result = await fetchPinnedHttpsForControlledTest("https://data.sec.gov/no-body", "127.0.0.1", 4, port, cert.certificate);
+        assert.equal(result.status, status); assert.equal(await result.text(), "");
+      } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+    }
+  } finally { await rm(cert.directory, { recursive: true, force: true }); }
+});
