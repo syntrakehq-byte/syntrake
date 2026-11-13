@@ -32,14 +32,20 @@ test("Production readiness BL3 real SEC to N5 circuit is conservative and idempo
     for (const file of ["20261111150000_news_core_postgres_n1.sql", "20261111170000_news_core_n2a_revisions.sql", "20261112120000_news_core_n3c_factual_persistence.sql", "20261112170000_news_core_n3c_factual_writer_boundary.sql", "20261112150000_news_core_n5_read_api.sql"]) await admin.query(await readFile(migration(file), "utf8"));
 
     const collected = await fetchSecFilings({ cik: "0000320193", userAgent, now: new Date(), signal: AbortSignal.timeout(20_000) });
-    const publication = collected.publications.find(item => item.form === "8-K");
-    assert.ok(publication, "SEC live collection must provide an 8-K publication");
-    const documentResponse = await fetchSafeExternal(publication.originalUrl, { headers: { "User-Agent": userAgent, Accept: "text/html" }, signal: AbortSignal.timeout(20_000) });
-    assert.equal(documentResponse.ok, true);
-    const documentBody = await documentResponse.text();
-    const documentText = stripDocument(documentBody);
-    const excerpt = documentText.split(/(?<=[.!?])\s+/).map(value => value.trim()).find(value => value.length >= 20 && value.length <= 1200 && /(?:announc|declared|reported|earnings|revenue|dividend|fined|sanction|appointed)/i.test(value));
-    assert.ok(excerpt, "real SEC document must yield a bounded source excerpt or the test must fail closed");
+    const candidates = collected.publications.filter(item => item.form === "8-K").slice(0, 20);
+    assert.ok(candidates.length > 0, "SEC live collection must provide an 8-K publication");
+    let publication = candidates[0];
+    let documentBody = "";
+    let excerpt: string | undefined;
+    for (const candidate of candidates) {
+      const response = await fetchSafeExternal(candidate.originalUrl, { headers: { "User-Agent": userAgent, Accept: "text/html" }, signal: AbortSignal.timeout(20_000) });
+      assert.equal(response.ok, true);
+      const body = await response.text();
+      const text = stripDocument(body);
+      const candidateExcerpt = text.split(/(?<=[.!?])\s+/).map(value => value.trim()).find(value => value.length >= 20 && value.length <= 1200 && /(?:\b(?:declares?|declared|announces?|announced)\b.{0,100}\bdividend\b|\b(?:reports?|reported|announces?|announced)\b.{0,100}\b(?:earnings|revenue|net income|profit|loss)\b|\b(?:was|were|is|are|has|have|had|received|fined|sanctioned|charged|sued|settled|convicted|approved|cleared|ordered)\b.{0,80}\b(?:fine|fined|sanction|sanctioned|charge|charged|lawsuit|sued|settlement|settled|convicted|approved|cleared|order|ordered)\b|\b(?:signed|declared|announced|imposed|lifted|entered|occurred|began|continued|reported)\b.{0,80}\b(?:ceasefire|sanctions?|invasion|military operation|armed conflict|treaty)\b)/i.test(value));
+      if (candidateExcerpt) { publication = candidate; documentBody = body; excerpt = candidateExcerpt; break; }
+    }
+    assert.ok(excerpt, "real SEC documents must yield a bounded excerpt matching a controlled rule or the test must fail closed");
     const retrievedAt = new Date().toISOString();
     const batch: NewsBatch = { publications: [publication], observations: collected.observations.filter(item => item.publicationId === publication.publicationId), checkpoint: { sourceId: "sec-edgar", collectionScopeKey: `bl3-sec-${publication.externalId}`, cursor: collected.nextCursor, updatedAt: retrievedAt } };
     const firstIngest = await news.ingestAdministrative(batch);
