@@ -54,7 +54,7 @@ jobs:
           cid="$(docker ps --filter 'ancestor=postgres:17' --format '{{.ID}}' | head -n 1)"
           test -n "$cid"
           docker exec "$cid" psql -U postgres -d syntrake_news_ci -v ON_ERROR_STOP=1 -c "alter system set track_commit_timestamp = on"
-          docker exec "$cid" pg_ctl -D /var/lib/postgresql/data restart -m fast
+          docker exec --user postgres "$cid" pg_ctl -D /var/lib/postgresql/data restart -m fast
           for i in $(seq 1 30); do docker exec "$cid" pg_isready -U postgres -d syntrake_news_ci >/dev/null 2>&1 && break; sleep 1; done
           docker exec "$cid" psql -U postgres -d syntrake_news_ci -Atc "show track_commit_timestamp" | grep -qx on
       - run: npm run test:news
