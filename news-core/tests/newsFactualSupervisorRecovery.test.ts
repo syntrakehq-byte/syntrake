@@ -74,10 +74,11 @@ test("FACTUAL supervisor restarts after SIGKILL and completes SEC work in N5", {
       output += String(chunk);
       starts = (output.match(/NEWS_SUPERVISOR_STARTED/g) ?? []).length;
       for (const match of output.matchAll(/NEWS_SUPERVISOR_STARTED pid=(\d+)/g)) workerPids.add(Number(match[1]));
+      for (const match of output.matchAll(/NEWS_WORKER_READY pid=(\d+)/g)) workerPids.add(Number(match[1]));
     });
     processHandle.stderr.on("data", chunk => { output += String(chunk); });
-    await waitFor(() => starts >= 1 && /NEWS_EXECUTION_MODE=FACTUAL/.test(output), 20_000);
-    const firstPid = Number(output.match(/NEWS_SUPERVISOR_STARTED pid=(\d+)/)?.[1]);
+    await waitFor(() => starts >= 1 && /NEWS_EXECUTION_MODE=FACTUAL/.test(output) && /NEWS_WORKER_READY pid=\d+/.test(output), 20_000);
+    const firstPid = Number(output.match(/NEWS_WORKER_READY pid=(\d+)/)?.[1]);
     assert.ok(firstPid > 0);
     await waitFor(async () => Number((await admin.query("select count(*)::int n from news_core.factual_pipeline_backlog where publication_id=$1 and state='PROCESSING'", [publication.publicationId])).rows[0].n) === 1, 20_000);
     const firstClaim = (await admin.query<{ claim_owner: string; claim_token: string; attempts: number }>("select claim_owner,claim_token,attempts from news_core.factual_pipeline_backlog where publication_id=$1", [publication.publicationId])).rows[0];
@@ -86,7 +87,7 @@ test("FACTUAL supervisor restarts after SIGKILL and completes SEC work in N5", {
     assert.ok(firstClaim.attempts >= 1);
     process.kill(firstPid, "SIGKILL");
     await waitFor(() => starts >= 2, 30_000);
-    const workerStarts = [...output.matchAll(/NEWS_SUPERVISOR_STARTED pid=(\d+)/g)].map(match => Number(match[1]));
+    const workerStarts = [...output.matchAll(/NEWS_WORKER_READY pid=(\d+)/g)].map(match => Number(match[1]));
     const secondPid = workerStarts.at(-1);
     assert.ok(secondPid && secondPid !== firstPid);
     await waitFor(async () => Number((await admin.query("select count(*)::int n from news_core.factual_pipeline_backlog where publication_id=$1 and state='PROCESSING' and claim_owner=$2 and attempts >= 2", [publication.publicationId, `worker-${secondPid}`])).rows[0].n) === 1, 30_000);

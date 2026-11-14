@@ -18,6 +18,7 @@ if (executionMode !== "FACTUAL" && executionMode !== "N1_ONLY") throw new Error(
 if (executionMode === "FACTUAL" && !factualConfigured) throw new Error("NEWS_FACTUAL_PIPELINE_CONFIG_INCOMPLETE");
 if (executionMode === "N1_ONLY" && factualConfigured) throw new Error("NEWS_N1_ONLY_WITH_FACTUAL_CREDENTIALS");
 console.log(`NEWS_EXECUTION_MODE=${executionMode}`);
+console.log(`NEWS_WORKER_READY pid=${process.pid} workerId=${process.env.NEWS_WORKER_ID ?? `worker-${process.pid}`}`);
 const factualPipeline = executionMode === "FACTUAL"
   ? new NewsFactualPipelineV1({ news: store, verifierPool: new Pool({ connectionString: factualVerifierUrl, max: 2, application_name: "syntrake-news-verifier" }), attestorPool: new Pool({ connectionString: factualAttestorUrl, max: 2, application_name: "syntrake-news-attestor" }), writerPool: new Pool({ connectionString: factualWriterUrl, max: 2, application_name: "syntrake-news-writer" }), userAgent, maxDocuments: Number(process.env.NEWS_FACTUAL_DOCUMENT_LIMIT ?? 20), processingHoldMs: process.env.NODE_ENV === "test" && process.env.NEWS_TEST_ALLOW_PROCESSING_HOLD === "1" ? Number(process.env.NEWS_FACTUAL_PROCESSING_HOLD_MS ?? 0) : 0 })
   : undefined;
