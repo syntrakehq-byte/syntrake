@@ -63,7 +63,12 @@ test("FACTUAL supervisor restarts after SIGKILL and completes SEC work in N5", {
     assert.ok(firstPid > 0);
     process.kill(firstPid, "SIGKILL");
     await waitFor(() => starts >= 2, 30_000);
-    await waitFor(async () => Number((await admin.query("select count(*)::int n from news_core.fact_events")).rows[0].n) > 0, 30_000);
+    const factsDeadline = Date.now() + 30_000;
+    while (Date.now() < factsDeadline) {
+      if (Number((await admin.query("select count(*)::int n from news_core.fact_events")).rows[0].n) > 0) break;
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+    assert.ok(Number((await admin.query("select count(*)::int n from news_core.fact_events")).rows[0].n) > 0, `FACTUAL_SUPERVISOR_TIMEOUT output=${output.slice(-5000)}`);
     const reader = new PostgresFactualStore(new Pool({ connectionString: roleUrl(DB_URL, roles.reader) }), "news_reader");
     const news = new PostgresNewsStore(new Pool({ connectionString: roleUrl(DB_URL, roles.service) }));
     const api = new NewsConsumptionApiV1({ news, factual: reader }, "0123456789abcdef", "bl4-factual-supervisor");
