@@ -14,6 +14,7 @@ const factualAttestorUrl = process.env.NEWS_FACTUAL_ATTESTOR_DATABASE_URL;
 const factualWriterUrl = process.env.NEWS_FACTUAL_WRITER_DATABASE_URL;
 const executionMode = process.env.NEWS_EXECUTION_MODE ?? "FACTUAL";
 const factualConfigured = Boolean(factualVerifierUrl && factualAttestorUrl && factualWriterUrl);
+const factualPublicationIds = process.env.NODE_ENV === "test" && process.env.NEWS_TEST_ALLOW_PROCESSING_HOLD === "1" && process.env.NEWS_FACTUAL_PUBLICATION_ID ? [process.env.NEWS_FACTUAL_PUBLICATION_ID] : undefined;
 if (executionMode !== "FACTUAL" && executionMode !== "N1_ONLY") throw new Error("NEWS_EXECUTION_MODE_INVALID");
 if (executionMode === "FACTUAL" && !factualConfigured) throw new Error("NEWS_FACTUAL_PIPELINE_CONFIG_INCOMPLETE");
 if (executionMode === "N1_ONLY" && factualConfigured) throw new Error("NEWS_N1_ONLY_WITH_FACTUAL_CREDENTIALS");
@@ -45,7 +46,7 @@ if (shutdownFile) {
   }, 100);
 }
 registerSecTarget(store, process.env.SEC_CIK ?? "0000320193")
-  .then(() => runNewsExecutorForever({ store, factualPipeline, workerId: process.env.NEWS_WORKER_ID ?? `worker-${process.pid}`, secUserAgent: userAgent, leaseSeconds: Number(process.env.NEWS_LEASE_SECONDS ?? 60), intervalMs: Number(process.env.NEWS_POLL_INTERVAL_MS ?? 30000), signal: abort.signal, onExecutionError: () => { executionFailed = true; } }))
+  .then(() => runNewsExecutorForever({ store, factualPipeline, factualPublicationIds, workerId: process.env.NEWS_WORKER_ID ?? `worker-${process.pid}`, secUserAgent: userAgent, leaseSeconds: Number(process.env.NEWS_LEASE_SECONDS ?? 60), intervalMs: Number(process.env.NEWS_POLL_INTERVAL_MS ?? 30000), signal: abort.signal, onExecutionError: () => { executionFailed = true; } }))
   .catch(error => { console.error(error instanceof Error ? error.message : "NEWS_WORKER_FAILED"); process.exitCode = 1; })
   .finally(async () => {
     if (shutdownPoll) clearInterval(shutdownPoll);

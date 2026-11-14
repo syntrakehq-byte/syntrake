@@ -7,6 +7,7 @@ export type NewsExecutorOptions = Readonly<{
   collectionScopeKey?: string; heartbeatIntervalMs?: number; fetchTimeoutMs?: number; fetchImpl?: typeof fetch; now?: Date; signal?: AbortSignal;
   onExecutionError?: (error: unknown) => void;
   factualPipeline?: NewsFactualPipelineV1;
+  factualPublicationIds?: readonly string[];
 }>;
 
 async function runTarget(store: PostgresNewsStore, target: ClaimedTarget, options: NewsExecutorOptions, signal: AbortSignal, lease: ExecutionLease): Promise<{ ingested: number; factualOutcomes: readonly FactualPipelineOutcomeV1[] }> {
@@ -28,9 +29,9 @@ async function runTarget(store: PostgresNewsStore, target: ClaimedTarget, option
 
 async function drainFactualBacklog(store: PostgresNewsStore, pipeline: NewsFactualPipelineV1, options: NewsExecutorOptions, signal: AbortSignal, lease?: ExecutionLease): Promise<readonly FactualPipelineOutcomeV1[]> {
   return await (async () => {
-        await store.reconcileFactualBacklog();
+        await store.reconcileFactualBacklog(1000, options.factualPublicationIds);
         const factualLeaseSeconds = Math.max(1, Math.floor(lease?.leaseSeconds ?? options.leaseSeconds ?? 60));
-        const claims = await store.claimFactualBacklog(options.factualPipeline!.maxDocuments, options.workerId, factualLeaseSeconds);
+        const claims = await store.claimFactualBacklog(options.factualPipeline!.maxDocuments, options.workerId, factualLeaseSeconds, options.factualPublicationIds);
         if (claims.length === 0) return [];
         const localAbort = new AbortController();
         const combinedSignal = AbortSignal.any([signal, localAbort.signal]);

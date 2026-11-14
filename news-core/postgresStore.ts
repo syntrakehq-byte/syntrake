@@ -267,7 +267,7 @@ export class PostgresNewsStore {
     return inserted;
   }
 
-  async reconcileFactualBacklog(limit = 1000): Promise<number> {
+  async reconcileFactualBacklog(limit = 1000, publicationIds?: readonly string[]): Promise<number> {
     const result = await this.pool.query(
       `insert into news_core.factual_pipeline_backlog(publication_id,publication_payload)
        select p.publication_id, jsonb_build_object(
@@ -277,12 +277,13 @@ export class PostgresNewsStore {
          from news_core.publications p
          left join news_core.factual_pipeline_backlog b on b.publication_id=p.publication_id
         where p.visibility_state='COMMITTED' and p.as_known_at is not null and b.publication_id is null
-        order by p.as_known_at,p.publication_id limit $1 on conflict do nothing`, [Math.max(1, Math.min(limit, 10000))],
+          and ($2::text[] is null or p.publication_id = any($2::text[]))
+        order by p.as_known_at,p.publication_id limit $1 on conflict do nothing`, [Math.max(1, Math.min(limit, 10000)), publicationIds?.length ? publicationIds : null],
     );
     return result.rowCount ?? 0;
   }
 
-  async claimFactualBacklog(limit: number, owner: string, leaseSeconds = 600): Promise<FactualBacklogClaim[]> {
+  async claimFactualBacklog(limit: number, owner: string, leaseSeconds = 600, publicationIds?: readonly string[]): Promise<FactualBacklogClaim[]> {
     const result = await this.pool.query<{ publication_payload: NewsPublication; claim_token: string }>(
       `with candidates as (
          select b.publication_id from news_core.factual_pipeline_backlog b
@@ -290,6 +291,7 @@ export class PostgresNewsStore {
          where p.visibility_state='COMMITTED' and p.as_known_at is not null
            and ((b.state='PENDING' and b.next_attempt_at <= clock_timestamp())
              or (b.state='PROCESSING' and b.lease_until < clock_timestamp()))
+           and ($4::text[] is null or b.publication_id = any($4::text[]))
           order by b.next_attempt_at, b.created_at, b.publication_id
           for update skip locked limit $1
        )
@@ -299,7 +301,7 @@ export class PostgresNewsStore {
               claim_owner=$3, claim_token=gen_random_uuid(),
               last_error=null, updated_at=clock_timestamp()
          from candidates c where b.publication_id=c.publication_id
-       returning b.publication_payload,b.claim_token`, [Math.max(1, Math.min(limit, 1000)), leaseSeconds, owner],
+       returning b.publication_payload,b.claim_token`, [Math.max(1, Math.min(limit, 1000)), leaseSeconds, owner, publicationIds?.length ? publicationIds : null],
     );
     return result.rows.map(row => ({ publication: row.publication_payload, claimToken: row.claim_token }));
   }
