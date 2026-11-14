@@ -76,7 +76,12 @@ test("FACTUAL supervisor restarts after SIGKILL and completes SEC work in N5", {
     const events = await api.getNewsEvents({ serviceId: "news_reader", credential: "bl4-factual-supervisor" }, { asOf });
     assert.equal(events.status, "AVAILABLE"); assert.ok(events.data.length > 0);
     processHandle.kill("SIGTERM");
-    const exit = await new Promise<{ code: number | null }>(resolve => processHandle.once("close", code => resolve({ code })));
+    const exit = await new Promise<{ code: number | null }>(resolve => {
+      let settled = false;
+      const finish = (code: number | null) => { if (!settled) { settled = true; resolve({ code }); } };
+      processHandle.once("close", finish);
+      if (processHandle.exitCode !== null || processHandle.signalCode !== null) finish(processHandle.exitCode);
+    });
     assert.equal(exit.code, 0, output);
     const duplicates = Number((await admin.query("select count(*)::int n from news_core.fact_revisions")).rows[0].n);
     assert.ok(duplicates > 0);
