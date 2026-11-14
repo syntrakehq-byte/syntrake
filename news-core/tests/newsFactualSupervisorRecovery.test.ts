@@ -67,7 +67,7 @@ test("FACTUAL supervisor restarts after SIGKILL and completes SEC work in N5", {
     await adminNews.ingestAdministrative({ publications: [publication], observations: collected.observations.filter(item => item.publicationId === publication.publicationId), checkpoint: { sourceId: "sec-edgar", collectionScopeKey: scope, cursor: collected.nextCursor, updatedAt: observedAt } });
     console.log(`BL4_FACTUAL_SETUP ingest=ok publication=${publication.publicationId}`);
     assert.equal(Number((await admin.query("select count(*)::int n from news_core.fact_events where canonical_claim_id=$1", [`sec:${publication.externalId}`])).rows[0].n), 0);
-    supervisor = spawn(process.execPath, ["node_modules/tsx/dist/cli.mjs", "scripts/news-supervisor.ts"], { cwd: process.cwd(), env: { ...process.env, NEWS_DATABASE_URL: roleUrl(DB_URL, roles.service), NEWS_PIPELINE_VERIFIER_DATABASE_URL: roleUrl(DB_URL, roles.verifier), NEWS_FACTUAL_ATTESTOR_DATABASE_URL: roleUrl(DB_URL, roles.attestor), NEWS_FACTUAL_WRITER_DATABASE_URL: roleUrl(DB_URL, roles.writer), NEWS_EXECUTION_MODE: "FACTUAL", SEC_CIK: "0000320193", SEC_USER_AGENT: userAgent, NEWS_POLL_INTERVAL_MS: "100", NEWS_FACTUAL_DOCUMENT_LIMIT: "1", NEWS_FACTUAL_PROCESSING_HOLD_MS: "10000" }, stdio: ["ignore", "pipe", "pipe"] });
+    supervisor = spawn(process.execPath, ["node_modules/tsx/dist/cli.mjs", "scripts/news-supervisor.ts"], { cwd: process.cwd(), env: { ...process.env, NODE_ENV: "test", NEWS_TEST_ALLOW_PROCESSING_HOLD: "1", NEWS_DATABASE_URL: roleUrl(DB_URL, roles.service), NEWS_PIPELINE_VERIFIER_DATABASE_URL: roleUrl(DB_URL, roles.verifier), NEWS_FACTUAL_ATTESTOR_DATABASE_URL: roleUrl(DB_URL, roles.attestor), NEWS_FACTUAL_WRITER_DATABASE_URL: roleUrl(DB_URL, roles.writer), NEWS_EXECUTION_MODE: "FACTUAL", SEC_CIK: "0000320193", SEC_USER_AGENT: userAgent, NEWS_POLL_INTERVAL_MS: "100", NEWS_LEASE_SECONDS: "5", NEWS_FACTUAL_DOCUMENT_LIMIT: "1", NEWS_FACTUAL_PROCESSING_HOLD_MS: "10000" }, stdio: ["ignore", "pipe", "pipe"] });
     const processHandle = supervisor;
     console.log("BL4_FACTUAL_SETUP supervisor=spawned");
     processHandle.stdout.on("data", chunk => {
@@ -80,8 +80,20 @@ test("FACTUAL supervisor restarts after SIGKILL and completes SEC work in N5", {
     const firstPid = Number(output.match(/NEWS_SUPERVISOR_STARTED pid=(\d+)/)?.[1]);
     assert.ok(firstPid > 0);
     await waitFor(async () => Number((await admin.query("select count(*)::int n from news_core.factual_pipeline_backlog where publication_id=$1 and state='PROCESSING'", [publication.publicationId])).rows[0].n) === 1, 20_000);
+    const firstClaim = (await admin.query<{ claim_owner: string; claim_token: string; attempt_count: number }>("select claim_owner,claim_token,attempt_count from news_core.factual_pipeline_backlog where publication_id=$1", [publication.publicationId])).rows[0];
+    assert.equal(firstClaim.claim_owner, `worker-${firstPid}`);
+    assert.ok(firstClaim.claim_token);
+    assert.ok(firstClaim.attempt_count >= 1);
     process.kill(firstPid, "SIGKILL");
     await waitFor(() => starts >= 2, 30_000);
+    const workerStarts = [...output.matchAll(/NEWS_SUPERVISOR_STARTED pid=(\d+)/g)].map(match => Number(match[1]));
+    const secondPid = workerStarts.at(-1);
+    assert.ok(secondPid && secondPid !== firstPid);
+    await waitFor(async () => Number((await admin.query("select count(*)::int n from news_core.factual_pipeline_backlog where publication_id=$1 and state='PROCESSING' and claim_owner=$2 and attempt_count >= 2", [publication.publicationId, `worker-${secondPid}`])).rows[0].n) === 1, 30_000);
+    const secondClaim = (await admin.query<{ claim_owner: string; claim_token: string; attempt_count: number }>("select claim_owner,claim_token,attempt_count from news_core.factual_pipeline_backlog where publication_id=$1", [publication.publicationId])).rows[0];
+    assert.equal(secondClaim.claim_owner, `worker-${secondPid}`);
+    assert.notEqual(secondClaim.claim_token, firstClaim.claim_token);
+    assert.ok(secondClaim.attempt_count >= 2);
     const canonicalClaimId = `sec:${publication.externalId}`;
     const factsDeadline = Date.now() + 30_000;
     while (Date.now() < factsDeadline) {
@@ -100,6 +112,11 @@ test("FACTUAL supervisor restarts after SIGKILL and completes SEC work in N5", {
     const asOf = (await admin.query<{ cutoff: string }>("select clock_timestamp()::timestamptz::text cutoff")).rows[0].cutoff;
     const events = await api.getNewsEvents({ serviceId: "news_reader", credential: "bl4-factual-supervisor" }, { asOf, targets: [factual.rows[0].event_id] });
     assert.equal(events.status, "AVAILABLE"); assert.equal(events.data.length, 1); assert.equal(events.data[0].canonicalClaimId, canonicalClaimId);
+    const executionsBeforeLocalRecovery = Number((await admin.query("select count(*)::int n from news_core.executions where collection_scope_key=$1", [scope])).rows[0].n);
+    await admin.query("update news_core.collection_targets set next_run_at=clock_timestamp()+interval '1 hour', lease_owner=null, lease_until=null, active_execution_id=null where collection_scope_key=$1", [scope]);
+    await admin.query("update news_core.factual_pipeline_backlog set state='PENDING', completed_status=null, completed_at=null, claim_owner=null, claim_token=null, lease_until=null, next_attempt_at=clock_timestamp() where publication_id=$1", [publication.publicationId]);
+    await waitFor(async () => Number((await admin.query("select count(*)::int n from news_core.factual_pipeline_backlog where publication_id=$1 and state='DONE' and completed_status='PERSISTED'", [publication.publicationId])).rows[0].n) === 1, 30_000);
+    assert.equal(Number((await admin.query("select count(*)::int n from news_core.executions where collection_scope_key=$1", [scope])).rows[0].n), executionsBeforeLocalRecovery, "local factual recovery must not claim a new N1 collection");
     processHandle.kill("SIGTERM");
     const exit = await new Promise<{ code: number | null }>(resolve => {
       let settled = false;
