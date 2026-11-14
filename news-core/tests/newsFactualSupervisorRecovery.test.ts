@@ -39,6 +39,7 @@ test("FACTUAL supervisor restarts after SIGKILL and completes SEC work in N5", {
     await admin.query(`grant news_factual_attestor to ${roles.attestor}`);
     await admin.query(`grant news_factual_writer to ${roles.writer}`);
     await admin.query(`grant news_reader to ${roles.reader}`);
+    await admin.query("delete from news_core.factual_pipeline_backlog");
     console.log("BL4_FACTUAL_SETUP roles=ok");
     const userAgent = "SYNTRAKE BL4 factual supervisor CI/1.0 security@syntrake.com";
     const collected = await fetchSecFilings({ cik: "0000320193", userAgent, now: new Date(), signal: AbortSignal.timeout(20_000) });
@@ -55,7 +56,7 @@ test("FACTUAL supervisor restarts after SIGKILL and completes SEC work in N5", {
     const observedAt = new Date().toISOString();
     await adminNews.ingestAdministrative({ publications: [publication], observations: collected.observations.filter(item => item.publicationId === publication.publicationId), checkpoint: { sourceId: "sec-edgar", collectionScopeKey: scope, cursor: collected.nextCursor, updatedAt: observedAt } });
     console.log(`BL4_FACTUAL_SETUP ingest=ok publication=${publication.publicationId}`);
-    supervisor = spawn(process.execPath, ["node_modules/tsx/dist/cli.mjs", "scripts/news-supervisor.ts"], { cwd: process.cwd(), env: { ...process.env, NEWS_DATABASE_URL: roleUrl(DB_URL, roles.service), NEWS_PIPELINE_VERIFIER_DATABASE_URL: roleUrl(DB_URL, roles.verifier), NEWS_FACTUAL_ATTESTOR_DATABASE_URL: roleUrl(DB_URL, roles.attestor), NEWS_FACTUAL_WRITER_DATABASE_URL: roleUrl(DB_URL, roles.writer), NEWS_EXECUTION_MODE: "FACTUAL", SEC_CIK: "0000320193", SEC_USER_AGENT: userAgent, NEWS_POLL_INTERVAL_MS: "100", NEWS_FACTUAL_DOCUMENT_LIMIT: "20" }, stdio: ["ignore", "pipe", "pipe"] });
+    supervisor = spawn(process.execPath, ["node_modules/tsx/dist/cli.mjs", "scripts/news-supervisor.ts"], { cwd: process.cwd(), env: { ...process.env, NEWS_DATABASE_URL: roleUrl(DB_URL, roles.service), NEWS_PIPELINE_VERIFIER_DATABASE_URL: roleUrl(DB_URL, roles.verifier), NEWS_FACTUAL_ATTESTOR_DATABASE_URL: roleUrl(DB_URL, roles.attestor), NEWS_FACTUAL_WRITER_DATABASE_URL: roleUrl(DB_URL, roles.writer), NEWS_EXECUTION_MODE: "FACTUAL", SEC_CIK: "0000320193", SEC_USER_AGENT: userAgent, NEWS_POLL_INTERVAL_MS: "100", NEWS_FACTUAL_DOCUMENT_LIMIT: "1" }, stdio: ["ignore", "pipe", "pipe"] });
     const processHandle = supervisor;
     console.log("BL4_FACTUAL_SETUP supervisor=spawned");
     processHandle.stdout.on("data", chunk => { output += String(chunk); starts = (output.match(/NEWS_SUPERVISOR_STARTED/g) ?? []).length; });
