@@ -32,7 +32,7 @@ test("worker subprocess has one bootstrap, exits 0 after cooperative shutdown an
   try {
     await admin.query(await readFile(migration, "utf8"));
     await writeFile(shutdownFile, "cooperative\n", "utf8");
-    const result = await runWorker({ NEWS_DATABASE_URL: DB_URL, SEC_USER_AGENT: "SYNTRAKE subprocess test@example.com", NEWS_SHUTDOWN_FILE: shutdownFile, SEC_CIK: cik, NEWS_POLL_INTERVAL_MS: "50" });
+    const result = await runWorker({ NEWS_DATABASE_URL: DB_URL, SEC_USER_AGENT: "SYNTRAKE subprocess test@example.com", NEWS_EXECUTION_MODE: "N1_ONLY", NEWS_SHUTDOWN_FILE: shutdownFile, SEC_CIK: cik, NEWS_POLL_INTERVAL_MS: "50" });
     assert.equal(result.signal, null); assert.equal(result.code, 0, result.stderr);
     assert.match(result.stdout, /NEWS_SHUTDOWN_REQUESTED reason=COOPERATIVE_FILE/);
     assert.match(result.stdout, /NEWS_STORE_CLOSED/);
@@ -44,7 +44,7 @@ test("worker subprocess has one bootstrap, exits 0 after cooperative shutdown an
 });
 
 test("worker subprocess returns non-zero when startup cannot connect", async () => {
-  const result = await runWorker({ NEWS_DATABASE_URL: "postgresql://127.0.0.1:1/unavailable", SEC_USER_AGENT: "SYNTRAKE subprocess test@example.com", PGCONNECT_TIMEOUT: "1" });
+  const result = await runWorker({ NEWS_DATABASE_URL: "postgresql://127.0.0.1:1/unavailable", SEC_USER_AGENT: "SYNTRAKE subprocess test@example.com", NEWS_EXECUTION_MODE: "N1_ONLY", PGCONNECT_TIMEOUT: "1" });
   assert.equal(result.signal, null); assert.notEqual(result.code, 0);
   assert.match(`${result.stdout}\n${result.stderr}`, /NEWS_STORE_CLOSED|connect|ECONNREFUSED|timeout/i);
 });

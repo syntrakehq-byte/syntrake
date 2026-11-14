@@ -20,6 +20,10 @@
     "test:news:n3b": "tsx --test news-core/tests/evidenceCorroboration.test.ts",
     "test:news:n3c": "tsx --test --test-timeout=180000 news-core/tests/postgresNewsN3c.test.ts",
     "test:news:n3d": "tsx --test --test-timeout=180000 news-core/tests/postgresNewsN3d.test.ts",
+    "test:news:bl3": "tsx --test --test-timeout=180000 news-core/tests/productionReadinessBlock3.test.ts",
+    "test:news:bl3:operational": "tsx --test --test-timeout=180000 news-core/tests/productionReadinessBlock3Operational.test.ts",
+    "test:news:bl4:supervisor": "tsx --test --test-timeout=120000 news-core/tests/newsSupervisorProcess.test.ts",
+    "test:news:bl4:factual": "tsx --test --test-timeout=180000 news-core/tests/newsFactualSupervisorRecovery.test.ts",
     "test:news:n4": "tsx --test news-core/tests/sourceSecurityN4.test.ts",
     "test:news:n4:pg17": "tsx --test --test-timeout=180000 news-core/tests/securityBoundaryN4.test.ts",
     "test:news:n4:live": "tsx --test --test-timeout=60000 news-core/tests/secLiveN4.test.ts",
@@ -27,7 +31,8 @@
     "test:news:n5:pg17": "tsx --test --test-timeout=180000 news-core/tests/postgresNewsN5.test.ts",
     "test:news:n5:live": "tsx --test --test-timeout=120000 news-core/tests/secLiveN5.test.ts",
     "test:news:pg17": "tsx --test --test-timeout=180000 news-core/tests/postgresNews.test.ts && tsx --test --test-timeout=180000 news-core/tests/postgresNewsN2a.test.ts && tsx --test --test-timeout=180000 news-core/tests/postgresNewsN2b.test.ts && tsx --test --test-timeout=180000 news-core/tests/postgresNewsN2c.test.ts && tsx --test --test-timeout=180000 news-core/tests/postgresNewsN3c.test.ts",
-    "news:worker": "tsx scripts/news-postgres-worker.ts"
+    "news:worker": "tsx scripts/news-postgres-worker.ts",
+    "news:supervisor": "tsx scripts/news-supervisor.ts"
   },
   "overrides": {
     "@clerk/shared": "3.47.7",

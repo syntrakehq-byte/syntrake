@@ -24,6 +24,7 @@ export type NewsRevisionInput = Readonly<{
   provenance: Omit<NewsRevisionProvenance, "ingestedAt" | "asKnownAt">;
 }>;
 export type NewsRevisionIngestResult = Readonly<{ inserted: boolean; publicationRevisionId: string }>;
+export type FactualBacklogClaim = Readonly<{ publication: NewsPublication; claimToken: string }>;
 
 function watermarkKey(batch: NewsBatch): string | null {
   const cursor = batch.checkpoint.cursor;
@@ -253,6 +254,88 @@ export class PostgresNewsStore {
     const row = result.rows[0]; return row ? { cursor: row.cursor, updatedAt: row.updated_at.toISOString() } : null;
   }
 
+  async enqueueFactualBacklog(publications: readonly NewsPublication[]): Promise<number> {
+    let inserted = 0;
+    for (const publication of publications) {
+      const result = await this.pool.query(
+        `insert into news_core.factual_pipeline_backlog(publication_id,publication_payload)
+         values ($1,$2::jsonb) on conflict (publication_id) do nothing`,
+        [publication.publicationId, JSON.stringify(publication)],
+      );
+      inserted += result.rowCount ?? 0;
+    }
+    return inserted;
+  }
+
+  async reconcileFactualBacklog(limit = 1000): Promise<number> {
+    const result = await this.pool.query(
+      `insert into news_core.factual_pipeline_backlog(publication_id,publication_payload)
+       select p.publication_id, jsonb_build_object(
+         'publicationId',p.publication_id,'sourceId',p.source_id,'originFingerprint',p.origin_fingerprint,
+         'externalId',p.external_id,'originalUrl',p.original_url,'title',p.title,'publishedAt',p.published_at,
+         'firstSeenAt',p.first_seen_at,'ingestedAt',p.ingested_at,'asKnownAt',p.as_known_at,'form',p.form)
+         from news_core.publications p
+         left join news_core.factual_pipeline_backlog b on b.publication_id=p.publication_id
+        where p.visibility_state='COMMITTED' and p.as_known_at is not null and b.publication_id is null
+        order by p.as_known_at,p.publication_id limit $1 on conflict do nothing`, [Math.max(1, Math.min(limit, 10000))],
+    );
+    return result.rowCount ?? 0;
+  }
+
+  async claimFactualBacklog(limit: number, owner: string, leaseSeconds = 600): Promise<FactualBacklogClaim[]> {
+    const result = await this.pool.query<{ publication_payload: NewsPublication; claim_token: string }>(
+      `with candidates as (
+         select b.publication_id from news_core.factual_pipeline_backlog b
+          join news_core.publications p on p.publication_id=b.publication_id
+         where p.visibility_state='COMMITTED' and p.as_known_at is not null
+           and ((b.state='PENDING' and b.next_attempt_at <= clock_timestamp())
+             or (b.state='PROCESSING' and b.lease_until < clock_timestamp()))
+          order by b.next_attempt_at, b.created_at, b.publication_id
+          for update skip locked limit $1
+       )
+       update news_core.factual_pipeline_backlog b
+          set state='PROCESSING', attempts=b.attempts+1,
+              lease_until=clock_timestamp()+($2::int * interval '1 second'),
+              claim_owner=$3, claim_token=gen_random_uuid(),
+              last_error=null, updated_at=clock_timestamp()
+         from candidates c where b.publication_id=c.publication_id
+       returning b.publication_payload,b.claim_token`, [Math.max(1, Math.min(limit, 1000)), leaseSeconds, owner],
+    );
+    return result.rows.map(row => ({ publication: row.publication_payload, claimToken: row.claim_token }));
+  }
+
+  async finishFactualBacklog(publicationId: string, owner: string, claimToken: string, status: "PERSISTED" | "REFUSED", error?: string): Promise<"FINISHED" | "STALE"> {
+    const result = await this.pool.query(
+      `update news_core.factual_pipeline_backlog
+          set state='DONE', completed_status=$2, completed_at=clock_timestamp(),
+              lease_until=null, claim_owner=null, claim_token=null, last_error=$4, updated_at=clock_timestamp()
+        where publication_id=$1 and state='PROCESSING' and claim_owner=$3 and claim_token=$5::uuid and lease_until > clock_timestamp()`, [publicationId, status, owner, error ?? null, claimToken],
+    );
+    return (result.rowCount ?? 0) === 1 ? "FINISHED" : "STALE";
+  }
+
+  async retryFactualBacklog(publicationId: string, owner: string, claimToken: string, error: unknown): Promise<"REQUEUED" | "STALE"> {
+    const result = await this.pool.query(
+      `update news_core.factual_pipeline_backlog
+          set state='PENDING', lease_until=null, claim_owner=null, claim_token=null,
+              next_attempt_at=clock_timestamp()+least(300, power(2, least(attempts, 8))) * interval '1 second',
+              last_error=$4, updated_at=clock_timestamp()
+        where publication_id=$1 and state='PROCESSING' and claim_owner=$2 and claim_token=$3::uuid and lease_until > clock_timestamp()`,
+      [publicationId, owner, claimToken, error instanceof Error ? error.message.slice(0, 1000) : "NEWS_FACTUAL_RETRYABLE_FAILURE"],
+    );
+    return (result.rowCount ?? 0) === 1 ? "REQUEUED" : "STALE";
+  }
+
+  async renewFactualBacklogClaim(publicationId: string, owner: string, claimToken: string, leaseSeconds: number): Promise<boolean> {
+    const result = await this.pool.query(
+      `update news_core.factual_pipeline_backlog
+          set lease_until=clock_timestamp()+($4::int * interval '1 second'), updated_at=clock_timestamp()
+        where publication_id=$1 and state='PROCESSING' and claim_owner=$2 and claim_token=$3::uuid and lease_until > clock_timestamp()
+        returning publication_id`, [publicationId, owner, claimToken, leaseSeconds],
+    );
+    return (result.rowCount ?? 0) === 1;
+  }
+
   private async assertLease(client: PoolClient, lease: ExecutionLease): Promise<void> {
     const result = await client.query(
       `update news_core.collection_targets t set lease_until=clock_timestamp()+($1::int * interval '1 second'),updated_at=clock_timestamp()
@@ -308,6 +391,16 @@ export class PostgresNewsStore {
          where excluded.watermark_key is not null and (news_core.checkpoints.watermark_key is null or excluded.watermark_key > news_core.checkpoints.watermark_key)`,
         [batch.checkpoint.collectionScopeKey, batch.checkpoint.sourceId, batch.checkpoint.cursor, key, batch.checkpoint.updatedAt, txid],
       );
+      const backlogInstalled = (await client.query<{ installed: boolean }>("select to_regclass('news_core.factual_pipeline_backlog') is not null as installed")).rows[0].installed;
+      if (backlogInstalled) {
+        for (const publication of batch.publications) {
+          await client.query(
+            `insert into news_core.factual_pipeline_backlog(publication_id,publication_payload)
+             values ($1,$2::jsonb) on conflict (publication_id) do nothing`,
+            [publication.publicationId, JSON.stringify(publication)],
+          );
+        }
+      }
       if (options.failurePoint === "delay-before-commit") await new Promise(resolve => setTimeout(resolve, options.delayBeforeCommitMs ?? 150));
       if (options.failurePoint === "before-commit") throw new Error("INJECTED_FAILURE_BEFORE_COMMIT");
       if (lease) await this.assertLease(client, lease);

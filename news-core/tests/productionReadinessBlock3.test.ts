@@ -1,0 +1,106 @@
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+import { Client, Pool } from "pg";
+import { fetchSafeExternal } from "../sourceSecurity";
+import { fetchSecFilings } from "../secAdapter";
+import { PostgresNewsStore } from "../postgresStore";
+import { DeterministicFactClassifierV1, excerptHashV1, type ClassificationInputV1 } from "../factualClassification";
+import { claimKeyV1, DeterministicEvidenceCorroboratorV1 } from "../evidenceCorroboration";
+import { factualLogicalFingerprintV1, PostgresFactualStore, type PersistFactualInputV1 } from "../factualPersistence";
+import { NewsConsumptionApiV1 } from "../n5Api";
+import type { NewsBatch } from "../contracts";
+
+const DB_URL = process.env.NEWS_DATABASE_URL ?? process.env.TEST_DATABASE_URL;
+const migration = (name: string) => new URL(`../../supabase/migrations/${name}`, import.meta.url);
+const sha256 = (value: string): string => createHash("sha256").update(value, "utf8").digest("hex");
+const stripDocument = (html: string): string => html.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/\s+/g, " ").trim();
+
+test("Production readiness BL3 real SEC to N5 circuit is conservative and idempotent", { skip: !DB_URL && "NEWS_DATABASE_URL or TEST_DATABASE_URL required: real PG17 only" }, async () => {
+  const admin = new Client({ connectionString: DB_URL });
+  const newsPool = new Pool({ connectionString: DB_URL, max: 4 });
+  const factualPool = new Pool({ connectionString: DB_URL, max: 4 });
+  const readerPool = new Pool({ connectionString: DB_URL, max: 2 });
+  const news = new PostgresNewsStore(newsPool);
+  const factual = new PostgresFactualStore(factualPool, "news_factual_writer");
+  const readerFactual = new PostgresFactualStore(readerPool, "news_service");
+  const userAgent = process.env.SEC_USER_AGENT ?? "SYNTRAKE BL3 CI/1.0 security@syntrake.com";
+  try {
+    await admin.connect();
+    assert.match((await admin.query<{ version: string }>("select current_setting('server_version') version")).rows[0].version, /^17\./);
+    for (const file of ["20261111150000_news_core_postgres_n1.sql", "20261111170000_news_core_n2a_revisions.sql", "20261112120000_news_core_n3c_factual_persistence.sql", "20261112170000_news_core_n3c_factual_writer_boundary.sql", "20261112150000_news_core_n5_read_api.sql"]) await admin.query(await readFile(migration(file), "utf8"));
+
+    const collected = await fetchSecFilings({ cik: "0000320193", userAgent, now: new Date(), signal: AbortSignal.timeout(20_000) });
+    const candidates = collected.publications.filter(item => item.form === "8-K").slice(0, 20);
+    assert.ok(candidates.length > 0, "SEC live collection must provide an 8-K publication");
+    const existingPublications = (await admin.query<{ publication_id: string }>("select publication_id from news_core.publications where publication_id = any($1::text[])", [candidates.map(item => item.publicationId)])).rows.map(row => row.publication_id);
+    const freshCandidates = candidates.filter(item => !existingPublications.includes(item.publicationId));
+    assert.ok(freshCandidates.length > 0, "BL3 requires a fresh real SEC publication in the isolated PG17 database");
+    let publication = freshCandidates[0];
+    let documentBody = "";
+    let excerpt: string | undefined;
+    for (const candidate of freshCandidates) {
+      const response = await fetchSafeExternal(candidate.originalUrl, { headers: { "User-Agent": userAgent, Accept: "text/html" }, signal: AbortSignal.timeout(20_000) });
+      assert.equal(response.ok, true);
+      const body = await response.text();
+      const text = stripDocument(body);
+      const candidateExcerpt = text.split(/(?<=[.!?])\s+/).map(value => value.trim()).find(value => value.length >= 20 && value.length <= 1200 && /(?:\b(?:declares?|declared|announces?|announced)\b.{0,100}\bdividend\b|\b(?:reports?|reported|announces?|announced)\b.{0,100}\b(?:earnings|revenue|net income|profit|loss)\b|\b(?:was|were|is|are|has|have|had|received|fined|sanctioned|charged|sued|settled|convicted|approved|cleared|ordered)\b.{0,80}\b(?:fine|fined|sanction|sanctioned|charge|charged|lawsuit|sued|settlement|settled|convicted|approved|cleared|order|ordered)\b|\b(?:signed|declared|announced|imposed|lifted|entered|occurred|began|continued|reported)\b.{0,80}\b(?:ceasefire|sanctions?|invasion|military operation|armed conflict|treaty)\b)/i.test(value));
+      if (candidateExcerpt) { publication = candidate; documentBody = body; excerpt = candidateExcerpt; break; }
+    }
+    assert.ok(excerpt, "real SEC documents must yield a bounded excerpt matching a controlled rule or the test must fail closed");
+    const retrievedAt = (await admin.query<{ retrievedAt: string }>("select clock_timestamp()::timestamptz::text as \"retrievedAt\"")).rows[0].retrievedAt;
+    const batch: NewsBatch = { publications: [publication], observations: collected.observations.filter(item => item.publicationId === publication.publicationId), checkpoint: { sourceId: "sec-edgar", collectionScopeKey: `bl3-sec-${publication.externalId}`, cursor: collected.nextCursor, updatedAt: retrievedAt } };
+    const firstIngest = await news.ingestAdministrative(batch);
+    const replayIngest = await news.ingestAdministrative(batch);
+    assert.equal(firstIngest.insertedPublications, 1);
+    assert.equal(replayIngest.insertedPublications, 0);
+    const revisionOne = (await news.readPublicationRevisionsAsOf(new Date(Date.now() + 2_000).toISOString(), publication.publicationId))[0];
+    assert.ok(revisionOne?.publicationRevisionId);
+    const revisionTwoId = `${publication.publicationId}:revision:2`;
+    const revisionTwo = await news.ingestPublicationRevision({ revision: { publicationRevisionId: revisionTwoId, publicationId: publication.publicationId, revisionNo: 2, title: publication.title, publishedAt: publication.publishedAt, form: publication.form, contentFingerprint: sha256(documentBody), sourceDocumentRef: publication.originalUrl, qualityFlags: [], supersedesRevisionId: revisionOne.publicationRevisionId }, provenance: { provenanceId: `${publication.publicationId}:provenance:2`, publicationRevisionId: revisionTwoId, sourceId: publication.sourceId, providerKey: "sec", providerObservationKey: `${publication.externalId}:document`, originalUrl: publication.originalUrl, sourceDocumentRef: publication.originalUrl, retrievedAt, qualityFlags: [] } });
+    const revisionTwoReplay = await news.ingestPublicationRevision({ revision: { publicationRevisionId: revisionTwoId, publicationId: publication.publicationId, revisionNo: 2, title: publication.title, publishedAt: publication.publishedAt, form: publication.form, contentFingerprint: sha256(documentBody), sourceDocumentRef: publication.originalUrl, qualityFlags: [], supersedesRevisionId: revisionOne.publicationRevisionId }, provenance: { provenanceId: `${publication.publicationId}:provenance:2`, publicationRevisionId: revisionTwoId, sourceId: publication.sourceId, providerKey: "sec", providerObservationKey: `${publication.externalId}:document`, originalUrl: publication.originalUrl, sourceDocumentRef: publication.originalUrl, retrievedAt, qualityFlags: [] } });
+    assert.equal(revisionTwo.inserted, true); assert.equal(revisionTwoReplay.inserted, false);
+    const committedRevision = (await news.readPublicationRevisionsAsOf(new Date(Date.now() + 2_000).toISOString(), publication.publicationId)).find(item => item.publicationRevisionId === revisionTwoId);
+    assert.ok(committedRevision?.asKnownAt && committedRevision.ingestedAt);
+    await new Promise(resolve => setTimeout(resolve, 1_500));
+    const evidenceId = `sec-document-excerpt-${publication.externalId}`;
+    const proposedAt = committedRevision.asKnownAt;
+    const classificationInput: ClassificationInputV1 = { contractVersion: "news-fact-classification-v1", taxonomyVersion: "news-fact-taxonomy-v1", ruleSetVersion: "deterministic-rule-v1", publicationRevision: { ...committedRevision, contentFingerprint: sha256(documentBody), visibilityState: "COMMITTED" }, evidence: [{ evidenceId, publicationRevisionId: revisionTwoId, kind: "DOCUMENT_EXCERPT", sourceDocumentRef: publication.originalUrl, contentLocator: "document:text:live-sec", excerpt, excerptHash: excerptHashV1(excerpt), hashSemantics: "LOCAL_CONTENT_HASH_ONLY", structuredField: null, structuredValue: null, structuredAuthority: null, observedAt: retrievedAt, retrievedAt, asKnownAt: committedRevision.asKnownAt, provenanceRef: `${publication.publicationId}:provenance:2` }], proposedAt };
+    const classification = new DeterministicFactClassifierV1().classify(classificationInput);
+    console.log(JSON.stringify({ productionReadiness: "BL3", publicationId: publication.publicationId, documentExcerptSha256: sha256(excerpt), proposals: classification.proposals.length, refusalReasons: classification.refusalReasons }));
+    if (classification.proposals.length === 0) {
+      assert.ok(classification.refusalReasons.length > 0);
+      const api = new NewsConsumptionApiV1({ news, factual: readerFactual }, "0123456789abcdef", "bl3-test-credential");
+      const emptyAsOf = (await admin.query<{ cutoff: string }>("select clock_timestamp()::timestamptz::text cutoff")).rows[0].cutoff;
+      const empty = await api.getNewsEvents({ serviceId: "news_reader", credential: "bl3-test-credential" }, { targets: [`${publication.publicationId}:no-fact`], asOf: emptyAsOf });
+      assert.equal(empty.data.length, 0);
+      return;
+    }
+    const proposal = classification.proposals[0];
+    const claimKey = claimKeyV1(proposal);
+    const evaluatedAt = committedRevision.asKnownAt;
+    const corroborationInput = { contractVersion: "news-evidence-corroboration-v1" as const, ruleSetVersion: "evidence-corroboration-rule-v1" as const, proposal, claimKey, claimIdentities: [{ claimKey, canonicalClaimId: `sec:${publication.externalId}`, publicationRevisionId: revisionTwoId, statementFingerprint: sha256(proposal.statement), asKnownAt: proposal.proposedAt }], claimEquivalences: [], cutoffAsKnownAt: proposal.proposedAt, evaluatedAt, evidence: [{ evidenceId: `n3b-${evidenceId}`, claimKey, originId: "sec-edgar-primary", sourceDocumentRef: publication.originalUrl, publicationRevisionId: revisionTwoId, provenanceRef: `${publication.publicationId}:provenance:2`, contentLocator: "document:text:live-sec", statementHash: sha256(proposal.statement), support: "SUPPORTS" as const, asKnownAt: committedRevision.asKnownAt, availableAsKnownAt: committedRevision.asKnownAt, proposalEvidenceId: evidenceId }], verificationProofs: [], origins: [{ originId: "sec-edgar-primary", sourceDocumentRef: publication.originalUrl, publicationRevisionId: revisionTwoId, publisherRef: "sec-edgar", editorialGroupRef: null, sourceKind: "PRIMARY" as const, provenanceRef: `${publication.publicationId}:provenance:2`, availableAsKnownAt: committedRevision.asKnownAt, competence: [{ claimKey, status: "UNKNOWN" as const, basis: "IDENTIFIED_REPORT" as const, evidenceRefs: [] }] }], independence: [] };
+    const corroboration = new DeterministicEvidenceCorroboratorV1().evaluate(corroborationInput);
+    assert.equal(corroboration.confirmationStatus, "REPORTED");
+    const persistInput: PersistFactualInputV1 = { attestationId: "pending", canonicalClaimId: `sec:${publication.externalId}`, proposal, corroborationInput, corroboration, evidence: [{ evidenceId, evidenceKind: "N3A_PROPOSAL", claimKey, publicationRevisionId: revisionTwoId, sourceDocumentRef: publication.originalUrl, contentLocator: "document:text:live-sec", provenanceRef: `${publication.publicationId}:provenance:2`, asKnownAt: committedRevision.asKnownAt }], dependencies: [{ dependencyType: "N2_PUBLICATION_REVISION", dependencyRef: revisionTwoId, asKnownAt: committedRevision.asKnownAt }, { dependencyType: "N3A_PROPOSAL", dependencyRef: proposal.inputFingerprint, asKnownAt: proposal.proposedAt }, { dependencyType: "N3B_EVALUATION", dependencyRef: corroboration.fingerprint, asKnownAt: corroborationInput.evaluatedAt }] };
+    const payload = { canonicalClaimId: persistInput.canonicalClaimId, taxonomyVersion: proposal.taxonomyVersion, category: proposal.category, logicalFingerprint: factualLogicalFingerprintV1(persistInput), ruleSetVersion: proposal.ruleSetVersion, claimType: proposal.claimType, statement: proposal.statement, subjectRef: proposal.subjectRef, objectRef: proposal.objectRef, occurredAt: proposal.occurredAt, scheduledFor: proposal.scheduledFor, confirmationStatus: corroboration.confirmationStatus, lifecycleStatus: corroboration.lifecycleStatus, polarity: corroboration.polarity, focalClaimKey: claimKey, publicationRevisionId: revisionTwoId, qualityFlags: proposal.qualityFlags, evidence: persistInput.evidence, dependencies: persistInput.dependencies, relation: null };
+    await assert.rejects(admin.query("select news_core.issue_fact_attestation_v1($1::jsonb)", [JSON.stringify({ ...payload, verificationId: "forged" })]), /NEWS_FACT_PIPELINE_ATTESTATION_UNVERIFIED/);
+    await admin.query("set role news_pipeline_verifier");
+    const verificationId = (await admin.query<{ id: string }>("select news_core.register_verified_fact_pipeline_v1($1::jsonb) id", [JSON.stringify(payload)])).rows[0].id;
+    await admin.query("reset role"); await admin.query("set role news_factual_attestor");
+    const attestationId = (await admin.query<{ id: string }>("select news_core.issue_fact_attestation_v1($1::jsonb) id", [JSON.stringify({ ...payload, verificationId })])).rows[0].id;
+    await admin.query("reset role");
+    const persisted = await factual.persist({ ...persistInput, attestationId });
+    assert.equal(persisted.inserted, true);
+    assert.equal((await factual.persist({ ...persistInput, attestationId })).inserted, false);
+    const asOf = (await admin.query<{ cutoff: string }>("select clock_timestamp()::timestamptz::text cutoff")).rows[0].cutoff;
+    const api = new NewsConsumptionApiV1({ news, factual: readerFactual }, "0123456789abcdef", "bl3-test-credential");
+    const events = await api.getNewsEvents({ serviceId: "news_reader", credential: "bl3-test-credential" }, { targets: [persisted.factEventId], asOf });
+    assert.equal(events.status, "AVAILABLE"); assert.equal(events.data.length, 1); assert.equal(events.data[0].statement, proposal.statement);
+    const evidence = await api.getEventEvidence({ serviceId: "news_reader", credential: "bl3-test-credential" }, { eventId: persisted.factEventId, asOf });
+    assert.equal(evidence.data.length, 1); assert.equal(evidence.data[0].sourceDocumentRef, publication.originalUrl); assert.ok(evidence.sourceRefs.includes(publication.originalUrl));
+    const before = await api.getNewsEvents({ serviceId: "news_reader", credential: "bl3-test-credential" }, { targets: [persisted.factEventId], asOf: new Date(Date.parse(committedRevision.asKnownAt) - 1).toISOString() });
+    assert.equal(before.data.length, 0);
+  } finally { await admin.query("reset role").catch(() => undefined); await Promise.all([news.close(), factual.close(), readerFactual.close(), admin.end()]); }
+});

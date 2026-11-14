@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { Client } from "pg";
 
@@ -12,6 +13,11 @@ test("N4 non-administrative runtime identity cannot reach the factual writer", {
   const password = `n4-password-${suffix}`;
   try {
     await admin.connect();
+    const migration = (name: string) => new URL(`../../supabase/migrations/${name}`, import.meta.url);
+    await admin.query(await readFile(migration("20261111150000_news_core_postgres_n1.sql"), "utf8"));
+    await admin.query(await readFile(migration("20261111170000_news_core_n2a_revisions.sql"), "utf8"));
+    await admin.query(await readFile(migration("20261112120000_news_core_n3c_factual_persistence.sql"), "utf8"));
+    await admin.query(await readFile(migration("20261112170000_news_core_n3c_factual_writer_boundary.sql"), "utf8"));
     const createRole = await admin.query<{ ddl: string }>("select format('create role %I login password %L nosuperuser nocreatedb nocreaterole inherit', $1::text, $2::text) ddl", [runtimeRole, password]);
     await admin.query(createRole.rows[0].ddl);
     await admin.query(`grant news_service to ${runtimeRole}`);
@@ -28,8 +34,63 @@ test("N4 non-administrative runtime identity cannot reach the factual writer", {
     } finally { await runtime.end(); }
     const memberships = await admin.query<{ n: number }>("select count(*)::int n from pg_auth_members m join pg_roles granted on granted.oid=m.roleid where granted.rolname='news_factual_writer'");
     assert.equal(memberships.rows[0].n, 0, "no runtime role may inherit the factual writer capability");
+
+    const compromisedRole = `n4_compromised_${suffix}`;
+    const compromisedPassword = `n4-compromised-${suffix}`;
+    await admin.query("select format('create role %I login password %L nosuperuser nocreatedb nocreaterole inherit', $1::text, $2::text)", [compromisedRole, compromisedPassword]).then(result => admin.query(result.rows[0].format));
+    await admin.query(`grant news_factual_writer to ${compromisedRole}`);
+    const compromisedUrl = new URL(DB_URL as string); compromisedUrl.username = compromisedRole; compromisedUrl.password = compromisedPassword;
+    const compromised = new Client({ connectionString: compromisedUrl.toString() });
+    try {
+      await compromised.connect();
+      await assert.rejects(compromised.query("insert into news_core.fact_events values ('forged','forged','news-fact-taxonomy-v1','LEGAL_REGULATORY')"), /permission denied/);
+      await assert.rejects(compromised.query("select * from news_core.finalize_fact_revision('forged')"), /permission denied/);
+      await assert.rejects(compromised.query("select * from news_core.persist_fact_revision_v1($1::jsonb)", [JSON.stringify({ canonicalClaimId: "forged", logicalFingerprint: "forged-fingerprint", confirmationStatus: "REPORTED" })]), /NEWS_FACT_ATTESTATION_REQUIRED/);
+    } finally { await compromised.end(); await admin.query(`drop role if exists ${compromisedRole}`).catch(() => undefined); }
   } finally {
     await admin.query(`drop role if exists ${runtimeRole}`).catch(() => undefined);
+    await admin.end();
+  }
+});
+
+test("BL1-ACL-01 LOGIN identities cannot materialize factual PIT revisions", { skip: !DB_URL && "NEWS_DATABASE_URL or TEST_DATABASE_URL required: real PG17 only" }, async () => {
+  const admin = new Client({ connectionString: DB_URL });
+  const suffix = randomUUID().replaceAll("-", "").slice(0, 16);
+  const readerRole = `bl1_reader_${suffix}`;
+  const serviceRole = `bl1_service_${suffix}`;
+  const readerPassword = `bl1-reader-${suffix}`;
+  const servicePassword = `bl1-service-${suffix}`;
+  const migration = (name: string) => new URL(`../../supabase/migrations/${name}`, import.meta.url);
+  try {
+    await admin.connect();
+    await admin.query(await readFile(migration("20261111150000_news_core_postgres_n1.sql"), "utf8"));
+    await admin.query(await readFile(migration("20261111170000_news_core_n2a_revisions.sql"), "utf8"));
+    await admin.query(await readFile(migration("20261112120000_news_core_n3c_factual_persistence.sql"), "utf8"));
+    await admin.query(await readFile(migration("20261112170000_news_core_n3c_factual_writer_boundary.sql"), "utf8"));
+    await admin.query(await readFile(migration("20261113185504_news_core_n3c_materializer_acl.sql"), "utf8"));
+    for (const [role, password, granted] of [[readerRole, readerPassword, "news_reader"], [serviceRole, servicePassword, "news_service"]] as const) {
+      const ddl = (await admin.query<{ ddl: string }>("select format('create role %I login password %L nosuperuser nocreatedb nocreaterole inherit', $1::text, $2::text) ddl", [role, password])).rows[0].ddl;
+      await admin.query(ddl);
+      await admin.query(`grant ${granted} to ${role}`);
+    }
+    const revisionBefore = (await admin.query<{ n: string }>("select count(*)::text n from news_core.fact_revisions")).rows[0].n;
+    for (const [role, password] of [[readerRole, readerPassword], [serviceRole, servicePassword]] as const) {
+      const url = new URL(DB_URL as string); url.username = role; url.password = password;
+      const client = new Client({ connectionString: url.toString() });
+      try {
+        await client.connect();
+        assert.equal((await client.query("select current_user")).rows[0].current_user, role);
+        await assert.rejects(client.query("select * from news_core.materialize_fact_revision_visibility_v1($1)", ["not-authorized"]), /permission denied/);
+      } finally { await client.end(); }
+    }
+    assert.equal((await admin.query("select count(*)::text n from news_core.fact_revisions")).rows[0].n, revisionBefore);
+    assert.equal((await admin.query("select has_function_privilege('news_reader','news_core.materialize_fact_revision_visibility_v1(text)','EXECUTE')")).rows[0].has_function_privilege, false);
+    assert.equal((await admin.query("select has_function_privilege('news_service','news_core.materialize_fact_revision_visibility_v1(text)','EXECUTE')")).rows[0].has_function_privilege, false);
+    assert.equal((await admin.query("select has_function_privilege('public','news_core.materialize_fact_revision_visibility_v1(text)','EXECUTE')")).rows[0].has_function_privilege, false);
+    assert.equal((await admin.query("select has_function_privilege('news_factual_writer','news_core.materialize_fact_revision_visibility_v1(text)','EXECUTE')")).rows[0].has_function_privilege, true);
+  } finally {
+    await admin.query(`drop role if exists ${readerRole}`).catch(() => undefined);
+    await admin.query(`drop role if exists ${serviceRole}`).catch(() => undefined);
     await admin.end();
   }
 });
