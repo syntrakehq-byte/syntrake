@@ -80,20 +80,20 @@ test("FACTUAL supervisor restarts after SIGKILL and completes SEC work in N5", {
     const firstPid = Number(output.match(/NEWS_SUPERVISOR_STARTED pid=(\d+)/)?.[1]);
     assert.ok(firstPid > 0);
     await waitFor(async () => Number((await admin.query("select count(*)::int n from news_core.factual_pipeline_backlog where publication_id=$1 and state='PROCESSING'", [publication.publicationId])).rows[0].n) === 1, 20_000);
-    const firstClaim = (await admin.query<{ claim_owner: string; claim_token: string; attempt_count: number }>("select claim_owner,claim_token,attempt_count from news_core.factual_pipeline_backlog where publication_id=$1", [publication.publicationId])).rows[0];
+    const firstClaim = (await admin.query<{ claim_owner: string; claim_token: string; attempts: number }>("select claim_owner,claim_token,attempts from news_core.factual_pipeline_backlog where publication_id=$1", [publication.publicationId])).rows[0];
     assert.equal(firstClaim.claim_owner, `worker-${firstPid}`);
     assert.ok(firstClaim.claim_token);
-    assert.ok(firstClaim.attempt_count >= 1);
+    assert.ok(firstClaim.attempts >= 1);
     process.kill(firstPid, "SIGKILL");
     await waitFor(() => starts >= 2, 30_000);
     const workerStarts = [...output.matchAll(/NEWS_SUPERVISOR_STARTED pid=(\d+)/g)].map(match => Number(match[1]));
     const secondPid = workerStarts.at(-1);
     assert.ok(secondPid && secondPid !== firstPid);
-    await waitFor(async () => Number((await admin.query("select count(*)::int n from news_core.factual_pipeline_backlog where publication_id=$1 and state='PROCESSING' and claim_owner=$2 and attempt_count >= 2", [publication.publicationId, `worker-${secondPid}`])).rows[0].n) === 1, 30_000);
-    const secondClaim = (await admin.query<{ claim_owner: string; claim_token: string; attempt_count: number }>("select claim_owner,claim_token,attempt_count from news_core.factual_pipeline_backlog where publication_id=$1", [publication.publicationId])).rows[0];
+    await waitFor(async () => Number((await admin.query("select count(*)::int n from news_core.factual_pipeline_backlog where publication_id=$1 and state='PROCESSING' and claim_owner=$2 and attempts >= 2", [publication.publicationId, `worker-${secondPid}`])).rows[0].n) === 1, 30_000);
+    const secondClaim = (await admin.query<{ claim_owner: string; claim_token: string; attempts: number }>("select claim_owner,claim_token,attempts from news_core.factual_pipeline_backlog where publication_id=$1", [publication.publicationId])).rows[0];
     assert.equal(secondClaim.claim_owner, `worker-${secondPid}`);
     assert.notEqual(secondClaim.claim_token, firstClaim.claim_token);
-    assert.ok(secondClaim.attempt_count >= 2);
+    assert.ok(secondClaim.attempts >= 2);
     const canonicalClaimId = `sec:${publication.externalId}`;
     const factsDeadline = Date.now() + 30_000;
     while (Date.now() < factsDeadline) {
