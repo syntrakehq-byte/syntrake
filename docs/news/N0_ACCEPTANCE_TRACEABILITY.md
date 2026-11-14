@@ -34,8 +34,8 @@ Esta matriz preserva os critérios N0-T01..T37. `PASS` significa que existe uma 
 | N0-T22 | N2/N5 | PASS | N5 unitário/PG17 cobre paginação estável, cursor HMAC, histórico PIT e cutoff |
 | N0-T23 | N2/N3 | PASS | recusa conservadora sem evidência em N3-A/B |
 | N0-T24 | N1 | PASS | rollback/atomicidade em PG17 |
-| N0-T25 | N1/N4/N5 | NOT_PROVEN | os testes executam dois ciclos, mas não isolam baseline, publicação genuína nova e commit atribuível aos ciclos |
-| N0-T26 | N1/N3/N4 | NOT_PROVEN | BL3/BL4 provam recovery após N1 committed e SIGKILL durante N3; falta prova causal exata de crash entre fetch e persistência |
+| N0-T25 | N1/N4/N5 | PASS | `secLiveN5.test.ts`, workflow PG17/SEC live, baseline 0, accession genuíno, primeira ingestão 1, segunda 1, checkpoint e revisão única |
+| N0-T26 | N1/N3/N4 | PASS | `secLiveN5.test.ts`, crash controlado pós-fetch/pré-commit, checkpoint ausente durante falha, worker 2 recupera, publicação final 1 e replay sem duplicação |
 | N0-T27 | N1/N3 | NOT_PROVEN | backfill real por partição não demonstrado |
 | N0-T28 | N2 | NOT_PROVEN | `postgresNewsN2a.test.ts` prova `SOURCE_CLOCK_CONFLICT` para data futura, mas falta as_known_at/PIT explícito para relógio adiantado e atrasado |
 | N0-T29 | N1 | PASS | concorrência/idempotência PG17 |
@@ -79,8 +79,8 @@ Fonte normativa: PR #90, SHA `a358cf9cc3e0427cefc18b02f6c3c653b2a61e7b`, estado 
 | N0-T22 | Paginação PIT não omite, duplica nem inclui futuro | N5 unitário/PG17 cobre cursor, páginas, cutoff e histórico | PASS | — |
 | N0-T23 | Classificação sem evidência não confirma | N3-A/B e pipeline conservador | PASS | — |
 | N0-T24 | Falha transacional não deixa metade da revisão | N3-C PG17, rollback/crash/idempotência | PASS | — |
-| N0-T25 | Zero sessões, dois ciclos e publicação genuína verificável | `secLiveN5.test.ts` executa dois ciclos, mas não prova `countAfterFirst>0`, ausência da publicação-alvo no baseline nem commit atribuível aos ciclos; BL4 prova supervisor sem sessão, não este critério completo | NOT_PROVEN | Isolar DB/scope, guardar baseline, identificar publicação SEC genuína ausente antes do primeiro ciclo, provar ingestão durável e repetir sem duplicação |
-| N0-T26 | Crash entre fetch e persistência recupera sem duplicação | `productionReadinessBlock3Operational.test.ts` prova falha após commit N1 e recuperação da fila sem novo download; `newsFactualSupervisorRecovery.test.ts` prova SIGKILL durante N3 | NOT_PROVEN | Falta um ensaio que interrompa o intervalo específico entre fetch e persistência e correlacione a publicação recuperada |
+| N0-T25 | Zero sessões, dois ciclos e publicação genuína verificável | No SHA `3d3e97a241cccde2d658075642af8030272399c8`, job PG17/SEC live `132586237285`, `N0_T25_PROOF` regista CIK `0000320193`, accession `0001140361-26-042798`, fonte SEC, fingerprint, baseline 0, firstCount 1, secondCount 1 e checkpoint | PASS | Rehearsal usa uma resposta SEC live genuína e replay determinístico em base temporária; não prova autonomia 24/7 |
+| N0-T26 | Crash entre fetch e persistência recupera sem duplicação | No mesmo job, `N0_T26_PROOF` regista crash pós-fetch/pré-commit, worker 1 falhado, worker 2 recuperado, checkpoint ausente durante a falha, publicação final 1 e replayDuplicates 0 | PASS | Failpoint existe apenas no harness; não é prova de crash físico do processo nem de produção |
 | N0-T27 | Período de indisponibilidade recupera por backfill/checkpoint | Há recovery controlado e backfill de fila, mas não período real de indisponibilidade de fonte | NOT_PROVEN | Simular/ensaiar indisponibilidade temporal real e backfill completo |
 | N0-T28 | Conflito de relógio gera flag e não falsifica `asKnownAt` | `postgresNewsN2a.test.ts` em PG17 preserva `publishedAt=2099-01-01`, a data da fonte, e exige `SOURCE_CLOCK_CONFLICT` | NOT_PROVEN | A prova cobre relógio adiantado e flag, mas ainda não verifica explicitamente `asKnownAt`/PIT contra relógios adiantado e atrasado |
 | N0-T29 | Duas tarefas concorrentes do mesmo item geram um resultado lógico | Constraints, claims, fencing e testes PG17 | PASS | — |
@@ -96,7 +96,7 @@ Fonte normativa: PR #90, SHA `a358cf9cc3e0427cefc18b02f6c3c653b2a61e7b`, estado 
 
 ### Decisão de aceitação
 
-`N0_APPROVED=NO` e `NEWS_CORE_PRODUCTION_READY=NO`. Permanecem bloqueadores normativos T03, T14, T15, T18, T20, T21, T25, T26, T27, T28, T33 e AUT-001, além da reconciliação formal e revisão independente do PR #90. Não houve merge, cherry-pick, deploy ou migração remota.
+`N0_APPROVED=NO` e `NEWS_CORE_PRODUCTION_READY=NO`. Permanecem bloqueadores normativos T03, T14, T15, T18, T20, T21, T27, T28, T33 e AUT-001, além da reconciliação formal e revisão independente do PR #90. Não houve merge, cherry-pick, deploy ou migração remota.
 
 ## Snapshot histórico N3-D (substituído pela auditoria final)
 
@@ -106,15 +106,15 @@ Fonte normativa: PR #90, SHA `a358cf9cc3e0427cefc18b02f6c3c653b2a61e7b`, estado 
 
 `n5Api.test.ts` prova a forma canónica `NewsEnvelope` versão `1.0`, `requestId`, autenticação de serviço, filtros, limites, cutoff futuro, paginação com cursor HMAC e rejeição de adulteração. A migration `20261112150000_news_core_n5_read_api.sql` expõe apenas funções PIT de leitura para histórico, evidência e filtros, mantendo as tabelas factuais sem privilégios de leitura direta. O gate PG17 N5 aplica N1, N2-A e N3-C antes desta migration e executa com uma role de serviço não administrativa.
 
-Este parágrafo é um registo histórico do snapshot N3-D e não descreve o HEAD atual. As provas BL3/BL4 posteriores demonstram o encadeamento operacional, o supervisor, SIGKILL, fencing e recuperação de backlog. A auditoria final, contudo, mantém T25 e T26 como `NOT_PROVEN` pelas lacunas causais descritas na tabela; AUT-001, T18, T20, T21, T27, T28 e T33 continuam igualmente não provados.
+Este parágrafo é um registo histórico do snapshot N3-D e não descreve o HEAD atual. As provas BL3/BL4 posteriores demonstram o encadeamento operacional, o supervisor, SIGKILL, fencing e recuperação de backlog. O rehearsal N0-T25/T26 posterior fechou esses dois critérios no âmbito PG17/SEC live; AUT-001, T18, T20, T21, T27, T28 e T33 continuam igualmente não provados.
 
 O ensaio histórico comprova que `news_service` não podia ler tabelas factuais nem selar revisões no snapshot então testado. No HEAD atual, a ACL BL1 revoga DML bruto e EXECUTE direto da selagem às identidades não autorizadas e mantém o writer atrás da fronteira protegida, no âmbito PG17 testado. A compatibilidade do destino de produção continua `NOT_PROVEN_IN_PRODUCTION`; este documento não transforma a prova local em garantia de produção.
 
-Não foram executados neste PR: fornecedores externos alternativos, DNS rebinding em rede controlada, operação autónoma 24/7, deploy ou migrações remotas. O encadeamento N3-A/B→N5 foi executado posteriormente nos ensaios BL3/BL4; T25/T26 permanecem não provados pelas lacunas causais identificadas. As APIs N5 foram executadas nos gates unitário, PG17 e SEC live; isso não promove os critérios pendentes a PASS.
+Não foram executados neste PR: fornecedores externos alternativos, DNS rebinding em rede controlada, operação autónoma 24/7, deploy ou migrações remotas. O encadeamento N3-A/B→N5 foi executado posteriormente nos ensaios BL3/BL4, e T25/T26 foram fechados pelo rehearsal isolado documentado abaixo. As APIs N5 foram executadas nos gates unitário, PG17 e SEC live; isso não promove os critérios pendentes a PASS.
 
 ## Evidência N4
 
-`secLiveN4.test.ts` executou o endpoint oficial SEC EDGAR em CI e registou no log um SHA-256 sanitizado da resposta, CIK validado e publicações oficiais. `sourceSecurityN4.test.ts` cobre schemes/hosts privados, metadata, redirects, TLS e IPv4/IPv6, mas a segunda resolução de DNS em socket mutável ainda não foi provada como ensaio real de rebinding; por isso T18 permanece `NOT_PROVEN`. `secLiveN5.test.ts` executa dois ciclos, mas sem baseline e atribuição durável da publicação aos ciclos; por isso T25 permanece `NOT_PROVEN`. A prova BL3/BL4 de recovery é positiva, mas não cobre ainda a fronteira causal fetch→persistência exigida por T26.
+`secLiveN4.test.ts` executou o endpoint oficial SEC EDGAR em CI e registou no log um SHA-256 sanitizado da resposta, CIK validado e publicações oficiais. `sourceSecurityN4.test.ts` cobre schemes/hosts privados, metadata, redirects, TLS e IPv4/IPv6, mas a segunda resolução de DNS em socket mutável ainda não foi provada como ensaio real de rebinding; por isso T18 permanece `NOT_PROVEN`. O rehearsal `secLiveN5.test.ts` isolou o baseline e fechou T25/T26 no âmbito PG17/SEC live; isso não promove AUT-001 nem os restantes critérios pendentes.
 
 ## Errata final BL5 — tabela autoritativa sobre os snapshots anteriores
 
@@ -125,15 +125,15 @@ Esta secção é a decisão documental autoritativa para este SHA. As tabelas e 
 | Critério | Estado autoritativo | Prova observada | Limitação objetiva |
 |---|---|---|---|
 | N0-T18 | NOT_PROVEN | `sourceSecurityN4.test.ts` cobre destinos privados, metadata, redirects, TLS e IPv4/IPv6; o transporte usa o IP validado | falta prova de rebinding real com segunda resolução mutável entre resolução e socket |
-| N0-T25 | NOT_PROVEN | `secLiveN5.test.ts` executa dois ciclos e compara a contagem; BL4 prova supervisor sem sessão | falta baseline isolado, `countAfterFirst > 0`, publicação genuína ausente antes do primeiro ciclo e commit atribuível aos ciclos |
-| N0-T26 | NOT_PROVEN | `productionReadinessBlock3Operational.test.ts` cobre falha após commit N1 e recuperação sem novo download; `newsFactualSupervisorRecovery.test.ts` cobre SIGKILL durante N3 | falta interrupção causal no intervalo exato fetch → persistência e correlação da publicação recuperada |
+| N0-T25 | PASS | `secLiveN5.test.ts`, job `132586237285`, baseline 0, accession genuíno, firstCount 1, secondCount 1, checkpoint e revisão única | prova limitada ao rehearsal SEC live + replay determinístico em base temporária |
+| N0-T26 | PASS | `secLiveN5.test.ts`, mesmo job, failpoint pós-fetch/pré-commit, checkpoint ausente, worker 2 recupera e replayDuplicates 0 | failpoint é controlado pelo harness; não substitui crash físico em produção |
 | N0-T28 | NOT_PROVEN | `postgresNewsN2a.test.ts` em PG17 preserva `publishedAt=2099-01-01` e exige `SOURCE_CLOCK_CONFLICT` | falta verificação explícita de `asKnownAt`/PIT para relógio externo adiantado e atrasado |
 
-Consequentemente, T25 e T26 não são `PASS` nesta aceitação. A lista vigente de requisitos `NOT_PROVEN` é: T03, T14, T15, T18, T20, T21, T25, T26, T27, T28, T33 e AUT-001. Os restantes 26 critérios permanecem `PASS` apenas no âmbito dos testes nomeados na matriz; nenhum `PASS` significa prova de produção.
+T25 e T26 são `PASS` apenas no âmbito do rehearsal PG17/SEC live identificado acima. A lista vigente de requisitos `NOT_PROVEN` é: T03, T14, T15, T18, T20, T21, T27, T28, T33 e AUT-001. Há agora 28 critérios `PASS` e 10 `NOT_PROVEN`; nenhum `PASS` significa prova de produção.
 
 ### Reconciliação das secções legadas
 
-As afirmações históricas sobre inexistência de encadeamento N3-A/B→N5 foram verdadeiras apenas nos snapshots anteriores ao BL3/BL4. No HEAD auditado, os testes `productionReadinessBlock3Operational.test.ts` e `newsFactualSupervisorRecovery.test.ts` demonstram o encadeamento operacional, supervisor, fencing e recuperação de backlog; essa prova não promove automaticamente T25, T26 ou AUT-001, pelas limitações acima.
+As afirmações históricas sobre inexistência de encadeamento N3-A/B→N5 foram verdadeiras apenas nos snapshots anteriores ao BL3/BL4. No HEAD auditado, os testes `productionReadinessBlock3Operational.test.ts`, `newsFactualSupervisorRecovery.test.ts` e `secLiveN5.test.ts` demonstram o encadeamento operacional, supervisor, fencing, recuperação de backlog e o rehearsal específico T25/T26; AUT-001 continua fora do âmbito.
 
 As afirmações históricas sobre writer `NOLOGIN`, DML direto e selagem também não devem ser lidas como estado atual: BL1/ACL corrigiu essa fronteira no âmbito PG17 testado. A compatibilidade do destino Supabase/produção continua `NOT_PROVEN_IN_PRODUCTION` porque não houve deploy, migração remota ou verificação do ambiente.
 
@@ -143,4 +143,4 @@ As afirmações históricas sobre writer `NOLOGIN`, DML direto e selagem também
 
 ### Prova BL4 factual estabilizada
 
-No SHA `7456db48a7973dd85431cb074d230721f9045912`, o job News Core `132576255379` do workflow `43637123793` executou `newsFactualSupervisorRecovery.test.ts` sem falhas. A publicação-alvo foi observada antes da leitura N5 em `state=DONE`, `completed=PERSISTED`, `pit_visibility_state=DURABLE`, com `finalized_at`, `as_known_at` e `committed_at` presentes. Esta alteração sincroniza o harness com estado persistido e não promove T25/T26: T25 ainda carece de baseline/atribuição dos dois polls SEC, e T26 ainda carece de crash exatamente entre fetch e persistência N1.
+No SHA `7456db48a7973dd85431cb074f69333304f015b183`, os jobs News Core `132576255379`/`132577224460` do workflow `43637123793`/`43637436104` executaram `newsFactualSupervisorRecovery.test.ts` sem falhas. A publicação-alvo foi observada antes da leitura N5 em `state=DONE`, `completed=PERSISTED`, `pit_visibility_state=DURABLE`, com `finalized_at`, `as_known_at` e `committed_at` presentes. No SHA `3d3e97a241cccde2d658075642af8030272399c8`, o job `132586237285` fechou T25/T26 com base temporária, baseline limpo, replay SEC genuíno e failpoint pós-fetch/pré-commit. T25/T26 estão `PASS` no âmbito do rehearsal; a operação 24/7 e crash físico em produção permanecem fora da prova.
