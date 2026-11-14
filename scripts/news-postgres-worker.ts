@@ -26,6 +26,7 @@ let executionFailed = false;
 const shutdownFile = process.env.NEWS_SHUTDOWN_FILE;
 let shutdownPoll: NodeJS.Timeout | undefined;
 const requestShutdown = (reason: string) => {
+  if (process.env.NEWS_TEST_IGNORE_SIGTERM === "1") return;
   if (!abort.signal.aborted) {
     console.log(`NEWS_SHUTDOWN_REQUESTED reason=${reason}`);
     abort.abort();

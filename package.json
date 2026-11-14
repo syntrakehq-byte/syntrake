@@ -23,6 +23,7 @@
     "test:news:bl3": "tsx --test --test-timeout=180000 news-core/tests/productionReadinessBlock3.test.ts",
     "test:news:bl3:operational": "tsx --test --test-timeout=180000 news-core/tests/productionReadinessBlock3Operational.test.ts",
     "test:news:bl4:supervisor": "tsx --test --test-timeout=120000 news-core/tests/newsSupervisorProcess.test.ts",
+    "test:news:bl4:factual": "tsx --test --test-timeout=180000 news-core/tests/newsFactualSupervisorRecovery.test.ts",
     "test:news:n4": "tsx --test news-core/tests/sourceSecurityN4.test.ts",
     "test:news:n4:pg17": "tsx --test --test-timeout=180000 news-core/tests/securityBoundaryN4.test.ts",
     "test:news:n4:live": "tsx --test --test-timeout=60000 news-core/tests/secLiveN4.test.ts",

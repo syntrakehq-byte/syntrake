@@ -4,6 +4,7 @@ const root = process.cwd();
 const workerArgs = ["node_modules/tsx/dist/cli.mjs", "scripts/news-postgres-worker.ts"];
 let stopping = false;
 let child: ChildProcess | undefined;
+let childExited = true;
 let restartCount = 0;
 let restartTimer: NodeJS.Timeout | undefined;
 
@@ -12,17 +13,20 @@ const stop = (reason: string) => {
   stopping = true;
   if (restartTimer) clearTimeout(restartTimer);
   console.log(`NEWS_SUPERVISOR_STOP reason=${reason} restarts=${restartCount}`);
-  if (!child || child.killed) { process.exit(0); return; }
-  child.kill("SIGTERM");
-  setTimeout(() => { if (child && !child.killed) child.kill("SIGKILL"); }, Number(process.env.NEWS_SUPERVISOR_STOP_TIMEOUT_MS ?? 10_000)).unref();
+  const target = child;
+  if (!target || childExited) { process.exit(0); return; }
+  target.kill("SIGTERM");
+  setTimeout(() => { if (!childExited && child === target) target.kill("SIGKILL"); }, Number(process.env.NEWS_SUPERVISOR_STOP_TIMEOUT_MS ?? 10_000)).unref();
 };
 
 const start = () => {
   if (stopping) return;
   child = spawn(process.execPath, workerArgs, { cwd: root, env: process.env, stdio: "inherit" });
+  childExited = false;
   const pid = child.pid ?? -1;
   console.log(`NEWS_SUPERVISOR_STARTED pid=${pid} restart=${restartCount}`);
   child.once("exit", (code, signal) => {
+    childExited = true;
     console.log(`NEWS_SUPERVISOR_EXIT pid=${pid} code=${code ?? "null"} signal=${signal ?? "null"}`);
     child = undefined;
     if (stopping) { process.exit(0); return; }

@@ -41,3 +41,21 @@ test("News supervisor restarts a killed worker and stops cooperatively", { skip:
     await admin.end();
   }
 });
+
+test("News supervisor escalates a non-cooperative child without leaving it orphaned", { skip: !DB_URL && "NEWS_DATABASE_URL or TEST_DATABASE_URL required: real PG17 only" }, async () => {
+  assert.ok(DB_URL);
+  const child = spawn(process.execPath, ["node_modules/tsx/dist/cli.mjs", "scripts/news-supervisor.ts"], {
+    cwd: process.cwd(), env: { ...process.env, NEWS_DATABASE_URL: DB_URL, SEC_USER_AGENT: "SYNTRAKE supervisor CI/1.0 security@syntrake.com", NEWS_EXECUTION_MODE: "N1_ONLY", SEC_CIK: "0000000001", NEWS_TEST_IGNORE_SIGTERM: "1", NEWS_SUPERVISOR_STOP_TIMEOUT_MS: "300" }, stdio: ["ignore", "pipe", "pipe"],
+  });
+  let output = "";
+  child.stdout.on("data", chunk => { output += String(chunk); });
+  child.stderr.on("data", chunk => { output += String(chunk); });
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`SUPERVISOR_NONCOOPERATIVE_TIMEOUT output=${output}`)), 15_000);
+    const check = setInterval(() => { if (/NEWS_SUPERVISOR_STARTED/.test(output)) { clearTimeout(timer); clearInterval(check); resolve(); } }, 50);
+  });
+  child.kill("SIGTERM");
+  const exit = await new Promise<{ code: number | null }>(resolve => child.once("close", code => resolve({ code })));
+  assert.equal(exit.code, 0, output);
+  assert.match(output, /NEWS_SUPERVISOR_EXIT/);
+});

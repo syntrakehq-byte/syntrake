@@ -79,11 +79,15 @@ test("BL3 operational executor runs SEC through N3 and N5 with positive and cons
     assert.equal(await news.finishFactualBacklog(fenceA[0].publication.publicationId, `bl3-fence-a-${suffix}`, fenceA[0].claimToken, "REFUSED"), "STALE");
     assert.equal((await admin.query("select claim_owner from news_core.factual_pipeline_backlog where publication_id=$1", [fenceA[0].publication.publicationId])).rows[0].claim_owner, `bl3-fence-b-${suffix}`);
     assert.equal(await news.finishFactualBacklog(fenceB[0].publication.publicationId, `bl3-fence-b-${suffix}`, fenceB[0].claimToken, "REFUSED"), "FINISHED");
-    const longClaim = (await news.claimFactualBacklog(1, `bl3-long-${suffix}`, 1))[0];
+    const longClaim = (await news.claimFactualBacklog(1, `bl3-long-${suffix}`, 2))[0];
     assert.ok(longClaim);
-    await new Promise(resolve => setTimeout(resolve, 1_200));
+    await new Promise(resolve => setTimeout(resolve, 500));
     assert.equal(await news.renewFactualBacklogClaim(longClaim.publication.publicationId, `bl3-long-${suffix}`, longClaim.claimToken, 2), true);
-    assert.equal(await news.finishFactualBacklog(longClaim.publication.publicationId, `bl3-long-${suffix}`, longClaim.claimToken, "REFUSED"), "FINISHED");
+    await admin.query("update news_core.factual_pipeline_backlog set lease_until=clock_timestamp()-interval '1 second' where publication_id=$1", [longClaim.publication.publicationId]);
+    assert.equal(await news.renewFactualBacklogClaim(longClaim.publication.publicationId, `bl3-long-${suffix}`, longClaim.claimToken, 2), false);
+    const longTakeover = (await news.claimFactualBacklog(1, `bl3-long-takeover-${suffix}`, 60))[0];
+    assert.equal(longTakeover.publication.publicationId, longClaim.publication.publicationId);
+    assert.equal(await news.finishFactualBacklog(longTakeover.publication.publicationId, `bl3-long-takeover-${suffix}`, longTakeover.claimToken, "REFUSED"), "FINISHED");
     const failedClaims = await news.claimFactualBacklog(20, `bl3-fairness-a-${suffix}`, 60);
     assert.equal(failedClaims.length, 20);
     for (const claim of failedClaims) assert.equal(await news.retryFactualBacklog(claim.publication.publicationId, `bl3-fairness-a-${suffix}`, claim.claimToken, new Error("INJECTED_RETRYABLE")), "REQUEUED");

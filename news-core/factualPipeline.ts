@@ -56,7 +56,8 @@ export class NewsFactualPipelineV1 {
     return attestationId;
   }
 
-  private async processOne(publication: NewsPublication, signal?: AbortSignal): Promise<FactualPipelineOutcomeV1> {
+  private async processOne(publication: NewsPublication, signal?: AbortSignal, assertActive?: () => void): Promise<FactualPipelineOutcomeV1> {
+    assertActive?.();
     if (publication.form !== "8-K") return { publicationId: publication.publicationId, canonicalClaimId: `sec:${publication.externalId}`, status: "REFUSED", reason: "FACTUAL_DOCUMENT_FORM_UNSUPPORTED" };
     try {
       const response = await fetchSafeExternal(publication.originalUrl, { headers: { "User-Agent": this.options.userAgent, Accept: "text/html" }, signal: signal ?? AbortSignal.timeout(20_000) });
@@ -85,12 +86,14 @@ export class NewsFactualPipelineV1 {
       const classification = this.verifier.classify(classificationInput);
       if (classification.proposals.length === 0) return { publicationId: publication.publicationId, canonicalClaimId: `sec:${publication.externalId}`, status: "REFUSED", reason: classification.refusalReasons[0] ?? "N3A_REFUSED", documentSha256: sha256(body) };
       const proposal = classification.proposals[0];
+      assertActive?.();
       const claimKey = claimKeyV1(proposal);
       const corroborationInput: CorroborationInputV1 = { contractVersion: "news-evidence-corroboration-v1", ruleSetVersion: "evidence-corroboration-rule-v1", proposal, claimKey, claimIdentities: [{ claimKey, canonicalClaimId: `sec:${publication.externalId}`, publicationRevisionId: revisionId, statementFingerprint: sha256(proposal.statement), asKnownAt: proposal.proposedAt }], claimEquivalences: [], cutoffAsKnownAt: proposal.proposedAt, evaluatedAt: revision.asKnownAt, evidence: [{ evidenceId: `n3b-${evidenceId}`, claimKey, originId: "sec-edgar-primary", sourceDocumentRef: publication.originalUrl, publicationRevisionId: revisionId, provenanceRef, contentLocator: "document:text:live-sec", statementHash: sha256(proposal.statement), support: "SUPPORTS", asKnownAt: revision.asKnownAt, availableAsKnownAt: revision.asKnownAt, proposalEvidenceId: evidenceId }], verificationProofs: [], origins: [{ originId: "sec-edgar-primary", sourceDocumentRef: publication.originalUrl, publicationRevisionId: revisionId, publisherRef: "sec-edgar", editorialGroupRef: null, sourceKind: "PRIMARY", provenanceRef, availableAsKnownAt: revision.asKnownAt, competence: [{ claimKey, status: "UNKNOWN", basis: "IDENTIFIED_REPORT", evidenceRefs: [] }] }], independence: [] };
       const corroboration = this.corroborator.evaluate(corroborationInput);
       const persistInput: PersistFactualInputV1 = { attestationId: "pending", canonicalClaimId: `sec:${publication.externalId}`, proposal, corroborationInput, corroboration, evidence: [{ evidenceId, evidenceKind: "N3A_PROPOSAL", claimKey, publicationRevisionId: revisionId, sourceDocumentRef: publication.originalUrl, contentLocator: "document:text:live-sec", provenanceRef, asKnownAt: revision.asKnownAt }], dependencies: [{ dependencyType: "N2_PUBLICATION_REVISION", dependencyRef: revisionId, asKnownAt: revision.asKnownAt }, { dependencyType: "N3A_PROPOSAL", dependencyRef: proposal.inputFingerprint, asKnownAt: proposal.proposedAt }, { dependencyType: "N3B_EVALUATION", dependencyRef: corroboration.fingerprint, asKnownAt: corroborationInput.evaluatedAt }] };
       const payload: Record<string, unknown> = { canonicalClaimId: persistInput.canonicalClaimId, taxonomyVersion: proposal.taxonomyVersion, category: proposal.category, logicalFingerprint: factualLogicalFingerprintV1(persistInput), ruleSetVersion: proposal.ruleSetVersion, claimType: proposal.claimType, statement: proposal.statement, subjectRef: proposal.subjectRef, objectRef: proposal.objectRef, occurredAt: proposal.occurredAt, scheduledFor: proposal.scheduledFor, confirmationStatus: corroboration.confirmationStatus, lifecycleStatus: corroboration.lifecycleStatus, polarity: corroboration.polarity, focalClaimKey: claimKey, publicationRevisionId: revisionId, qualityFlags: proposal.qualityFlags, evidence: persistInput.evidence, dependencies: persistInput.dependencies, relation: null };
       const attestationId = await this.attest(payload);
+      assertActive?.();
       const persisted = await this.factual.persist({ ...persistInput, attestationId });
       return { publicationId: publication.publicationId, canonicalClaimId: `sec:${publication.externalId}`, status: "PERSISTED", reason: "FACTUAL_PIPELINE_COMPLETED", factEventId: persisted.factEventId, confirmationStatus: corroboration.confirmationStatus, documentSha256: sha256(body) };
     } catch (error) {
@@ -98,11 +101,11 @@ export class NewsFactualPipelineV1 {
     }
   }
 
-  async processPublications(publications: readonly NewsPublication[], signal?: AbortSignal): Promise<readonly FactualPipelineOutcomeV1[]> {
+  async processPublications(publications: readonly NewsPublication[], signal?: AbortSignal, assertActive?: () => void): Promise<readonly FactualPipelineOutcomeV1[]> {
     const outcomes: FactualPipelineOutcomeV1[] = [];
     for (const publication of publications.slice(0, this.options.maxDocuments ?? publications.length)) {
       if (signal?.aborted) throw new Error("NEWS_EXECUTION_CANCELLED");
-      try { outcomes.push(await this.processOne(publication, signal)); }
+      try { outcomes.push(await this.processOne(publication, signal, assertActive)); }
       catch (error) { outcomes.push({ publicationId: publication.publicationId, canonicalClaimId: `sec:${publication.externalId}`, status: "FAILED_RETRYABLE", reason: error instanceof Error ? error.message : "NEWS_FACTUAL_RETRYABLE_FAILURE" }); }
     }
     return outcomes;

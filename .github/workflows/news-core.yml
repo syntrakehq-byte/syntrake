@@ -6,6 +6,7 @@ on:
       - "news-core/**"
       - "scripts/news-poll.ts"
       - "scripts/news-postgres-worker.ts"
+      - "scripts/news-supervisor.ts"
       - "supabase/migrations/*.sql"
       - "docs/news/**"
       - "package.json"
@@ -16,6 +17,7 @@ on:
       - "news-core/**"
       - "scripts/news-poll.ts"
       - "scripts/news-postgres-worker.ts"
+      - "scripts/news-supervisor.ts"
       - "supabase/migrations/*.sql"
       - "docs/news/**"
       - "package.json"
@@ -71,6 +73,9 @@ jobs:
       - run: npm run test:news:bl4:supervisor
         env:
           SEC_USER_AGENT: "SYNTRAKE BL4 supervisor CI/1.0 security@syntrake.com"
+      - run: npm run test:news:bl4:factual
+        env:
+          SEC_USER_AGENT: "SYNTRAKE BL4 factual supervisor CI/1.0 security@syntrake.com"
       - run: npm run test:news:n4
       - run: npm run test:news:n4:pg17
       - run: npm run test:news:n4:live

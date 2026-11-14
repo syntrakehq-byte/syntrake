@@ -16,7 +16,7 @@ export const factualLogicalFingerprintV1 = (input: PersistFactualInputV1): strin
 const instant = (value: string): number => { const result = Date.parse(value); if (!Number.isFinite(result)) throw new Error("NEWS_FACT_TIMESTAMP_INVALID"); return result; };
 
 export class PostgresFactualStore {
-  constructor(private readonly pool: Pool, private readonly databaseRole: "news_factual_writer" | "news_service" = "news_factual_writer") {}
+  constructor(private readonly pool: Pool, private readonly databaseRole: "news_factual_writer" | "news_service" | "news_reader" = "news_factual_writer") {}
   async close(): Promise<void> { await this.pool.end(); }
   private async publishRevision(revisionId: string, attestationId: string): Promise<void> {
     const client = await this.pool.connect();

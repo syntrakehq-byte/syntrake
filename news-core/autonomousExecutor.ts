@@ -20,16 +20,29 @@ async function runTarget(store: PostgresNewsStore, target: ClaimedTarget, option
     checkpoint: { sourceId: "sec-edgar", collectionScopeKey: target.collectionScopeKey, cursor: result.nextCursor, updatedAt: observedAt },
   }, { lease });
   const factualOutcomes = options.factualPipeline
-    ? await (async () => {
+    ? await drainFactualBacklog(store, options.factualPipeline, options, signal, lease)
+    : [];
+  for (const outcome of factualOutcomes) console.log(JSON.stringify({ pipeline: "SEC>N1>N2>N3A>N3B>N3C>N5", publicationId: outcome.publicationId, status: outcome.status, reason: outcome.reason, factEventId: outcome.factEventId ?? null, confirmationStatus: outcome.confirmationStatus ?? null, documentSha256: outcome.documentSha256 ?? null }));
+  return { ingested: committed.insertedPublications, factualOutcomes };
+}
+
+async function drainFactualBacklog(store: PostgresNewsStore, pipeline: NewsFactualPipelineV1, options: NewsExecutorOptions, signal: AbortSignal, lease?: ExecutionLease): Promise<readonly FactualPipelineOutcomeV1[]> {
+  return await (async () => {
         await store.reconcileFactualBacklog();
-        await store.enqueueFactualBacklog(result.publications);
-        const factualLeaseSeconds = Math.max(1, Math.floor(lease.leaseSeconds));
+        const factualLeaseSeconds = Math.max(1, Math.floor(lease?.leaseSeconds ?? options.leaseSeconds ?? 60));
         const claims = await store.claimFactualBacklog(options.factualPipeline!.maxDocuments, options.workerId, factualLeaseSeconds);
+        if (claims.length === 0) return [];
+        const localAbort = new AbortController();
+        const combinedSignal = AbortSignal.any([signal, localAbort.signal]);
+        let ownershipLost = false;
         const renewal = setInterval(() => {
-          for (const claim of claims) void store.renewFactualBacklogClaim(claim.publication.publicationId, options.workerId, claim.claimToken, factualLeaseSeconds).catch(() => undefined);
+          for (const claim of claims) void store.renewFactualBacklogClaim(claim.publication.publicationId, options.workerId, claim.claimToken, factualLeaseSeconds).then(alive => {
+            if (!alive) { ownershipLost = true; localAbort.abort(); }
+          }).catch(() => { ownershipLost = true; localAbort.abort(); });
         }, Math.max(100, Math.floor(factualLeaseSeconds * 1000 / 3)));
         let outcomes: readonly FactualPipelineOutcomeV1[];
-        try { outcomes = await options.factualPipeline!.processPublications(claims.map(claim => claim.publication), signal); }
+        try { outcomes = await options.factualPipeline!.processPublications(claims.map(claim => claim.publication), combinedSignal, () => { if (ownershipLost) throw new Error("NEWS_FACTUAL_LEASE_LOST"); }); }
+        catch (error) { outcomes = claims.map(claim => ({ publicationId: claim.publication.publicationId, canonicalClaimId: `sec:${claim.publication.externalId}`, status: "FAILED_RETRYABLE" as const, reason: error instanceof Error ? error.message : "NEWS_FACTUAL_RETRYABLE_FAILURE" })); }
         finally { clearInterval(renewal); }
         for (const [index, outcome] of outcomes.entries()) {
           const claim = claims[index];
@@ -38,15 +51,13 @@ async function runTarget(store: PostgresNewsStore, target: ClaimedTarget, option
           else await store.finishFactualBacklog(outcome.publicationId, options.workerId, claim.claimToken, outcome.status, outcome.reason);
         }
         return outcomes;
-      })()
-    : [];
-  for (const outcome of factualOutcomes) console.log(JSON.stringify({ pipeline: "SEC>N1>N2>N3A>N3B>N3C>N5", publicationId: outcome.publicationId, status: outcome.status, reason: outcome.reason, factEventId: outcome.factEventId ?? null, confirmationStatus: outcome.confirmationStatus ?? null, documentSha256: outcome.documentSha256 ?? null }));
-  return { ingested: committed.insertedPublications, factualOutcomes };
+      })();
 }
 
 export async function runNewsExecutorOnce(options: NewsExecutorOptions): Promise<{ claimed: boolean; ingested: number; factualOutcomes: readonly FactualPipelineOutcomeV1[] }> {
+  const preDrain = options.factualPipeline ? await drainFactualBacklog(options.store, options.factualPipeline, options, options.signal ?? new AbortController().signal) : [];
   const target = await options.store.claimNext(options.workerId, options.leaseSeconds ?? 60, options.collectionScopeKey);
-  if (!target) return { claimed: false, ingested: 0, factualOutcomes: [] };
+  if (!target) return { claimed: false, ingested: 0, factualOutcomes: preDrain };
   const lease: ExecutionLease = { executionId: target.executionId, collectionScopeKey: target.collectionScopeKey, workerId: options.workerId, leaseSeconds: options.leaseSeconds ?? 60 };
   const controller = new AbortController();
   const forwardAbort = () => controller.abort();
@@ -65,7 +76,7 @@ export async function runNewsExecutorOnce(options: NewsExecutorOptions): Promise
     if (leaseLost || controller.signal.aborted) throw new Error("NEWS_LEASE_LOST");
     const result = await options.store.finish(lease, true);
     if (result.status === "STALE") throw new Error("NEWS_LEASE_LOST");
-    return { claimed: true, ingested: cycle.ingested, factualOutcomes: cycle.factualOutcomes };
+    return { claimed: true, ingested: cycle.ingested, factualOutcomes: [...preDrain, ...cycle.factualOutcomes] };
   } catch (error) {
     clearTimeout(timeout); clearInterval(heartbeat); options.signal?.removeEventListener("abort", forwardAbort);
     const result = await options.store.finish(lease, false, error);
