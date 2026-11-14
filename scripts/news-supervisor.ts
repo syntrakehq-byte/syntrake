@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 
 const root = process.cwd();
 const workerArgs = ["node_modules/tsx/dist/cli.mjs", "scripts/news-postgres-worker.ts"];
+const childArgs = process.env.NEWS_SUPERVISOR_TEST_NONCOOPERATIVE === "1" ? ["-e", "process.on('SIGTERM',()=>{}); setInterval(()=>{},1000)"] : workerArgs;
 let stopping = false;
 let child: ChildProcess | undefined;
 let childExited = true;
@@ -21,7 +22,7 @@ const stop = (reason: string) => {
 
 const start = () => {
   if (stopping) return;
-  child = spawn(process.execPath, workerArgs, { cwd: root, env: process.env, stdio: "inherit" });
+  child = spawn(process.execPath, childArgs, { cwd: root, env: process.env, stdio: "inherit" });
   childExited = false;
   const pid = child.pid ?? -1;
   console.log(`NEWS_SUPERVISOR_STARTED pid=${pid} restart=${restartCount}`);
