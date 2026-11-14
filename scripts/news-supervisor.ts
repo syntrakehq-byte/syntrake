@@ -2,7 +2,11 @@ import { spawn, type ChildProcess } from "node:child_process";
 
 const root = process.cwd();
 const workerArgs = ["node_modules/tsx/dist/cli.mjs", "scripts/news-postgres-worker.ts"];
-const childArgs = process.env.NEWS_SUPERVISOR_TEST_NONCOOPERATIVE === "1" ? ["-e", "process.on('SIGTERM',()=>{}); setInterval(()=>{},1000)"] : workerArgs;
+const childArgs = process.env.NEWS_SUPERVISOR_TEST_NONCOOPERATIVE === "1"
+  ? ["-e", "process.on('SIGTERM',()=>{}); setInterval(()=>{},1000)"]
+  : process.env.NEWS_SUPERVISOR_TEST_EXITING === "1"
+    ? ["-e", "setTimeout(()=>process.exit(1),50)"]
+    : workerArgs;
 let stopping = false;
 let child: ChildProcess | undefined;
 let childExited = true;
