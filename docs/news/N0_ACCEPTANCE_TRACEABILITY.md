@@ -140,3 +140,7 @@ As afirmações históricas sobre writer `NOLOGIN`, DML direto e selagem também
 ### Decisão preservada
 
 `N0_APPROVED=NO` e `NEWS_CORE_PRODUCTION_READY=NO`. Não declarar fecho do Bloco 5 enquanto os requisitos acima permanecerem sem prova completa. Não houve merge, deploy, migração remota ou alteração de Market, Investing, Trading ou Ledger.
+
+### Prova BL4 factual estabilizada
+
+No SHA `7456db48a7973dd85431cb074d230721f9045912`, o job News Core `132576255379` do workflow `43637123793` executou `newsFactualSupervisorRecovery.test.ts` sem falhas. A publicação-alvo foi observada antes da leitura N5 em `state=DONE`, `completed=PERSISTED`, `pit_visibility_state=DURABLE`, com `finalized_at`, `as_known_at` e `committed_at` presentes. Esta alteração sincroniza o harness com estado persistido e não promove T25/T26: T25 ainda carece de baseline/atribuição dos dois polls SEC, e T26 ainda carece de crash exatamente entre fetch e persistência N1.
