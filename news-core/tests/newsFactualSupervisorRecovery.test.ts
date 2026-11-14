@@ -42,7 +42,8 @@ test("FACTUAL supervisor restarts after SIGKILL and completes SEC work in N5", {
     const reader = new PostgresFactualStore(new Pool({ connectionString: roleUrl(DB_URL, roles.reader) }), "news_reader");
     const news = new PostgresNewsStore(new Pool({ connectionString: roleUrl(DB_URL, roles.service) }));
     const api = new NewsConsumptionApiV1({ news, factual: reader }, "0123456789abcdef", "bl4-factual-supervisor");
-    const events = await api.getNewsEvents({ serviceId: "news_reader", credential: "bl4-factual-supervisor" }, { asOf: new Date(Date.now() + 60_000).toISOString() });
+    const asOf = (await admin.query<{ cutoff: string }>("select clock_timestamp()::timestamptz::text cutoff")).rows[0].cutoff;
+    const events = await api.getNewsEvents({ serviceId: "news_reader", credential: "bl4-factual-supervisor" }, { asOf });
     assert.equal(events.status, "AVAILABLE"); assert.ok(events.data.length > 0);
     supervisor.kill("SIGTERM");
     const exit = await new Promise<{ code: number | null }>(resolve => supervisor.once("close", code => resolve({ code })));
@@ -51,7 +52,8 @@ test("FACTUAL supervisor restarts after SIGKILL and completes SEC work in N5", {
     assert.ok(duplicates > 0);
     await news.close(); await reader.close();
   } finally {
-    if (!supervisor.killed) supervisor.kill("SIGTERM");
+    if (!supervisor.killed) supervisor.kill("SIGKILL");
+    if (supervisor.exitCode === null) await new Promise<void>(resolve => { const timer = setTimeout(resolve, 2_000); supervisor.once("close", () => { clearTimeout(timer); resolve(); }); });
     for (const role of Object.values(roles)) await admin.query(`drop role if exists ${role}`).catch(() => undefined);
     await admin.end();
   }
