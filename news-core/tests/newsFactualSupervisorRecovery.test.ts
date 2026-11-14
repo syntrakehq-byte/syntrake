@@ -101,14 +101,16 @@ test("FACTUAL supervisor restarts after SIGKILL and completes SEC work in N5", {
     const duplicates = Number((await admin.query("select count(*)::int n from news_core.fact_revisions")).rows[0].n);
     assert.ok(duplicates > 0);
   } finally {
+    for (const pid of workerPids) {
+      try { process.kill(pid, "SIGKILL"); } catch { /* already exited */ }
+    }
     if (supervisor && supervisor.exitCode === null) {
       supervisor.kill("SIGTERM");
       await new Promise<void>(resolve => { const timer = setTimeout(resolve, 2_000); supervisor?.once("close", () => { clearTimeout(timer); resolve(); }); });
       if (supervisor.exitCode === null) supervisor.kill("SIGKILL");
     }
-    for (const pid of workerPids) {
-      try { process.kill(pid, "SIGKILL"); } catch { /* already exited */ }
-    }
+    supervisor?.stdout?.destroy();
+    supervisor?.stderr?.destroy();
     await news?.close().catch(() => undefined);
     await reader?.close().catch(() => undefined);
     await adminNews.close();
