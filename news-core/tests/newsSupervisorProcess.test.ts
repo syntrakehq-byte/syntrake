@@ -12,6 +12,7 @@ test("News supervisor restarts a killed worker and stops cooperatively", { skip:
   const admin = new Client({ connectionString: DB_URL });
   await admin.connect();
   const cik = "0000000001";
+  await admin.query(await readFile(migration, "utf8"));
   const child = spawn(process.execPath, ["node_modules/tsx/dist/cli.mjs", "scripts/news-supervisor.ts"], {
     cwd: process.cwd(), env: { ...process.env, NEWS_DATABASE_URL: DB_URL, SEC_USER_AGENT: "SYNTRAKE supervisor CI/1.0 security@syntrake.com", NEWS_EXECUTION_MODE: "N1_ONLY", SEC_CIK: cik, NEWS_POLL_INTERVAL_MS: "50" }, stdio: ["ignore", "pipe", "pipe"],
   });
@@ -24,7 +25,6 @@ test("News supervisor restarts a killed worker and stops cooperatively", { skip:
   child.stdout.on("data", chunk => { output += String(chunk); started = (output.match(/NEWS_SUPERVISOR_STARTED/g) ?? []).length; });
   child.stderr.on("data", chunk => { output += String(chunk); });
   try {
-    await admin.query(await readFile(migration, "utf8"));
     await waitFor(() => started >= 1, 15_000);
     const firstPid = Number(output.match(/NEWS_SUPERVISOR_STARTED pid=(\d+)/)?.[1]);
     assert.ok(firstPid > 0);
