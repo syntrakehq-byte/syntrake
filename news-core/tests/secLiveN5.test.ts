@@ -39,6 +39,16 @@ async function applyN1Migrations(admin: Client): Promise<void> {
   for (const file of ["20261111150000_news_core_postgres_n1.sql", "20261111170000_news_core_n2a_revisions.sql"]) await admin.query(await readFile(migration(file), "utf8"));
 }
 
+async function openIsolatedDatabase(): Promise<{ admin: Client; connectionString: string; close: () => Promise<void> }> {
+  if (!DB_URL) throw new Error("NEWS_DATABASE_URL or TEST_DATABASE_URL is required");
+  const databaseName = `news_n0_${randomUUID().replaceAll("-", "")}`;
+  const provisioner = new Client({ connectionString: DB_URL }); await provisioner.connect();
+  await provisioner.query(`create database "${databaseName}"`);
+  const databaseUrl = new URL(DB_URL); databaseUrl.pathname = `/${databaseName}`;
+  const admin = new Client({ connectionString: databaseUrl.toString() }); await admin.connect();
+  return { admin, connectionString: databaseUrl.toString(), close: async () => { await admin.end(); await provisioner.query(`drop database if exists "${databaseName}"`); await provisioner.end(); } };
+}
+
 async function absentPublication(admin: Client, publications: ReplayFixture["publications"]): Promise<ReplayFixture["publications"][number]> {
   for (const publication of publications) {
     const count = Number((await admin.query("select count(*)::int n from news_core.publications where source_id=$1 and external_id=$2", [publication.sourceId, publication.externalId])).rows[0].n);
@@ -49,7 +59,7 @@ async function absentPublication(admin: Client, publications: ReplayFixture["pub
 
 test("N0-T25: two attributable SEC cycles use a genuine isolated baseline and remain idempotent", { skip: !enabled && "N5_REAL_SOURCE=1 required for the official SEC proof" }, async () => {
   if (!DB_URL) throw new Error("NEWS_DATABASE_URL or TEST_DATABASE_URL is required for N0-T25");
-  const admin = new Client({ connectionString: DB_URL }); const pool = new Pool({ connectionString: DB_URL, max: 4 }); const store = new PostgresNewsStore(pool); const suffix = randomUUID().replaceAll("-", ""); const scope = `n0-t25-${suffix}`;
+  const isolated = await openIsolatedDatabase(); const admin = isolated.admin; const pool = new Pool({ connectionString: isolated.connectionString, max: 4 }); const store = new PostgresNewsStore(pool); const suffix = randomUUID().replaceAll("-", ""); const scope = `n0-t25-${suffix}`;
   try {
     await admin.connect(); await applyN1Migrations(admin); const replay = await genuineSecReplay(); await installTarget(store, scope);
     const candidate = await absentPublication(admin, replay.publications);
@@ -63,12 +73,12 @@ test("N0-T25: two attributable SEC cycles use a genuine isolated baseline and re
     assert.equal(second.claimed, true); assert.equal(Number((await admin.query("select count(*)::int n from news_core.publications where source_id='sec-edgar' and external_id=$1", [candidate.externalId])).rows[0].n), 1);
     assert.equal((await store.readPublicationRevisionsAsOf(new Date(Date.now() + 60_000).toISOString(), candidate.publicationId)).length, 1);
     console.log(`N0_T25_PROOF cik=${CIK} accession=${candidate.externalId} source=${candidate.sourceId} originFingerprint=${candidate.originFingerprint} baseline=0 firstCount=1 secondCount=1 checkpointAfterFirst=yes`);
-  } finally { await Promise.all([store.close(), admin.end()]); }
+  } finally { await store.close(); await isolated.close(); }
 });
 
 test("N0-T26: executor recovers an injected post-fetch pre-commit crash without checkpoint loss or duplication", { skip: !enabled && "N5_REAL_SOURCE=1 required for the official SEC proof" }, async () => {
   if (!DB_URL) throw new Error("NEWS_DATABASE_URL or TEST_DATABASE_URL is required for N0-T26");
-  const admin = new Client({ connectionString: DB_URL }); const pool = new Pool({ connectionString: DB_URL, max: 4 }); const store = new PostgresNewsStore(pool); const suffix = randomUUID().replaceAll("-", ""); const scope = `n0-t26-${suffix}`;
+  const isolated = await openIsolatedDatabase(); const admin = isolated.admin; const pool = new Pool({ connectionString: isolated.connectionString, max: 4 }); const store = new PostgresNewsStore(pool); const suffix = randomUUID().replaceAll("-", ""); const scope = `n0-t26-${suffix}`;
   try {
     await admin.connect(); await applyN1Migrations(admin); const replay = await genuineSecReplay(); await installTarget(store, scope); const candidate = await absentPublication(admin, replay.publications);
     const originalIngest = store.ingest.bind(store); let injectOnce = true;
@@ -82,5 +92,5 @@ test("N0-T26: executor recovers an injected post-fetch pre-commit crash without 
     await runNewsExecutorOnce({ store, workerId: `n0-t26-worker-3-${suffix}`, secUserAgent: userAgent(), collectionScopeKey: scope, fetchImpl: replay.fetchImpl, fetchTimeoutMs: 30_000 });
     assert.equal(Number((await admin.query("select count(*)::int n from news_core.publications where source_id='sec-edgar' and external_id=$1", [candidate.externalId])).rows[0].n), 1);
     console.log(`N0_T26_PROOF cik=${CIK} accession=${candidate.externalId} crash=post-fetch-pre-commit worker1=failed worker2=recovered checkpointDuringCrash=absent finalPublications=1 replayDuplicates=0`);
-  } finally { await Promise.all([store.close(), admin.end()]); }
+  } finally { await store.close(); await isolated.close(); }
 });
