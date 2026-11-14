@@ -61,7 +61,7 @@ test("N0-T25: two attributable SEC cycles use a genuine isolated baseline and re
   if (!DB_URL) throw new Error("NEWS_DATABASE_URL or TEST_DATABASE_URL is required for N0-T25");
   const isolated = await openIsolatedDatabase(); const admin = isolated.admin; const pool = new Pool({ connectionString: isolated.connectionString, max: 4 }); const store = new PostgresNewsStore(pool); const suffix = randomUUID().replaceAll("-", ""); const scope = `n0-t25-${suffix}`;
   try {
-    await admin.connect(); await applyN1Migrations(admin); const replay = await genuineSecReplay(); await installTarget(store, scope);
+    await applyN1Migrations(admin); const replay = await genuineSecReplay(); await installTarget(store, scope);
     const candidate = await absentPublication(admin, replay.publications);
     assert.equal(Number((await admin.query("select count(*)::int n from news_core.publications where source_id='sec-edgar' and external_id=$1", [candidate.externalId])).rows[0].n), 0);
     const first = await runNewsExecutorOnce({ store, workerId: `n0-t25-cycle-1-${suffix}`, secUserAgent: userAgent(), collectionScopeKey: scope, fetchImpl: replay.fetchImpl, fetchTimeoutMs: 30_000 });
@@ -80,7 +80,7 @@ test("N0-T26: executor recovers an injected post-fetch pre-commit crash without 
   if (!DB_URL) throw new Error("NEWS_DATABASE_URL or TEST_DATABASE_URL is required for N0-T26");
   const isolated = await openIsolatedDatabase(); const admin = isolated.admin; const pool = new Pool({ connectionString: isolated.connectionString, max: 4 }); const store = new PostgresNewsStore(pool); const suffix = randomUUID().replaceAll("-", ""); const scope = `n0-t26-${suffix}`;
   try {
-    await admin.connect(); await applyN1Migrations(admin); const replay = await genuineSecReplay(); await installTarget(store, scope); const candidate = await absentPublication(admin, replay.publications);
+    await applyN1Migrations(admin); const replay = await genuineSecReplay(); await installTarget(store, scope); const candidate = await absentPublication(admin, replay.publications);
     const originalIngest = store.ingest.bind(store); let injectOnce = true;
     store.ingest = async (batch, options) => injectOnce ? (injectOnce = false, originalIngest(batch, { ...options, failurePoint: "before-commit" })) : originalIngest(batch, options);
     await assert.rejects(runNewsExecutorOnce({ store, workerId: `n0-t26-worker-1-${suffix}`, secUserAgent: userAgent(), collectionScopeKey: scope, fetchImpl: replay.fetchImpl, fetchTimeoutMs: 30_000 }), /INJECTED_FAILURE_BEFORE_COMMIT/);
