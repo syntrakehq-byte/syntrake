@@ -267,6 +267,21 @@ export class PostgresNewsStore {
     return inserted;
   }
 
+  async reconcileFactualBacklog(limit = 1000): Promise<number> {
+    const result = await this.pool.query(
+      `insert into news_core.factual_pipeline_backlog(publication_id,publication_payload)
+       select p.publication_id, jsonb_build_object(
+         'publicationId',p.publication_id,'sourceId',p.source_id,'originFingerprint',p.origin_fingerprint,
+         'externalId',p.external_id,'originalUrl',p.original_url,'title',p.title,'publishedAt',p.published_at,
+         'firstSeenAt',p.first_seen_at,'ingestedAt',p.ingested_at,'asKnownAt',p.as_known_at,'form',p.form)
+         from news_core.publications p
+         left join news_core.factual_pipeline_backlog b on b.publication_id=p.publication_id
+        where p.visibility_state='COMMITTED' and p.as_known_at is not null and b.publication_id is null
+        order by p.as_known_at,p.publication_id limit $1 on conflict do nothing`, [Math.max(1, Math.min(limit, 10000))],
+    );
+    return result.rowCount ?? 0;
+  }
+
   async claimFactualBacklog(limit: number, owner: string, leaseSeconds = 600): Promise<FactualBacklogClaim[]> {
     const result = await this.pool.query<{ publication_payload: NewsPublication; claim_token: string }>(
       `with candidates as (
@@ -309,6 +324,16 @@ export class PostgresNewsStore {
       [publicationId, owner, claimToken, error instanceof Error ? error.message.slice(0, 1000) : "NEWS_FACTUAL_RETRYABLE_FAILURE"],
     );
     return (result.rowCount ?? 0) === 1 ? "REQUEUED" : "STALE";
+  }
+
+  async renewFactualBacklogClaim(publicationId: string, owner: string, claimToken: string, leaseSeconds: number): Promise<boolean> {
+    const result = await this.pool.query(
+      `update news_core.factual_pipeline_backlog
+          set lease_until=clock_timestamp()+($4::int * interval '1 second'), updated_at=clock_timestamp()
+        where publication_id=$1 and state='PROCESSING' and claim_owner=$2 and claim_token=$3::uuid
+        returning publication_id`, [publicationId, owner, claimToken, leaseSeconds],
+    );
+    return (result.rowCount ?? 0) === 1;
   }
 
   private async assertLease(client: PoolClient, lease: ExecutionLease): Promise<void> {

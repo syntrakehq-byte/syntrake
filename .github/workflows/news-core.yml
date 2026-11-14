@@ -68,6 +68,9 @@ jobs:
       - run: npm run test:news:bl3:operational
         env:
           SEC_USER_AGENT: "SYNTRAKE BL3 operational CI/1.0 security@syntrake.com"
+      - run: npm run test:news:bl4:supervisor
+        env:
+          SEC_USER_AGENT: "SYNTRAKE BL4 supervisor CI/1.0 security@syntrake.com"
       - run: npm run test:news:n4
       - run: npm run test:news:n4:pg17
       - run: npm run test:news:n4:live

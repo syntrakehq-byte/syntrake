@@ -21,9 +21,16 @@ async function runTarget(store: PostgresNewsStore, target: ClaimedTarget, option
   }, { lease });
   const factualOutcomes = options.factualPipeline
     ? await (async () => {
+        await store.reconcileFactualBacklog();
         await store.enqueueFactualBacklog(result.publications);
-        const claims = await store.claimFactualBacklog(options.factualPipeline!.maxDocuments, options.workerId);
-        const outcomes = await options.factualPipeline!.processPublications(claims.map(claim => claim.publication), signal);
+        const factualLeaseSeconds = Math.max(1, Math.floor(lease.leaseSeconds));
+        const claims = await store.claimFactualBacklog(options.factualPipeline!.maxDocuments, options.workerId, factualLeaseSeconds);
+        const renewal = setInterval(() => {
+          for (const claim of claims) void store.renewFactualBacklogClaim(claim.publication.publicationId, options.workerId, claim.claimToken, factualLeaseSeconds).catch(() => undefined);
+        }, Math.max(100, Math.floor(factualLeaseSeconds * 1000 / 3)));
+        let outcomes: readonly FactualPipelineOutcomeV1[];
+        try { outcomes = await options.factualPipeline!.processPublications(claims.map(claim => claim.publication), signal); }
+        finally { clearInterval(renewal); }
         for (const [index, outcome] of outcomes.entries()) {
           const claim = claims[index];
           if (!claim) continue;

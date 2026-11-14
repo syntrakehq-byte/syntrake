@@ -52,6 +52,8 @@ test("BL3 operational executor runs SEC through N3 and N5 with positive and cons
     }, { failurePoint: "after-commit-before-finalize" }), /INJECTED_FAILURE_AFTER_COMMIT_BEFORE_FINALIZE/);
     await news.getCheckpoint(atomicScope);
     assert.equal(Number((await admin.query("select count(*)::int n from news_core.factual_pipeline_backlog where publication_id=$1", [atomicPublicationId])).rows[0].n), 1, "recovery must find the factual handoff without a second SEC download");
+    await admin.query("delete from news_core.factual_pipeline_backlog where publication_id=$1", [atomicPublicationId]);
+    assert.equal(await news.reconcileFactualBacklog(), 1, "backfill must restore a committed publication missing from the factual queue");
     const first = await runNewsExecutorOnce({ store: news, factualPipeline: pipeline, workerId: `bl3-operational-${suffix}`, secUserAgent: process.env.SEC_USER_AGENT ?? "SYNTRAKE BL3 operational CI/1.0 security@syntrake.com", collectionScopeKey: scope, fetchTimeoutMs: 120_000 });
     assert.equal(first.claimed, true);
     assert.ok(first.factualOutcomes.some(outcome => outcome.status === "PERSISTED"), "operational executor must persist one supported SEC document");
@@ -76,6 +78,11 @@ test("BL3 operational executor runs SEC through N3 and N5 with positive and cons
     assert.equal(await news.finishFactualBacklog(fenceA[0].publication.publicationId, `bl3-fence-a-${suffix}`, fenceA[0].claimToken, "REFUSED"), "STALE");
     assert.equal((await admin.query("select claim_owner from news_core.factual_pipeline_backlog where publication_id=$1", [fenceA[0].publication.publicationId])).rows[0].claim_owner, `bl3-fence-b-${suffix}`);
     assert.equal(await news.finishFactualBacklog(fenceB[0].publication.publicationId, `bl3-fence-b-${suffix}`, fenceB[0].claimToken, "REFUSED"), "FINISHED");
+    const longClaim = (await news.claimFactualBacklog(1, `bl3-long-${suffix}`, 1))[0];
+    assert.ok(longClaim);
+    await new Promise(resolve => setTimeout(resolve, 1_200));
+    assert.equal(await news.renewFactualBacklogClaim(longClaim.publication.publicationId, `bl3-long-${suffix}`, longClaim.claimToken, 2), true);
+    assert.equal(await news.finishFactualBacklog(longClaim.publication.publicationId, `bl3-long-${suffix}`, longClaim.claimToken, "REFUSED"), "FINISHED");
     const failedClaims = await news.claimFactualBacklog(20, `bl3-fairness-a-${suffix}`, 60);
     assert.equal(failedClaims.length, 20);
     for (const claim of failedClaims) assert.equal(await news.retryFactualBacklog(claim.publication.publicationId, `bl3-fairness-a-${suffix}`, claim.claimToken, new Error("INJECTED_RETRYABLE")), "REQUEUED");
