@@ -24,6 +24,7 @@ export type FactualPipelineOptionsV1 = Readonly<{
   writerPool: Pool;
   userAgent: string;
   maxDocuments?: number;
+  processingHoldMs?: number;
 }>;
 
 const sha256 = (value: string): string => createHash("sha256").update(value, "utf8").digest("hex");
@@ -63,6 +64,15 @@ export class NewsFactualPipelineV1 {
       const response = await fetchSafeExternal(publication.originalUrl, { headers: { "User-Agent": this.options.userAgent, Accept: "text/html" }, signal: signal ?? AbortSignal.timeout(20_000) });
       if (!response.ok) throw new Error(`NEWS_FACTUAL_FETCH_RETRYABLE_HTTP_${response.status}`);
       const body = await response.text();
+      const holdMs = Math.max(0, Math.min(this.options.processingHoldMs ?? 0, 60_000));
+      if (holdMs > 0) {
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(resolve, holdMs);
+          const abort = () => { clearTimeout(timer); reject(new Error("NEWS_EXECUTION_CANCELLED")); };
+          if (signal?.aborted) { abort(); return; }
+          signal?.addEventListener("abort", abort, { once: true });
+        });
+      }
       const excerpt = controlledExcerpt(stripDocument(body));
       if (!excerpt) return { publicationId: publication.publicationId, canonicalClaimId: `sec:${publication.externalId}`, status: "REFUSED", reason: "N3A_NO_CONTROLLED_RULE_MATCH", documentSha256: sha256(body) };
       const retrievedAt = new Date().toISOString();

@@ -19,7 +19,7 @@ if (executionMode === "FACTUAL" && !factualConfigured) throw new Error("NEWS_FAC
 if (executionMode === "N1_ONLY" && factualConfigured) throw new Error("NEWS_N1_ONLY_WITH_FACTUAL_CREDENTIALS");
 console.log(`NEWS_EXECUTION_MODE=${executionMode}`);
 const factualPipeline = executionMode === "FACTUAL"
-  ? new NewsFactualPipelineV1({ news: store, verifierPool: new Pool({ connectionString: factualVerifierUrl, max: 2, application_name: "syntrake-news-verifier" }), attestorPool: new Pool({ connectionString: factualAttestorUrl, max: 2, application_name: "syntrake-news-attestor" }), writerPool: new Pool({ connectionString: factualWriterUrl, max: 2, application_name: "syntrake-news-writer" }), userAgent, maxDocuments: Number(process.env.NEWS_FACTUAL_DOCUMENT_LIMIT ?? 20) })
+  ? new NewsFactualPipelineV1({ news: store, verifierPool: new Pool({ connectionString: factualVerifierUrl, max: 2, application_name: "syntrake-news-verifier" }), attestorPool: new Pool({ connectionString: factualAttestorUrl, max: 2, application_name: "syntrake-news-attestor" }), writerPool: new Pool({ connectionString: factualWriterUrl, max: 2, application_name: "syntrake-news-writer" }), userAgent, maxDocuments: Number(process.env.NEWS_FACTUAL_DOCUMENT_LIMIT ?? 20), processingHoldMs: Number(process.env.NEWS_FACTUAL_PROCESSING_HOLD_MS ?? 0) })
   : undefined;
 const abort = new AbortController();
 let executionFailed = false;
