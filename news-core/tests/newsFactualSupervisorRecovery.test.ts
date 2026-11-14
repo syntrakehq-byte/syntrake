@@ -38,12 +38,11 @@ test("FACTUAL supervisor restarts after SIGKILL and completes SEC work in N5", {
     await admin.query(`grant news_reader to ${roles.reader}`);
     const userAgent = "SYNTRAKE BL4 factual supervisor CI/1.0 security@syntrake.com";
     const collected = await fetchSecFilings({ cik: "0000320193", userAgent, now: new Date(), signal: AbortSignal.timeout(20_000) });
-    let publication = collected.publications.find(item => item.form === "8-K");
-    for (const candidate of collected.publications.filter(item => item.form === "8-K")) {
-      const response = await fetchSafeExternal(candidate.originalUrl, { headers: { "User-Agent": userAgent, Accept: "text/html" }, signal: AbortSignal.timeout(20_000) });
-      if (response.ok && hasControlledExcerpt(await response.text())) { publication = candidate; break; }
-    }
+    const publication = collected.publications.find(item => item.form === "8-K");
     assert.ok(publication, "SEC live collection must provide a supported 8-K document");
+    const documentResponse = await fetchSafeExternal(publication.originalUrl, { headers: { "User-Agent": userAgent, Accept: "text/html" }, signal: AbortSignal.timeout(20_000) });
+    assert.equal(documentResponse.ok, true, "the selected SEC publication must be retrievable");
+    assert.equal(hasControlledExcerpt(await documentResponse.text()), true, "the selected SEC publication must contain a controlled factual excerpt");
     const scope = secCollectionScopeKey("0000320193");
     const observedAt = new Date().toISOString();
     await adminNews.ingestAdministrative({ publications: [publication], observations: collected.observations.filter(item => item.publicationId === publication.publicationId), checkpoint: { sourceId: "sec-edgar", collectionScopeKey: scope, cursor: collected.nextCursor, updatedAt: observedAt } });
