@@ -86,7 +86,7 @@ test("FACTUAL supervisor restarts after SIGKILL and completes SEC work in N5", {
     assert.ok(firstClaim.claim_token);
     assert.ok(firstClaim.attempts >= 1);
     process.kill(firstPid, "SIGKILL");
-    await waitFor(() => starts >= 2, 30_000);
+    await waitFor(() => starts >= 2 && (output.match(/NEWS_WORKER_READY pid=\d+/g) ?? []).length >= 2, 30_000);
     const workerStarts = [...output.matchAll(/NEWS_WORKER_READY pid=(\d+)/g)].map(match => Number(match[1]));
     const secondPid = workerStarts.at(-1);
     assert.ok(secondPid && secondPid !== firstPid);
