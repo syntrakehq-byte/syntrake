@@ -25,7 +25,7 @@ const start = () => {
   child.once("exit", (code, signal) => {
     console.log(`NEWS_SUPERVISOR_EXIT pid=${pid} code=${code ?? "null"} signal=${signal ?? "null"}`);
     child = undefined;
-    if (stopping) { process.exit(code && code !== 0 ? code : 0); return; }
+    if (stopping) { process.exit(0); return; }
     restartCount += 1;
     const delay = Math.min(30_000, 250 * 2 ** Math.min(restartCount - 1, 7));
     console.log(`NEWS_SUPERVISOR_RESTART_IN_MS delay=${delay}`);
