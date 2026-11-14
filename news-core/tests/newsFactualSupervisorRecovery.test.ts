@@ -47,14 +47,19 @@ test("FACTUAL supervisor restarts after SIGKILL and completes SEC work in N5", {
     const collected = await fetchSecFilings({ cik: "0000320193", userAgent, now: new Date(), signal: AbortSignal.timeout(20_000) });
     console.log(`BL4_FACTUAL_SETUP sec_publications=${collected.publications.length}`);
     let publication: typeof collected.publications[number] | undefined;
-    for (const candidate of collected.publications.filter(item => item.form === "8-K").slice(0, 8)) {
-      try {
-        const documentResponse = await fetchSafeExternal(candidate.originalUrl, { headers: { "User-Agent": userAgent, Accept: "text/html" }, signal: AbortSignal.timeout(5_000) });
-        if (documentResponse.ok) {
+    for (const candidates of collected.publications.filter(item => item.form === "8-K").slice(0, 32).reduce<typeof collected.publications[number][][]>((groups, candidate, index) => { const group = groups[Math.floor(index / 4)] ?? []; group.push(candidate); groups[Math.floor(index / 4)] = group; return groups; }, [])) {
+      const probes = await Promise.all(candidates.map(async candidate => {
+        try {
+          const documentResponse = await fetchSafeExternal(candidate.originalUrl, { headers: { "User-Agent": userAgent, Accept: "text/html" }, signal: AbortSignal.timeout(5_000) });
+          if (!documentResponse.ok) return undefined;
           const body = await documentResponse.text();
-          if (hasControlledExcerpt(body) && Number((await admin.query("select count(*)::int n from news_core.fact_events where canonical_claim_id=$1", [`sec:${candidate.externalId}`])).rows[0].n) === 0) { publication = candidate; selectedDocumentSha256 = createHash("sha256").update(body, "utf8").digest("hex"); break; }
-        }
-      } catch { /* bounded live-source probe; continue conservatively */ }
+          if (!hasControlledExcerpt(body)) return undefined;
+          if (Number((await admin.query("select count(*)::int n from news_core.fact_events where canonical_claim_id=$1", [`sec:${candidate.externalId}`])).rows[0].n) !== 0) return undefined;
+          return { candidate, sha256: createHash("sha256").update(body, "utf8").digest("hex") };
+        } catch { return undefined; }
+      }));
+      const found = probes.find(value => value !== undefined);
+      if (found) { publication = found.candidate; selectedDocumentSha256 = found.sha256; break; }
     }
     assert.ok(publication, "SEC live collection must provide a supported 8-K document");
     const scope = secCollectionScopeKey("0000320193");
