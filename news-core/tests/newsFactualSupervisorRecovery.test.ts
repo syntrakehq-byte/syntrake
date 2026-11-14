@@ -88,7 +88,7 @@ test("FACTUAL supervisor restarts after SIGKILL and completes SEC work in N5", {
       if (Number((await admin.query("select count(*)::int n from news_core.fact_events where canonical_claim_id=$1", [canonicalClaimId])).rows[0].n) === 1) break;
       await new Promise(resolve => setTimeout(resolve, 250));
     }
-    const factual = await admin.query<{ event_count: number; revision_count: number; confirmation_status: string; content_fingerprint: string; evidence_count: number }>(`select count(distinct fe.fact_event_id)::int event_count, count(distinct fr.fact_revision_id)::int revision_count, max(fr.confirmation_status) confirmation_status, max(pr.content_fingerprint) content_fingerprint, count(fre.evidence_id)::int evidence_count from news_core.fact_events fe join news_core.fact_revisions fr on fr.fact_event_id=fe.fact_event_id join news_core.publication_revisions pr on pr.publication_revision_id=fr.publication_revision_id left join news_core.fact_revision_evidence fre on fre.fact_revision_id=fr.fact_revision_id where fe.canonical_claim_id=$1 and fre.source_document_ref=$2`, [canonicalClaimId, publication.originalUrl]);
+    const factual = await admin.query<{ event_id: string; event_count: number; revision_count: number; confirmation_status: string; content_fingerprint: string; evidence_count: number }>(`select max(fe.fact_event_id) event_id, count(distinct fe.fact_event_id)::int event_count, count(distinct fr.fact_revision_id)::int revision_count, max(fr.confirmation_status) confirmation_status, max(pr.content_fingerprint) content_fingerprint, count(fre.evidence_id)::int evidence_count from news_core.fact_events fe join news_core.fact_revisions fr on fr.fact_event_id=fe.fact_event_id join news_core.publication_revisions pr on pr.publication_revision_id=fr.publication_revision_id left join news_core.fact_revision_evidence fre on fre.fact_revision_id=fr.fact_revision_id where fe.canonical_claim_id=$1 and fre.source_document_ref=$2`, [canonicalClaimId, publication.originalUrl]);
     assert.equal(factual.rows[0].event_count, 1, `FACTUAL_SUPERVISOR_TIMEOUT output=${output.slice(-5000)}`);
     assert.equal(factual.rows[0].revision_count, 1);
     assert.equal(factual.rows[0].confirmation_status, "REPORTED");
@@ -98,8 +98,8 @@ test("FACTUAL supervisor restarts after SIGKILL and completes SEC work in N5", {
     news = new PostgresNewsStore(new Pool({ connectionString: roleUrl(DB_URL, roles.service), statement_timeout: 15_000, query_timeout: 20_000 }));
     const api = new NewsConsumptionApiV1({ news, factual: reader }, "0123456789abcdef", "bl4-factual-supervisor");
     const asOf = (await admin.query<{ cutoff: string }>("select clock_timestamp()::timestamptz::text cutoff")).rows[0].cutoff;
-    const events = await api.getNewsEvents({ serviceId: "news_reader", credential: "bl4-factual-supervisor" }, { asOf });
-    assert.equal(events.status, "AVAILABLE"); assert.ok(events.data.some(event => event.canonicalClaimId === canonicalClaimId));
+    const events = await api.getNewsEvents({ serviceId: "news_reader", credential: "bl4-factual-supervisor" }, { asOf, targets: [factual.rows[0].event_id] });
+    assert.equal(events.status, "AVAILABLE"); assert.equal(events.data.length, 1); assert.equal(events.data[0].canonicalClaimId, canonicalClaimId);
     processHandle.kill("SIGTERM");
     const exit = await new Promise<{ code: number | null }>(resolve => {
       let settled = false;
