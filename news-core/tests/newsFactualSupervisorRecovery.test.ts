@@ -102,6 +102,21 @@ test("FACTUAL supervisor restarts after SIGKILL and completes SEC work in N5", {
       await new Promise(resolve => setTimeout(resolve, 250));
     }
     const factual = await admin.query<{ event_id: string; event_count: number; revision_count: number; confirmation_status: string; content_fingerprint: string; evidence_count: number }>(`select max(fe.fact_event_id) event_id, count(distinct fe.fact_event_id)::int event_count, count(distinct fr.fact_revision_id)::int revision_count, max(fr.confirmation_status) confirmation_status, max(pr.content_fingerprint) content_fingerprint, count(fre.evidence_id)::int evidence_count from news_core.fact_events fe join news_core.fact_revisions fr on fr.fact_event_id=fe.fact_event_id join news_core.publication_revisions pr on pr.publication_revision_id=fr.publication_revision_id left join news_core.fact_revision_evidence fre on fre.fact_revision_id=fr.fact_revision_id where fe.canonical_claim_id=$1 and fre.source_document_ref=$2`, [canonicalClaimId, publication.originalUrl]);
+    await waitFor(async () => {
+      const ready = await admin.query<{ state: string; completed_status: string | null; pit_visibility_state: string | null; finalized_at: string | null; as_known_at: string | null; committed_at: string | null }>(`select b.state,b.completed_status,fr.pit_visibility_state,fr.finalized_at,fr.as_known_at,fr.committed_at
+        from news_core.factual_pipeline_backlog b
+        left join news_core.publication_revisions pr on pr.publication_id=b.publication_id
+        left join news_core.fact_revisions fr on fr.publication_revision_id=pr.publication_revision_id
+        where b.publication_id=$1 order by fr.revision_no desc nulls last limit 1`, [publication.publicationId]);
+      const row = ready.rows[0];
+      return row?.state === "DONE" && row.completed_status === "PERSISTED" && row.pit_visibility_state === "DURABLE" && row.finalized_at !== null && row.as_known_at !== null && row.committed_at !== null;
+    }, 30_000);
+    const durableState = await admin.query<{ state: string; completed_status: string | null; pit_visibility_state: string | null; finalized_at: string | null; as_known_at: string | null; committed_at: string | null }>(`select b.state,b.completed_status,fr.pit_visibility_state,fr.finalized_at,fr.as_known_at,fr.committed_at
+      from news_core.factual_pipeline_backlog b
+      left join news_core.publication_revisions pr on pr.publication_id=b.publication_id
+      left join news_core.fact_revisions fr on fr.publication_revision_id=pr.publication_revision_id
+      where b.publication_id=$1 order by fr.revision_no desc nulls last limit 1`, [publication.publicationId]);
+    console.log(`BL4_FACTUAL_READY publication=${publication.publicationId} state=${durableState.rows[0]?.state ?? "MISSING"} completed=${durableState.rows[0]?.completed_status ?? "NULL"} visibility=${durableState.rows[0]?.pit_visibility_state ?? "NULL"} finalized_at=${durableState.rows[0]?.finalized_at ?? "NULL"} as_known_at=${durableState.rows[0]?.as_known_at ?? "NULL"} committed_at=${durableState.rows[0]?.committed_at ?? "NULL"}`);
     assert.equal(factual.rows[0].event_count, 1, `FACTUAL_SUPERVISOR_TIMEOUT output=${output.slice(-5000)}`);
     assert.equal(factual.rows[0].revision_count, 1);
     assert.equal(factual.rows[0].confirmation_status, "REPORTED");
