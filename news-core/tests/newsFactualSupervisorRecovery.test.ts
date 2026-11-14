@@ -25,6 +25,8 @@ test("FACTUAL supervisor restarts after SIGKILL and completes SEC work in N5", {
   await admin.connect();
   const adminNews = new PostgresNewsStore(new Pool({ connectionString: DB_URL, max: 2 }));
   let supervisor: ReturnType<typeof spawn> | undefined;
+  let reader: PostgresFactualStore | undefined;
+  let news: PostgresNewsStore | undefined;
   let output = "";
   let starts = 0;
   const waitFor = (predicate: () => boolean | Promise<boolean>, timeoutMs: number) => new Promise<void>((resolve, reject) => { let settled = false; const timer = setInterval(async () => { if (settled) return; if (await predicate()) { settled = true; clearTimeout(deadline); clearInterval(timer); resolve(); } }, 100); const deadline = setTimeout(() => { if (!settled) { settled = true; clearInterval(timer); reject(new Error(`FACTUAL_SUPERVISOR_TIMEOUT output=${output.slice(-5000)}`)); } }, timeoutMs); });
@@ -69,8 +71,8 @@ test("FACTUAL supervisor restarts after SIGKILL and completes SEC work in N5", {
       await new Promise(resolve => setTimeout(resolve, 250));
     }
     assert.ok(Number((await admin.query("select count(*)::int n from news_core.fact_events")).rows[0].n) > 0, `FACTUAL_SUPERVISOR_TIMEOUT output=${output.slice(-5000)}`);
-    const reader = new PostgresFactualStore(new Pool({ connectionString: roleUrl(DB_URL, roles.reader) }), "news_reader");
-    const news = new PostgresNewsStore(new Pool({ connectionString: roleUrl(DB_URL, roles.service) }));
+    reader = new PostgresFactualStore(new Pool({ connectionString: roleUrl(DB_URL, roles.reader) }), "news_reader");
+    news = new PostgresNewsStore(new Pool({ connectionString: roleUrl(DB_URL, roles.service) }));
     const api = new NewsConsumptionApiV1({ news, factual: reader }, "0123456789abcdef", "bl4-factual-supervisor");
     const asOf = (await admin.query<{ cutoff: string }>("select clock_timestamp()::timestamptz::text cutoff")).rows[0].cutoff;
     const events = await api.getNewsEvents({ serviceId: "news_reader", credential: "bl4-factual-supervisor" }, { asOf });
@@ -85,10 +87,11 @@ test("FACTUAL supervisor restarts after SIGKILL and completes SEC work in N5", {
     assert.equal(exit.code, 0, output);
     const duplicates = Number((await admin.query("select count(*)::int n from news_core.fact_revisions")).rows[0].n);
     assert.ok(duplicates > 0);
-    await news.close(); await reader.close();
   } finally {
     if (supervisor && !supervisor.killed) supervisor.kill("SIGKILL");
     if (supervisor && supervisor.exitCode === null) await new Promise<void>(resolve => { const timer = setTimeout(resolve, 2_000); supervisor?.once("close", () => { clearTimeout(timer); resolve(); }); });
+    await news?.close().catch(() => undefined);
+    await reader?.close().catch(() => undefined);
     await adminNews.close();
     for (const role of Object.values(roles)) await admin.query(`drop role if exists ${role}`).catch(() => undefined);
     await admin.end();
