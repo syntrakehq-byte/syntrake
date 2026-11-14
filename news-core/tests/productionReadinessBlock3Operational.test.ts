@@ -53,7 +53,8 @@ test("BL3 operational executor runs SEC through N3 and N5 with positive and cons
     await news.getCheckpoint(atomicScope);
     assert.equal(Number((await admin.query("select count(*)::int n from news_core.factual_pipeline_backlog where publication_id=$1", [atomicPublicationId])).rows[0].n), 1, "recovery must find the factual handoff without a second SEC download");
     await admin.query("delete from news_core.factual_pipeline_backlog where publication_id=$1", [atomicPublicationId]);
-    assert.equal(await news.reconcileFactualBacklog(), 1, "backfill must restore a committed publication missing from the factual queue");
+    assert.ok((await news.reconcileFactualBacklog()) >= 1, "backfill must restore committed publications missing from the factual queue");
+    assert.equal(Number((await admin.query("select count(*)::int n from news_core.factual_pipeline_backlog where publication_id=$1", [atomicPublicationId])).rows[0].n), 1, "backfill must restore the committed publication target");
     const first = await runNewsExecutorOnce({ store: news, factualPipeline: pipeline, workerId: `bl3-operational-${suffix}`, secUserAgent: process.env.SEC_USER_AGENT ?? "SYNTRAKE BL3 operational CI/1.0 security@syntrake.com", collectionScopeKey: scope, fetchTimeoutMs: 120_000 });
     assert.equal(first.claimed, true);
     assert.ok(first.factualOutcomes.some(outcome => outcome.status === "PERSISTED"), "operational executor must persist one supported SEC document");
