@@ -21,7 +21,7 @@ test("FACTUAL supervisor restarts after SIGKILL and completes SEC work in N5", {
   assert.ok(DB_URL);
   const suffix = randomUUID().replaceAll("-", "").slice(0, 12);
   const roles = { service: `bl4_service_${suffix}`, verifier: `bl4_verifier_${suffix}`, attestor: `bl4_attestor_${suffix}`, writer: `bl4_writer_${suffix}`, reader: `bl4_reader_${suffix}` };
-  const admin = new Client({ connectionString: DB_URL });
+  const admin = new Client({ connectionString: DB_URL, statement_timeout: 15_000, query_timeout: 20_000 });
   await admin.connect();
   const adminNews = new PostgresNewsStore(new Pool({ connectionString: DB_URL, max: 2 }));
   let supervisor: ReturnType<typeof spawn> | undefined;
@@ -29,7 +29,7 @@ test("FACTUAL supervisor restarts after SIGKILL and completes SEC work in N5", {
   let starts = 0;
   const waitFor = (predicate: () => boolean | Promise<boolean>, timeoutMs: number) => new Promise<void>((resolve, reject) => { let settled = false; const timer = setInterval(async () => { if (settled) return; if (await predicate()) { settled = true; clearTimeout(deadline); clearInterval(timer); resolve(); } }, 100); const deadline = setTimeout(() => { if (!settled) { settled = true; clearInterval(timer); reject(new Error(`FACTUAL_SUPERVISOR_TIMEOUT output=${output.slice(-5000)}`)); } }, timeoutMs); });
   try {
-    for (const file of ["20261111150000_news_core_postgres_n1.sql", "20261111170000_news_core_n2a_revisions.sql", "20261112120000_news_core_n3c_factual_persistence.sql", "20261112170000_news_core_n3c_factual_writer_boundary.sql", "20261112150000_news_core_n5_read_api.sql", "20261113100000_news_core_bl3_factual_backlog.sql", "20261113110000_news_core_bl3_backlog_fencing.sql"]) await admin.query(await readFile(migration(file), "utf8"));
+    for (const file of ["20261111150000_news_core_postgres_n1.sql", "20261111170000_news_core_n2a_revisions.sql", "20261112120000_news_core_n3c_factual_persistence.sql", "20261112170000_news_core_n3c_factual_writer_boundary.sql", "20261112150000_news_core_n5_read_api.sql", "20261113100000_news_core_bl3_factual_backlog.sql", "20261113110000_news_core_bl3_backlog_fencing.sql"]) { console.log(`BL4_FACTUAL_SETUP migration=${file}`); await admin.query(await readFile(migration(file), "utf8")); }
     console.log("BL4_FACTUAL_SETUP migrations=ok");
     for (const role of Object.values(roles)) await admin.query(`create role ${role} login inherit password '${PASSWORD}' nocreatedb nocreaterole`);
     await admin.query(`grant news_service to ${roles.service}`);
