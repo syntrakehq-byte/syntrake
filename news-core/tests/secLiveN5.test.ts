@@ -15,6 +15,7 @@ test("N5 real SEC cycles run without web sessions and remain idempotent", { skip
   try {
     await admin.connect(); await admin.query(await readFile(migration("20261111150000_news_core_postgres_n1.sql"), "utf8")); await admin.query(await readFile(migration("20261111170000_news_core_n2a_revisions.sql"), "utf8"));
     const scope = await registerSecTarget(store, "0000320193");
+    await admin.query("update news_core.collection_targets set next_run_at=clock_timestamp(), lease_owner=null, lease_until=null, active_execution_id=null where collection_scope_key=$1", [scope]);
     const first = await runNewsExecutorOnce({ store, workerId: "n5-live-cycle-1", secUserAgent: userAgent, collectionScopeKey: scope, fetchTimeoutMs: 30_000 });
     assert.equal(first.claimed, true);
     const afterFirst = await store.getCheckpoint(scope); assert.ok(afterFirst?.cursor);
