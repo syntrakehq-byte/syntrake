@@ -27,7 +27,7 @@ test("FACTUAL supervisor restarts after SIGKILL and completes SEC work in N5", {
   let supervisor: ReturnType<typeof spawn> | undefined;
   let output = "";
   let starts = 0;
-  const waitFor = (predicate: () => boolean | Promise<boolean>, timeoutMs: number) => new Promise<void>((resolve, reject) => { const deadline = setTimeout(() => reject(new Error(`FACTUAL_SUPERVISOR_TIMEOUT output=${output.slice(-5000)}`)), timeoutMs); const timer = setInterval(async () => { if (await predicate()) { clearTimeout(deadline); clearInterval(timer); resolve(); } }, 100); });
+  const waitFor = (predicate: () => boolean | Promise<boolean>, timeoutMs: number) => new Promise<void>((resolve, reject) => { let settled = false; const timer = setInterval(async () => { if (settled) return; if (await predicate()) { settled = true; clearTimeout(deadline); clearInterval(timer); resolve(); } }, 100); const deadline = setTimeout(() => { if (!settled) { settled = true; clearInterval(timer); reject(new Error(`FACTUAL_SUPERVISOR_TIMEOUT output=${output.slice(-5000)}`)); } }, timeoutMs); });
   try {
     for (const file of ["20261111150000_news_core_postgres_n1.sql", "20261111170000_news_core_n2a_revisions.sql", "20261112120000_news_core_n3c_factual_persistence.sql", "20261112170000_news_core_n3c_factual_writer_boundary.sql", "20261112150000_news_core_n5_read_api.sql", "20261113100000_news_core_bl3_factual_backlog.sql", "20261113110000_news_core_bl3_backlog_fencing.sql"]) await admin.query(await readFile(migration(file), "utf8"));
     for (const role of Object.values(roles)) await admin.query(`create role ${role} login inherit password '${PASSWORD}' nocreatedb nocreaterole`);
