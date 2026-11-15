@@ -264,3 +264,27 @@ PG17 terminam com o job; não constituem um destino persistente para provar
 execução contínua prolongada. AUT-001 permanece `NOT_PROVEN` até existir um
 alvo isolado persistente, sem custo adicional, com retenção de logs e métricas
 durante a duração normativa.
+
+### Fecho dirigido N0-T03 — 2026-11-15
+
+O manifesto `news-core/tests/fixtures/n0-t03-crowdstrike-2024-07-19.json`
+regista 25 publicações editoriais distintas sobre o incidente global de
+CrowdStrike de 19/07/2024. Cada entrada conserva `publicationId`, URL, título,
+publicador, autoria quando disponível, `publishedAt`, proveniência e estado de
+dependência editorial. Os 25 URLs foram verificados com `HEAD`, redirects até 5
+saltos e timeout de 12 segundos: `25 HTTP 200`, `0` não verificados.
+
+O teste `n0T03EditorialAcceptance.test.ts` confirmou 25 URLs e 25 identidades de
+publicação distintas associadas ao mesmo `eventId`. As dependências conhecidas
+foram preservadas como metadados (`AP_SYNDICATION`, `NPR_SYNDICATION`,
+`AFP_SYNDICATION`, `NYT_REPUBLICATION`, entre outras); não foram convertidas em
+confirmações independentes. A suite N3-B continuou a passar, incluindo a regra
+T10 de contar republicações da mesma origem uma única vez.
+
+Prova local: `N0-T03 pass=1 fail=0 skipped=0`; N3-B `16/16 PASS`; TypeScript e
+`git diff --check` sem erros. **T03 = PASS no âmbito do ensaio local de 25
+publicações verificadas. T10 permanece separado e não é promovido por T03.**
+
+Estado normativo vigente: **37 PASS / 1 NOT_PROVEN / 0 FAIL**. O único critério
+pendente é `N0-AUT-001`; `N0_APPROVED=NO` e
+`NEWS_CORE_PRODUCTION_READY=NO` permanecem inalterados.
