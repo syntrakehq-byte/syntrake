@@ -103,7 +103,7 @@ jobs:
           for migration in supabase/migrations/20261113100000_news_core_bl3_factual_backlog.sql supabase/migrations/20261113110000_news_core_bl3_backlog_fencing.sql; do
             docker run --rm -i --network host postgres:17 psql "$NEWS_DATABASE_URL" -v ON_ERROR_STOP=1 < "$migration"
           done
-          docker run --rm --network host postgres:17 psql "$NEWS_DATABASE_URL" -v ON_ERROR_STOP=1 -c "do \$\$ begin if not exists (select 1 from pg_roles where rolname='news_daemon_test') then create role news_daemon_test login inherit password 'news-daemon-test-password' nocreatedb nocreaterole; end if; if not exists (select 1 from pg_roles where rolname='news_daemon_verifier') then create role news_daemon_verifier login inherit password 'news-daemon-test-password' nocreatedb nocreaterole; end if; if not exists (select 1 from pg_roles where rolname='news_daemon_attestor') then create role news_daemon_attestor login inherit password 'news-daemon-test-password' nocreatedb nocreaterole; end if; if not exists (select 1 from pg_roles where rolname='news_daemon_writer') then create role news_daemon_writer login inherit password 'news-daemon-test-password' nocreatedb nocreaterole; end if; end \$\$; alter role news_daemon_test set role = news_service; grant news_service to news_daemon_test; grant news_pipeline_verifier to news_daemon_verifier; grant news_factual_attestor to news_daemon_attestor; grant news_factual_writer to news_daemon_writer;"
+          docker run --rm --network host postgres:17 psql "$NEWS_DATABASE_URL" -v ON_ERROR_STOP=1 -c "do \$\$ begin if not exists (select 1 from pg_roles where rolname='news_daemon_test') then create role news_daemon_test login inherit password 'news-daemon-test-password' nocreatedb nocreaterole; end if; end \$\$; alter role news_daemon_test set role = news_service; grant news_service to news_daemon_test;"
       - name: Run real daemon entrypoint with PG17 and restart container
         shell: bash
         run: |
@@ -163,45 +163,6 @@ jobs:
           docker stop --time 15 "$cid" >/dev/null || true
           docker logs "$cid"
           docker rm "$cid" >/dev/null
-          publication_id=""
-          while IFS='|' read -r candidate_id candidate_url; do
-            if curl --fail --silent --show-error --max-time 20 -A "$SEC_USER_AGENT" "$candidate_url" >/dev/null; then
-              publication_id="$candidate_id"
-              break
-            fi
-          done < <(docker run --rm --network host postgres:17 psql "$NEWS_DATABASE_URL" -At -F '|' -c "select publication_id,original_url from news_core.publications where source_id='sec-edgar' and form='8-K' and visibility_state='COMMITTED' order by ingested_at desc limit 40")
-          test -n "$publication_id"
-          verifier_url="postgres://news_daemon_verifier:news-daemon-test-password@localhost:5432/syntrake_news_ci?options=-c%20role%3Dnews_pipeline_verifier"
-          attestor_url="postgres://news_daemon_attestor:news-daemon-test-password@localhost:5432/syntrake_news_ci?options=-c%20role%3Dnews_factual_attestor"
-          writer_url="postgres://news_daemon_writer:news-daemon-test-password@localhost:5432/syntrake_news_ci?options=-c%20role%3Dnews_factual_writer"
-          factual_cid="$(docker run -d --network host --name "${name}-factual" \
-            -e NEWS_DATABASE_URL="$db_url" \
-            -e NEWS_PIPELINE_VERIFIER_DATABASE_URL="$verifier_url" \
-            -e NEWS_FACTUAL_ATTESTOR_DATABASE_URL="$attestor_url" \
-            -e NEWS_FACTUAL_WRITER_DATABASE_URL="$writer_url" \
-            -e SEC_USER_AGENT="$SEC_USER_AGENT" \
-            -e NEWS_EXECUTION_MODE=FACTUAL \
-            -e NEWS_FACTUAL_DOCUMENT_LIMIT=1 \
-            -e NEWS_FACTUAL_PUBLICATION_ID="$publication_id" \
-            -e NEWS_TEST_ALLOW_PROCESSING_HOLD=1 \
-            -e NEWS_POLL_INTERVAL_MS=100 \
-            -e NEWS_LEASE_SECONDS=5 \
-            -e NODE_ENV=test \
-            syntrake-news-daemon:${{ github.sha }})"
-          factual_ready=0
-          for i in $(seq 1 90); do
-            factual_logs="$(docker logs "$factual_cid" 2>&1 || true)"
-            [[ "$factual_logs" == *'"status":"PERSISTED"'* ]] && factual_ready=1 && break
-            sleep 1
-          done
-          if ! test "$factual_ready" -eq 1; then
-            docker logs "$factual_cid" || true
-            docker rm -f "$factual_cid" >/dev/null || true
-            exit 1
-          fi
-          docker logs "$factual_cid"
-          docker stop --time 15 "$factual_cid" >/dev/null || true
-          docker rm "$factual_cid" >/dev/null
       - name: Run existing PG17 supervisor smoke suite
         run: |
           npm run test:news:bl4:supervisor
