@@ -100,7 +100,7 @@ jobs:
         run: |
           npm ci
           npm run test:news:pg17
-          docker run --rm --network host postgres:17 psql "$NEWS_DATABASE_URL" -v ON_ERROR_STOP=1 -c "do \$\$ begin if not exists (select 1 from pg_roles where rolname='news_daemon_test') then create role news_daemon_test login password 'news-daemon-test-password' nocreatedb nocreaterole; end if; end \$\$; grant news_service to news_daemon_test;"
+          docker run --rm --network host postgres:17 psql "$NEWS_DATABASE_URL" -v ON_ERROR_STOP=1 -c "do \$\$ begin if not exists (select 1 from pg_roles where rolname='news_daemon_test') then create role news_daemon_test login inherit password 'news-daemon-test-password' nocreatedb nocreaterole; end if; end \$\$; alter role news_daemon_test inherit; alter role news_daemon_test set role = news_service; grant news_service to news_daemon_test;"
       - name: Run real daemon entrypoint with PG17 and restart container
         shell: bash
         run: |
@@ -108,6 +108,7 @@ jobs:
           name="news-daemon-${GITHUB_RUN_ID}"
           scope="sec-edgar|sec|cik=0000320193|forms=10-K,10-Q,8-K,20-F,6-K|overlap=7|v=2"
           db_url="postgres://news_daemon_test:news-daemon-test-password@localhost:5432/syntrake_news_ci?options=-c%20role%3Dnews_service"
+          docker run --rm --network host postgres:17 psql "$db_url" -Atc "select session_user || ':' || current_user || ':' || current_setting('role')"
           docker run --rm --network host postgres:17 psql "$NEWS_DATABASE_URL" -v ON_ERROR_STOP=1 -c "delete from news_core.executions where collection_scope_key='$scope'; delete from news_core.collection_targets where collection_scope_key='$scope'; delete from news_core.checkpoints where collection_scope_key='$scope';"
           baseline="$(docker run --rm --network host postgres:17 psql "$NEWS_DATABASE_URL" -Atc "select count(*) from news_core.checkpoints where collection_scope_key='$scope'")"
           test "$baseline" = 0
