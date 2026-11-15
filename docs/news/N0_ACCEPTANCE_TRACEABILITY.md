@@ -186,4 +186,4 @@ duplicações. O mesmo workflow também manteve T26 verde.
 
 **Estado normativo vigente desta auditoria: 32 PASS / 6 NOT_PROVEN / 0 FAIL.** Pendentes: **T03, T20, T21, T27, T33 e N0-AUT-001**. Esta promoção fecha apenas T15 no âmbito demonstrado; não promove fontes editoriais, isolamento de contas, compatibilidade Trading, backfill integral ou autonomia de produção.
 
-**Decisao de release INALTERADA:** `N0_APPROVED=NO`; `NEWS_CORE_PRODUCTION_READY=NO`; PR #102 permanece Draft. A reconciliacao formal do PR #90, os sete requisitos pendentes e a prova autonoma 24/7 no destino continuam obrigatorios antes de declarar o News Core integralmente fechado.
+**Decisao de release INALTERADA:** `N0_APPROVED=NO`; `NEWS_CORE_PRODUCTION_READY=NO`; PR #102 permanece Draft. A reconciliacao formal do PR #90, os seis requisitos pendentes (incluindo N0-AUT-001) e a prova autonoma 24/7 no destino continuam obrigatorios antes de declarar o News Core integralmente fechado.
