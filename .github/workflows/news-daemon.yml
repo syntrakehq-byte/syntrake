@@ -106,7 +106,7 @@ jobs:
         run: |
           set -euo pipefail
           name="news-daemon-${GITHUB_RUN_ID}"
-          db_url="postgres://news_daemon_test:news-daemon-test-password@localhost:5432/syntrake_news_ci"
+          db_url="postgres://news_daemon_test:news-daemon-test-password@localhost:5432/syntrake_news_ci?options=-c%20role%3Dnews_service"
           cid="$(docker run -d --name "$name" \
             -e NEWS_DATABASE_URL="$db_url" \
             -e SEC_USER_AGENT="$SEC_USER_AGENT" \
