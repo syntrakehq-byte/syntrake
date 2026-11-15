@@ -94,5 +94,18 @@ jobs:
           SEC_USER_AGENT: "SYNTRAKE N0 T27 CI/1.0 security@syntrake.com"
       - run: npm run test:news:n0:t20
       - run: npm run test:news:n0:contracts
+      - name: Checkout real Market Core contract branch for T33
+        uses: actions/checkout@v4
+        with:
+          ref: feat/r3-g1-universal-market-contract-20261102
+          path: .market-contract-checkout
+          persist-credentials: false
+      - name: T33 cross-branch contract rehearsal (not production PIT certification)
+        shell: bash
+        env:
+          N0_MARKET_CORE_CHECKOUT: ${{ github.workspace }}/.market-contract-checkout
+        run: |
+          trap 'rm -rf .market-contract-checkout' EXIT
+          npx tsx --test news-core/tests/marketCrossBranchN0.test.ts
       - run: npx tsc --noEmit
       - run: npm run lint -- --quiet
