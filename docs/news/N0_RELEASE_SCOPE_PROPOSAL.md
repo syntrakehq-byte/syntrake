@@ -4,9 +4,13 @@ Estado: proposta nao aprovada. Nao altera o PR #90 nem promove `N0_APPROVED`.
 
 ## Ambito canonico completo
 
-Continua a exigir T01-T37 e N0-AUT-001. No rehearsal consolidado, T14 foi
-fechado no ambito de relacoes editoriais PG17; permanecem `NOT_PROVEN` T03, T15,
-T18, T20, T21, T27, T28, T33 e AUT-001.
+Continua a exigir T01-T37 e N0-AUT-001. O T14 tem prova PG17 editorial;
+na auditoria independente do SHA `d7b3ef214b20414791269a77aa6a585702dd91aa`,
+T18 (SSRF/IP interno) e T28 (flag de relogio/PIT) foram reconciliados como PASS
+no ambito exato do PR #90, usando provas anteriores existentes. A matriz vigente
+regista 31 PASS / 7 NOT_PROVEN: T03, T15, T20, T21, T27, T33 e AUT-001.
+Esta revisao nao altera o PR #90 nem significa seguranca ou autonomia provadas
+em producao.
 
 ## Possivel release Investing-only
 
