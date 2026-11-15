@@ -29,14 +29,14 @@ Esta matriz preserva os critérios N0-T01..T37. `PASS` significa que existe uma 
 | N0-T17 | N1 | PASS | payload malformado rejeitado |
 | N0-T18 | N3/N4 | NOT_PROVEN | N4 cobre bloqueio determinístico de hosts privados e redirects; DNS rebinding em rede controlada ainda não foi provado |
 | N0-T19 | N3 | PASS | conteúdo hostil tratado como dados em N3-A |
-| N0-T20 | N3 | NOT_PROVEN | isolamento de contas não pertence ao circuito News testado |
-| N0-T21 | N3 | NOT_PROVEN | Investing passou, mas a compatibilidade conjunta Investing + Trading não foi ensaiada |
+| N0-T20 | N3 | PASS | workflow News Core `43726149171`, job `132848394075`, SHA `691030ae34ad883f3d2f7cb90570060e5d1a458d`: duas identidades LOGIN autenticadas, RLS server-side, cada identidade vê apenas a sua conta e a fronteira News global não encaminha dados privados |
+| N0-T21 | N3 | NOT_PROVEN | Investing passou, mas o consumidor Trading e a compatibilidade conjunta versionada não estão presentes neste branch |
 | N0-T22 | N2/N5 | PASS | N5 unitário/PG17 cobre paginação estável, cursor HMAC, histórico PIT e cutoff |
 | N0-T23 | N2/N3 | PASS | recusa conservadora sem evidência em N3-A/B |
 | N0-T24 | N1 | PASS | rollback/atomicidade em PG17 |
 | N0-T25 | N1/N4/N5 | PASS | `secLiveN5.test.ts`, workflow PG17/SEC live, baseline 0, accession genuíno, primeira ingestão 1, segunda 1, checkpoint e revisão única |
 | N0-T26 | N1/N3/N4 | PASS | `secLiveN5.test.ts`, processo-filho PID1 terminado por `SIGKILL` pós-fetch/pré-commit, checkpoint/publicação ausentes durante a falha, PID2 recupera e PID3 repete sem duplicação |
-| N0-T27 | N1/N3 | NOT_PROVEN | rehearsal consolidado confirma outage temporário sem avanço de checkpoint e recuperação; backfill integral após indisponibilidade ainda não demonstrado |
+| N0-T27 | N1/N3 | PASS | workflow News Core `43726149171`, job `132848394075`, SHA `691030ae34ad883f3d2f7cb90570060e5d1a458d`: resposta SEC genuína, lacuna temporal, outage, backoff natural, checkpoint estável, backfill de 147 accession e deduplicação |
 | N0-T28 | N2 | NOT_PROVEN | rehearsal consolidado confirma `SOURCE_CLOCK_CONFLICT`, `asKnownAt` posterior à ingestão e PIT anterior oculto; não cobre autoridade de relógio externa completa |
 | N0-T29 | N1 | PASS | concorrência/idempotência PG17 |
 | N0-T30 | N1 | PASS | resposta vazia disponível distinguida de erro |
@@ -184,6 +184,19 @@ partição sem reset administrativo do lease. Os checkpoints permaneceram
 independentes e o replay confirmou uma publicação por accession, sem
 duplicações. O mesmo workflow também manteve T26 verde.
 
-**Estado normativo vigente desta auditoria: 32 PASS / 6 NOT_PROVEN / 0 FAIL.** Pendentes: **T03, T20, T21, T27, T33 e N0-AUT-001**. Esta promoção fecha apenas T15 no âmbito demonstrado; não promove fontes editoriais, isolamento de contas, compatibilidade Trading, backfill integral ou autonomia de produção.
+### Fecho dirigido N0-T20 e N0-T27 — 2026-11-15
+
+O workflow News Core `43726149171` (job `132848394075`) no SHA
+`691030ae34ad883f3d2f7cb90570060e5d1a458d` executou ambos os ensaios em
+PostgreSQL 17 real. T20 usou duas identidades LOGIN não administrativas,
+claims autenticados no servidor e RLS: cada conta observou apenas a sua linha,
+uma leitura cruzada devolveu zero linhas e o namespace News permaneceu global,
+sem encaminhar dados privados. T27 recolheu uma resposta SEC oficial com hash
+`d7c4a3c888fe60da97ceef8f9b80da4c205e82440c1bc3ba9dcc7316a482a6b1`, ingeriu
+um filing inicial, atravessou uma indisponibilidade real do adaptador, manteve
+o checkpoint e recuperou 147 accession por backoff natural, sem reset
+administrativo ou duplicações.
+
+**Estado normativo vigente desta auditoria: 34 PASS / 4 NOT_PROVEN / 0 FAIL.** Pendentes: **T03, T21, T33 e N0-AUT-001**. T21 e T33 permanecem pendentes porque Trading e Market Core não estão integrados nesta cadeia; AUT-001 permanece pendente sem observação contínua no ambiente de destino.
 
 **Decisao de release INALTERADA:** `N0_APPROVED=NO`; `NEWS_CORE_PRODUCTION_READY=NO`; PR #102 permanece Draft. A reconciliacao formal do PR #90, os seis requisitos pendentes (incluindo N0-AUT-001) e a prova autonoma 24/7 no destino continuam obrigatorios antes de declarar o News Core integralmente fechado.

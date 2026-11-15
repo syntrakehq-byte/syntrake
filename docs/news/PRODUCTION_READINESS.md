@@ -38,12 +38,14 @@ As provas adversariais observadas no log PG17 incluem `permission denied` para I
 
 Esta secção prevalece sobre a tabela inicial deste documento, que representa o estado histórico do Bloco 1 e **não** o estado atual dos Blocos 2–5. A matriz normativa atual é `docs/news/N0_ACCEPTANCE_TRACEABILITY.md` e o PR #90 continua a ser a fonte de requisitos; a revisão formal independente permanece por concluir.
 
-- **32 PASS / 6 NOT_PROVEN / 0 FAIL** na auditoria N0 mais recente. Pendentes: **N0-T03, N0-T20, N0-T21, N0-T27, N0-T33, N0-AUT-001**.
+- **34 PASS / 4 NOT_PROVEN / 0 FAIL** na auditoria N0 mais recente. Pendentes: **N0-T03, N0-T21, N0-T33, N0-AUT-001**.
 - **N0-T18 PASS no âmbito canónico**: IP validado ligado ao socket TLS, sem segunda resolução DNS no transporte e com rejeição de redirects; não depende de uma zona DNS pública mutável.
 - **N0-T28 PASS no âmbito canónico**: `SOURCE_CLOCK_CONFLICT` para fonte futura, ausência de falso conflito para fonte passada e fronteira PIT independente do relógio da publicação; não depende de NTP externo.
 - **N0-T15 PASS no âmbito do rehearsal PG17/SEC live**: CIK Apple/Microsoft, processos independentes, `SIGKILL` em ambos os sentidos, recuperação por lease natural, checkpoints isolados e deduplicação; prova no workflow News Core `43710279989`, SHA `0f6fbb2a203c0544b507f6ff6e6ea8620b726ba6`.
 - **HEAD de verificação**: `2c213f3b85663a471eb2be774cb03a06ddd649eb`, todos os oito workflows associados concluídos com `success`, incluindo `news-core` run `43711137775`. Verde em CI **não** equivale a aprovação dos seis requisitos ainda pendentes.
 - **T27 permanece NOT_PROVEN**: o ensaio consolidado recupera um lote genuíno após indisponibilidade simulada, mas não demonstra um intervalo histórico real em que publicações novas surgiram e foram integralmente recuperadas, inclusive além da janela `filings.recent` da SEC. Não usar `BACKFILL_LOCAL` como prova de backfill histórico integral.
 - **AUT-001 permanece NOT_PROVEN**: supervisão, restart e recovery local não substituem observação 24/7 no ambiente de destino. Sem deploy, migrações remotas ou custos autorizados, não existe prova operacional do destino.
+- **N0-T20 PASS no âmbito PG17**: o workflow `43726149171`, job `132848394075`, isolou duas identidades LOGIN autenticadas com RLS server-side e confirmou que o namespace global News não encaminha dados privados.
+- **N0-T27 PASS no âmbito PG17/SEC live**: o mesmo job confirmou uma lacuna oficial, indisponibilidade, backoff natural, checkpoint estável e backfill idempotente de 147 accession, sem reset administrativo.
 
 **Decisão:** `N0_APPROVED=NO`, `NEWS_CORE_PRODUCTION_READY=NO`, PR #102 Draft. Não fazer merge, deploy ou migrações remotas com base apenas nos workflows verdes.
