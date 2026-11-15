@@ -93,5 +93,6 @@ jobs:
         env:
           SEC_USER_AGENT: "SYNTRAKE N0 T27 CI/1.0 security@syntrake.com"
       - run: npm run test:news:n0:t20
+      - run: npm run test:news:n0:contracts
       - run: npx tsc --noEmit
       - run: npm run lint -- --quiet
