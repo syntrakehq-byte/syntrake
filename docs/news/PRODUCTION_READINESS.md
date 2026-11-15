@@ -62,3 +62,8 @@ Market/News em PostgreSQL 17 persistido, com os leitores reais de ambos os
 motores, e comprovou exclusão de revisões futuras no mesmo cutoff. T33 está
 `PASS` no âmbito isolado testado. Estado atual: **36 PASS / 2 NOT_PROVEN / 0
 FAIL**; pendentes T03 e N0-AUT-001.
+
+O ensaio prolongado AUT-001 não foi iniciado porque o ambiente atual não tem
+PostgreSQL 17, Docker, URLs de base de dados ou credenciais segregadas. CI
+fornece apenas runners e bases efémeras; isso não prova autonomia contínua no
+destino.

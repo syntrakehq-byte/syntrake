@@ -250,3 +250,13 @@ Prova CI: run `43743856926`, job `132902720944`, SHA
 
 **T33 passa no âmbito PG17 isolado e persistido.** Estado normativo atual:
 **36 PASS / 2 NOT_PROVEN / 0 FAIL**. Pendentes: **T03 e N0-AUT-001**.
+
+### Ensaio operacional prolongado N0-AUT-001 — 2026-11-15
+
+O ensaio prolongado não foi iniciado: o ambiente partilhado não fornece
+PostgreSQL 17, Docker, `NEWS_DATABASE_URL`/`TEST_DATABASE_URL` nem credenciais
+segregadas de teste. Os runners CI existentes são efémeros e os seus containers
+PG17 terminam com o job; não constituem um destino persistente para provar
+execução contínua prolongada. AUT-001 permanece `NOT_PROVEN` até existir um
+alvo isolado persistente, sem custo adicional, com retenção de logs e métricas
+durante a duração normativa.
