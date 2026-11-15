@@ -23,20 +23,20 @@ type ReplayFixture = Readonly<{
   fetchImpl: typeof fetch;
 }>;
 
-async function genuineSecReplay(): Promise<ReplayFixture> {
-  const response = await fetchSafeExternal(`https://data.sec.gov/submissions/CIK${CIK}.json`, { headers: { "User-Agent": userAgent(), Accept: "application/json" }, signal: AbortSignal.timeout(30_000) });
+async function genuineSecReplay(cik = CIK): Promise<ReplayFixture> {
+  const response = await fetchSafeExternal(`https://data.sec.gov/submissions/CIK${cik}.json`, { headers: { "User-Agent": userAgent(), Accept: "application/json" }, signal: AbortSignal.timeout(30_000) });
   assert.equal(response.ok, true, `SEC live response must be successful: ${response.status}`);
   const payload = await response.json() as Record<string, unknown>;
-  assert.equal(payload.cik, CIK, "SEC live payload must identify the requested CIK");
+  assert.equal(payload.cik, cik, "SEC live payload must identify the requested CIK");
   const fetchImpl: typeof fetch = async () => new Response(JSON.stringify(payload), { status: 200, headers: { "content-type": "application/json" } });
-  const parsed = await fetchSecFilings({ cik: CIK, userAgent: userAgent(), fetchImpl, now: new Date("2026-11-14T20:00:00.000Z") });
+  const parsed = await fetchSecFilings({ cik, userAgent: userAgent(), fetchImpl, now: new Date("2026-11-14T20:00:00.000Z") });
   assert.ok(parsed.publications.length > 0, "the genuine SEC payload must contain filings");
   return { publications: parsed.publications, payloadJson: JSON.stringify(payload), fetchImpl };
 }
 
-async function installTarget(store: PostgresNewsStore, scope: string): Promise<void> {
+async function installTarget(store: PostgresNewsStore, scope: string, cik = CIK): Promise<void> {
   await store.ensureSource("sec-edgar", "sec");
-  await store.upsertTarget({ collectionScopeKey: scope, sourceId: "sec-edgar", providerKey: "sec", entityKey: CIK, parameters: { forms: ["10-K", "10-Q", "8-K", "20-F", "6-K"], overlapDays: 7 }, nextRunAt: new Date().toISOString() });
+  await store.upsertTarget({ collectionScopeKey: scope, sourceId: "sec-edgar", providerKey: "sec", entityKey: cik, parameters: { forms: ["10-K", "10-Q", "8-K", "20-F", "6-K"], overlapDays: 7 }, nextRunAt: new Date().toISOString() });
 }
 
 async function applyN1Migrations(admin: Client): Promise<void> {
@@ -117,6 +117,71 @@ test("N0-T25: two attributable SEC cycles use a genuine isolated baseline and re
     assert.equal((await store.readPublicationRevisionsAsOf(new Date(Date.now() + 60_000).toISOString(), candidate.publicationId)).length, 1);
     console.log(`N0_T25_PROOF cik=${CIK} accession=${candidate.externalId} source=${candidate.sourceId} originFingerprint=${candidate.originFingerprint} baseline=0 firstCount=1 secondCount=1 checkpointAfterFirst=yes`);
   } finally { await store.close(); await isolated.close(); }
+});
+
+
+test("N0-T15: two real worker PIDs isolate SEC partitions across SIGKILL and natural lease recovery", { skip: !enabled && "N5_REAL_SOURCE=1 required for the official SEC proof" }, async () => {
+  if (!DB_URL) throw new Error("NEWS_DATABASE_URL or TEST_DATABASE_URL is required for N0-T15");
+  const isolated = await openIsolatedDatabase();
+  const admin = isolated.admin;
+  const suffix = randomUUID().replaceAll("-", "");
+  const cikA = "0000320193", cikB = "0000789019";
+  const scopes = [`n0-t15-a-${suffix}`, `n0-t15-b-${suffix}`];
+  const dir = await mkdtemp(path.join(os.tmpdir(), "syntrake-n0-t15-"));
+  const children: ChildProcessWithoutNullStreams[] = [];
+  let store: PostgresNewsStore | undefined;
+  try {
+    await applyN1Migrations(admin);
+    const [replayA, replayB] = await Promise.all([genuineSecReplay(cikA), genuineSecReplay(cikB)]);
+    assert.ok(replayA.publications.length > 0 && replayB.publications.length > 0);
+    const paths = [path.join(dir, "cik-a.json"), path.join(dir, "cik-b.json")];
+    await Promise.all(paths.map((file, i) => writeFile(file, i === 0 ? replayA.payloadJson : replayB.payloadJson, "utf8")));
+    store = new PostgresNewsStore(new Pool({ connectionString: isolated.connectionString, max: 4 }));
+    await installTarget(store, scopes[0], cikA);
+    await installTarget(store, scopes[1], cikB);
+    // Run both directions: crash A while B makes progress, then crash B while A makes progress.
+    for (const failing of [0, 1]) {
+      const survivor = 1 - failing;
+      const failedScope = `${scopes[failing]}-round-${failing}`;
+      const healthyScope = `${scopes[survivor]}-round-${failing}`;
+      await installTarget(store, failedScope, failing === 0 ? cikA : cikB);
+      await installTarget(store, healthyScope, survivor === 0 ? cikA : cikB);
+      const blocked = spawnT26Worker(isolated.connectionString, failedScope, paths[failing], "barrier");
+      children.push(blocked);
+      await waitForWorkerOutput(blocked, "N0_T26_CHILD_READY");
+      const healthy = spawnT26Worker(isolated.connectionString, healthyScope, paths[survivor], "recover");
+      children.push(healthy);
+      await waitForWorkerOutput(healthy, "N0_T26_CHILD_DONE");
+      assert.equal((await waitForWorkerExit(healthy)).code, 0);
+      assert.equal((await store.getCheckpoint(failedScope)), null, "crashed partition must not commit checkpoint");
+      assert.ok((await store.getCheckpoint(healthyScope))?.cursor, "other partition must advance its own checkpoint");
+      assert.equal(blocked.kill("SIGKILL"), true);
+      assert.equal((await waitForWorkerExit(blocked)).signal, "SIGKILL");
+      const stillRunning = await admin.query<{ state: string }>("select e.state from news_core.executions e join news_core.collection_targets t on t.active_execution_id=e.execution_id where t.collection_scope_key=$1", [failedScope]);
+      assert.equal(stillRunning.rows[0]?.state, "RUNNING", "crash must preserve the failed execution for real reclaim");
+      // The original two-second lease must expire naturally, with no administrative update/reset.
+      await new Promise(resolve => setTimeout(resolve, 2_500));
+      const recovering = spawnT26Worker(isolated.connectionString, failedScope, paths[failing], "recover");
+      children.push(recovering);
+      await waitForWorkerOutput(recovering, "N0_T26_CHILD_DONE");
+      assert.equal((await waitForWorkerExit(recovering)).code, 0);
+      assert.ok((await store.getCheckpoint(failedScope))?.cursor, "reclaimed partition must commit a checkpoint");
+      assert.ok((await store.getCheckpoint(healthyScope))?.cursor, "healthy checkpoint must survive other worker recovery");
+      const counts = await admin.query<{ cik: string; n: number }>(
+        "select entity_key cik, count(*)::int n from news_core.collection_targets where collection_scope_key=any($1::text[]) group by entity_key order by entity_key",
+        [[failedScope, healthyScope]],
+      );
+      assert.equal(counts.rows.length, 2);
+      console.log(`N0_T15_PROCESS_PROOF crashCIK=${failing === 0 ? cikA : cikB} healthyCIK=${survivor === 0 ? cikA : cikB} killedPid=${blocked.pid} survivorPid=${healthy.pid} recoveryPid=${recovering.pid} noAdminLeaseReset=true checkpoints=2`);
+    }
+    const total = await admin.query<{ n: number }>("select count(*)::int n from news_core.publications where source_id='sec-edgar'");
+    assert.equal(total.rows[0].n, new Set([...replayA.publications, ...replayB.publications].map(p => p.externalId)).size, "cross-process replays must never duplicate official accessions");
+  } finally {
+    await Promise.all(children.map(stopWorker));
+    if (store) await store.close();
+    await isolated.close();
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("N0-T26: PID1 SIGKILL after fetch recovers in PID2 without checkpoint loss or duplication", { skip: !enabled && "N5_REAL_SOURCE=1 required for the official SEC proof" }, async () => {
