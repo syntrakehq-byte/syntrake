@@ -1,5 +1,12 @@
 # N0 — matriz de rastreabilidade e aceitação final do News Core
 
+## Estado consolidado de aceitação — 2026-11-15 (prevalece sobre snapshots históricos)
+
+Fonte normativa: PR #90, SHA `a358cf9cc3e0427cefc18b02f6c3c653b2a61e7b`. A evidência acumulada no PR #102 até ao SHA `0a5d6e180b0718193ed7418131c22f7fa0831caf` regista **37 PASS / 1 NOT_PROVEN / 0 FAIL** para N0-T01..T37 e N0-AUT-001. T03, T15, T20, T21, T27 e T33 estão PASS apenas no âmbito explicitamente demonstrado pelos respetivos ensaios. T03 executou 25 publicações editoriais distintas, sem atribuir independência editorial não comprovada; o workflow News Core incluiu o manifesto e não permitiu SKIP. Oito workflows no HEAD citado concluíram com sucesso. **N0-AUT-001 continua NOT_PROVEN**: não existe evidência de operação autónoma contínua no ambiente persistente de destino, incluindo supervisão, recuperação e retenção de evidências pelo período normativo. Revisão independente e compatibilidade do destino continuam condicionantes de release. **N0_APPROVED=NO; NEWS_CORE_PRODUCTION_READY=NO.** Não inferir produção a partir de PG17 efémero ou CI verde.
+
+As tabelas e notas anteriores abaixo são snapshots históricos, conservados para rastreabilidade; não constituem o estado vigente. Esta atualização é apenas documental, sem execução de migrações, deploy ou alteração de motores.
+
+
 ## Fonte normativa e linhagem
 
 Fonte normativa imutável: PR #90, `a358cf9cc3e0427cefc18b02f6c3c653b2a61e7b`, contendo `docs/news/N0_CANONICAL_SPEC.md` e a matriz original N0-T01..T37. O estado dessa fonte é `N0_REVIEW_READY`, não `N0_APPROVED`. O PR #99 diverge dessa linhagem; o ficheiro canónico N0 não está presente na árvore deste SHA. Esta matriz é uma reconciliação de rastreabilidade, não uma substituição silenciosa da especificação original.
