@@ -223,6 +223,10 @@ fundido ou modificado.
 
 **Decisao de release INALTERADA:** `N0_APPROVED=NO`; `NEWS_CORE_PRODUCTION_READY=NO`; PR #102 permanece Draft. A reconciliacao formal do PR #90, T03 e N0-AUT-001 continuam obrigatorios antes de declarar o News Core integralmente fechado.
 
+### Ensaio dirigido N0-T03 — gate de 25 fontes reais
+
+Foi acrescentado `news-core/tests/n0T03EditorialAcceptance.test.ts`. O gate exige um manifesto externo verificável com exatamente 25 URLs HTTPS distintas, 25 publicadores distintos, autoria, datas, proveniência, dependências editoriais resolvidas e as 300 relações de independência com provas PIT válidas. Sem esse manifesto, o teste termina explicitamente como `SKIP` (`N0_T03_MANIFEST_REQUIRED`) e não promove o critério. A execução realizada neste SHA teve `pass=0`, `fail=0`, `skipped=1`; portanto T03 permanece `NOT_PROVEN`.
+
 ### Estado autoritativo após o ensaio cross-branch T33
 
 O ensaio `marketCrossBranchN0.test.ts` carrega o validador real do Market Core
