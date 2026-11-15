@@ -126,13 +126,25 @@ jobs:
             printf '%s\n' "$logs" | grep -q 'NEWS_WORKER_READY' && ready=1 && break
             sleep 1
           done
-          test "$ready" -eq 1
+          if ! test "$ready" -eq 1; then
+            docker logs "$cid" || true
+            docker inspect "$cid" --format 'status={{.State.Status}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}}' || true
+            docker rm -f "$cid" >/dev/null || true
+            exit 1
+          fi
           for i in $(seq 1 60); do
             count="$(docker run --rm --network host postgres:17 psql "$NEWS_DATABASE_URL" -Atc "select count(*) from news_core.checkpoints where collection_scope_key='$scope'")"
             test "$count" -ge 1 && break
             sleep 1
           done
-          test "$count" -ge 1
+          if ! test "$count" -ge 1; then
+            echo "NEWS_DAEMON_CHECKPOINT_TIMEOUT count=$count baseline=$baseline"
+            docker logs "$cid" || true
+            docker inspect "$cid" --format 'status={{.State.Status}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}}' || true
+            docker run --rm --network host postgres:17 psql "$NEWS_DATABASE_URL" -Atc "select session_user || ':' || current_user || ':' || current_setting('role'); select count(*) from news_core.collection_targets where collection_scope_key='$scope'; select status,last_error,attempt from news_core.executions where collection_scope_key='$scope' order by started_at desc limit 3;" || true
+            docker rm -f "$cid" >/dev/null || true
+            exit 1
+          fi
           docker stop --time 15 "$cid"
           test "$(docker inspect -f '{{.State.ExitCode}}' "$cid")" = 0
           docker start "$cid" >/dev/null
