@@ -59,11 +59,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p .docker-canary
-          printf 'synthetic-secret\n' > .docker-canary/.env
+          mkdir -p news-core/.docker-canary scripts/.docker-canary
+          printf 'synthetic-secret\n' > news-core/.docker-canary/.env
+          printf 'synthetic-key\n' > scripts/.docker-canary/token.key
+          printf 'synthetic-credentials\n' > scripts/.docker-canary/credentials.txt
+          cat > .docker-canary/scripts/news-canary-legit.ts <<'EOF'
+          export const legitimateCanary = true;
+          EOF
+          cat > Dockerfile.news-daemon-canary-legit <<'EOF'
+          FROM scratch
+          COPY scripts/news-supervisor.ts /legit/supervisor.ts
+          COPY news-core/contracts.ts /legit/contracts.ts
+          EOF
+          cp Dockerfile.news-daemon.dockerignore Dockerfile.news-daemon-canary-legit.dockerignore
+          docker build --file Dockerfile.news-daemon-canary-legit --tag syntrake-news-canary-legit:${{ github.sha }} .
           cat > Dockerfile.news-daemon-canary-audit <<'EOF'
           FROM scratch
-          COPY .docker-canary/.env /canary
+          COPY news-core/.docker-canary/.env /canary/env
+          COPY scripts/.docker-canary/token.key /canary/key
+          COPY scripts/.docker-canary/credentials.txt /canary/credentials
           EOF
           cp Dockerfile.news-daemon.dockerignore Dockerfile.news-daemon-canary-audit.dockerignore
           set +e
@@ -72,8 +86,8 @@ jobs:
           set -e
           cat /tmp/news-daemon-canary.log
           test "$status" -ne 0
-          rm -f Dockerfile.news-daemon-canary-audit Dockerfile.news-daemon-canary-audit.dockerignore
-          rm -rf .docker-canary
+          rm -f Dockerfile.news-daemon-canary-legit Dockerfile.news-daemon-canary-legit.dockerignore Dockerfile.news-daemon-canary-audit Dockerfile.news-daemon-canary-audit.dockerignore
+          rm -rf news-core/.docker-canary scripts/.docker-canary
       - name: Build News Core daemon image
         run: docker build --file Dockerfile.news-daemon --tag syntrake-news-daemon:${{ github.sha }} .
       - name: Verify runtime and worker modules
