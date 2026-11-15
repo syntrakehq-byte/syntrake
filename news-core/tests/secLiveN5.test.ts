@@ -111,7 +111,11 @@ test("N0-T25: two attributable SEC cycles use a genuine isolated baseline and re
     assert.equal(first.claimed, true);
     const firstRows = await admin.query("select count(*)::int n, min(origin_fingerprint) origin_fingerprint from news_core.publications where source_id='sec-edgar' and external_id=$1", [candidate.externalId]);
     assert.equal(firstRows.rows[0].n, 1, "the first cycle must durably ingest the genuine accession"); assert.equal(firstRows.rows[0].origin_fingerprint, candidate.originFingerprint); assert.ok((await store.getCheckpoint(scope))?.cursor);
-    await admin.query("update news_core.collection_targets set next_run_at=clock_timestamp(), lease_owner=null, lease_until=null, active_execution_id=null where collection_scope_key=$1", [scope]);
+    // Preserve PID1's execution linkage and make only its lease stale. The real
+    // claim path must fence/recover the crashed RUNNING execution before PID2
+    // acquires the target; clearing active_execution_id here would bypass that
+    // production recovery path and leave an orphan RUNNING execution.
+    await admin.query("update news_core.collection_targets set next_run_at=clock_timestamp(), lease_until=clock_timestamp()-interval '1 second' where collection_scope_key=$1", [scope]);
     const second = await runNewsExecutorOnce({ store, workerId: `n0-t25-cycle-2-${suffix}`, secUserAgent: userAgent(), collectionScopeKey: scope, fetchImpl: replay.fetchImpl, fetchTimeoutMs: 30_000 });
     assert.equal(second.claimed, true); assert.equal(Number((await admin.query("select count(*)::int n from news_core.publications where source_id='sec-edgar' and external_id=$1", [candidate.externalId])).rows[0].n), 1);
     assert.equal((await store.readPublicationRevisionsAsOf(new Date(Date.now() + 60_000).toISOString(), candidate.publicationId)).length, 1);
