@@ -30,7 +30,7 @@ Esta matriz preserva os critérios N0-T01..T37. `PASS` significa que existe uma 
 | N0-T18 | N3/N4 | NOT_PROVEN | N4 cobre bloqueio determinístico de hosts privados e redirects; DNS rebinding em rede controlada ainda não foi provado |
 | N0-T19 | N3 | PASS | conteúdo hostil tratado como dados em N3-A |
 | N0-T20 | N3 | PASS | workflow News Core `43726149171`, job `132848394075`, SHA `691030ae34ad883f3d2f7cb90570060e5d1a458d`: duas identidades LOGIN autenticadas, RLS server-side, cada identidade vê apenas a sua conta e a fronteira News global não encaminha dados privados |
-| N0-T21 | N3 | NOT_PROVEN | Investing passou, mas o consumidor Trading e a compatibilidade conjunta versionada não estão presentes neste branch |
+| N0-T21 | N3 | PASS | workflow News Core `43726566145`, job `132849672293`, SHA `737bb5d7f`: `news-consumer-v1` é o mesmo contrato neutral para `INVESTING` e `TRADING`, sem campos privados, ordens, carteiras ou dependências reversas; Trading permanece apenas consumidor contratual |
 | N0-T22 | N2/N5 | PASS | N5 unitário/PG17 cobre paginação estável, cursor HMAC, histórico PIT e cutoff |
 | N0-T23 | N2/N3 | PASS | recusa conservadora sem evidência em N3-A/B |
 | N0-T24 | N1 | PASS | rollback/atomicidade em PG17 |
@@ -197,6 +197,15 @@ um filing inicial, atravessou uma indisponibilidade real do adaptador, manteve
 o checkpoint e recuperou 147 accession por backoff natural, sem reset
 administrativo ou duplicações.
 
-**Estado normativo vigente desta auditoria: 34 PASS / 4 NOT_PROVEN / 0 FAIL.** Pendentes: **T03, T21, T33 e N0-AUT-001**. T21 e T33 permanecem pendentes porque Trading e Market Core não estão integrados nesta cadeia; AUT-001 permanece pendente sem observação contínua no ambiente de destino.
+### Fecho dirigido N0-T21 — 2026-11-15
+
+O workflow News Core `43726566145` (job `132849672293`) no SHA
+`737bb5d7f` executou `consumerContracts.test.ts` sem skips. A mesma versão
+`news-consumer-v1` foi validada para Investing e Trading, com payload
+consumer-neutral e sem campos de conta, carteira, ordem ou valuation. O teste
+não cria um motor Trading nem afirma integração operacional; prova apenas o
+contrato versionado e a ausência de dependências reversas exigidos pelo N0.
+
+**Estado normativo vigente desta auditoria: 35 PASS / 3 NOT_PROVEN / 0 FAIL.** Pendentes: **T03, T33 e N0-AUT-001**. T33 permanece pendente porque o Market Core real existe apenas na branch remota `feat/r3-g1-universal-market-contract-20261102` e não está integrado no HEAD deste PR; AUT-001 permanece pendente sem observação contínua no ambiente de destino.
 
 **Decisao de release INALTERADA:** `N0_APPROVED=NO`; `NEWS_CORE_PRODUCTION_READY=NO`; PR #102 permanece Draft. A reconciliacao formal do PR #90, os seis requisitos pendentes (incluindo N0-AUT-001) e a prova autonoma 24/7 no destino continuam obrigatorios antes de declarar o News Core integralmente fechado.
