@@ -7,7 +7,13 @@ import { NewsFactualPipelineV1 } from "../news-core/factualPipeline";
 const url = process.env.NEWS_DATABASE_URL;
 const userAgent = process.env.SEC_USER_AGENT;
 if (!url || !userAgent) throw new Error("NEWS_DATABASE_URL and SEC_USER_AGENT are required");
-const pool = new Pool({ connectionString: url, max: 4, idleTimeoutMillis: 30_000, application_name: "syntrake-news-worker" });
+const withSessionRole = (connectionString: string, role: string): string => {
+  const parsed = new URL(connectionString);
+  const existing = parsed.searchParams.get("options");
+  parsed.searchParams.set("options", [existing, `-c role=${role}`].filter(Boolean).join(" "));
+  return parsed.toString();
+};
+const pool = new Pool({ connectionString: withSessionRole(url, "news_service"), max: 4, idleTimeoutMillis: 30_000, application_name: "syntrake-news-worker" });
 const store = new PostgresNewsStore(pool);
 const factualVerifierUrl = process.env.NEWS_PIPELINE_VERIFIER_DATABASE_URL;
 const factualAttestorUrl = process.env.NEWS_FACTUAL_ATTESTOR_DATABASE_URL;
@@ -21,7 +27,7 @@ if (executionMode === "N1_ONLY" && factualConfigured) throw new Error("NEWS_N1_O
 console.log(`NEWS_EXECUTION_MODE=${executionMode}`);
 console.log(`NEWS_WORKER_READY pid=${process.pid} workerId=${process.env.NEWS_WORKER_ID ?? `worker-${process.pid}`}`);
 const factualPipeline = executionMode === "FACTUAL"
-  ? new NewsFactualPipelineV1({ news: store, verifierPool: new Pool({ connectionString: factualVerifierUrl, max: 2, application_name: "syntrake-news-verifier" }), attestorPool: new Pool({ connectionString: factualAttestorUrl, max: 2, application_name: "syntrake-news-attestor" }), writerPool: new Pool({ connectionString: factualWriterUrl, max: 2, application_name: "syntrake-news-writer" }), userAgent, maxDocuments: Number(process.env.NEWS_FACTUAL_DOCUMENT_LIMIT ?? 20), processingHoldMs: process.env.NODE_ENV === "test" && process.env.NEWS_TEST_ALLOW_PROCESSING_HOLD === "1" ? Number(process.env.NEWS_FACTUAL_PROCESSING_HOLD_MS ?? 0) : 0 })
+  ? new NewsFactualPipelineV1({ news: store, verifierPool: new Pool({ connectionString: withSessionRole(factualVerifierUrl, "news_pipeline_verifier"), max: 2, application_name: "syntrake-news-verifier" }), attestorPool: new Pool({ connectionString: withSessionRole(factualAttestorUrl, "news_factual_attestor"), max: 2, application_name: "syntrake-news-attestor" }), writerPool: new Pool({ connectionString: withSessionRole(factualWriterUrl, "news_factual_writer"), max: 2, application_name: "syntrake-news-writer" }), userAgent, maxDocuments: Number(process.env.NEWS_FACTUAL_DOCUMENT_LIMIT ?? 20), processingHoldMs: process.env.NODE_ENV === "test" && process.env.NEWS_TEST_ALLOW_PROCESSING_HOLD === "1" ? Number(process.env.NEWS_FACTUAL_PROCESSING_HOLD_MS ?? 0) : 0 })
   : undefined;
 const abort = new AbortController();
 let executionFailed = false;
