@@ -91,6 +91,7 @@ async function waitForWorkerOutput(worker: ChildProcessWithoutNullStreams, marke
 }
 
 async function waitForWorkerExit(worker: ChildProcessWithoutNullStreams): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
+  if (worker.exitCode !== null || worker.signalCode !== null) return { code: worker.exitCode, signal: worker.signalCode as NodeJS.Signals | null };
   return await new Promise(resolve => worker.once("exit", (code, signal) => resolve({ code, signal })));
 }
 
