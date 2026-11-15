@@ -5,6 +5,8 @@ import test from "node:test";
 import { Client, Pool } from "pg";
 import { PostgresNewsStore } from "../postgresStore";
 import { runNewsExecutorOnce } from "../autonomousExecutor";
+import { fetchSecFilings } from "../secAdapter";
+import { fetchSafeExternal } from "../sourceSecurity";
 
 const DB_URL = process.env.NEWS_DATABASE_URL ?? process.env.TEST_DATABASE_URL;
 const n1 = new URL("../../supabase/migrations/20261111150000_news_core_postgres_n1.sql", import.meta.url);
@@ -12,11 +14,17 @@ const n2a = new URL("../../supabase/migrations/20261111170000_news_core_n2a_revi
 const A = "0000320193";
 const B = "0000789019";
 
-function response(cik: string, accession: string): Response {
-  return new Response(JSON.stringify({ cik, filings: { recent: {
-    form: ["8-K"], accessionNumber: [accession], filingDate: ["2026-11-14"],
-    primaryDocument: ["notice.htm"], primaryDocDescription: ["Controlled SEC filing"],
-  } } }), { status: 200, headers: { "content-type": "application/json" } });
+async function liveReplay(cik: string): Promise<{ externalId: string; fetchImpl: typeof fetch }> {
+  const userAgent = "SYNTRAKE N0 consolidated rehearsal security@syntrake.com";
+  const live = await fetchSafeExternal(`https://data.sec.gov/submissions/CIK${cik}.json`, { headers: { "User-Agent": userAgent, Accept: "application/json" }, signal: AbortSignal.timeout(30_000) });
+  assert.equal(live.ok, true, `SEC live response must be successful for ${cik}`);
+  const payload = await live.json() as Record<string, unknown>;
+  assert.equal(payload.cik, cik, `SEC live payload must identify ${cik}`);
+  const payloadJson = JSON.stringify(payload);
+  const fetchImpl: typeof fetch = async () => new Response(payloadJson, { status: 200, headers: { "content-type": "application/json" } });
+  const parsed = await fetchSecFilings({ cik, userAgent, fetchImpl, now: new Date("2026-11-15T07:00:00.000Z") });
+  assert.ok(parsed.publications.length > 0, `SEC live payload must contain filings for ${cik}`);
+  return { externalId: parsed.publications[0].externalId, fetchImpl };
 }
 
 function administrativeBatch(scope: string, publicationId: string, publishedAt: string | null) {
@@ -38,34 +46,38 @@ test("N0 consolidated local rehearsal: T15, T27 partial recovery and T28 clock/P
   const clockScope = `n0-consolidated-clock-${suffix}`;
   const clockFuture = `n0-consolidated-future-${suffix}`;
   const clockPast = `n0-consolidated-past-${suffix}`;
-  const accessionTail = String(parseInt(suffix.slice(0, 6), 16) % 1_000_000).padStart(6, "0");
-  const accessionA = `0000320193-26-${accessionTail}`;
-  const accessionB = `0000789019-26-${accessionTail}`;
   try {
     await admin.connect();
     assert.match((await admin.query<{ v: string }>("select current_setting('server_version') v")).rows[0].v, /^17\./);
     await admin.query(await readFile(n1, "utf8"));
     await admin.query(await readFile(n2a, "utf8"));
     await store.ensureSource("sec-edgar", "sec");
+    const liveA = await liveReplay(A);
+    const liveB = await liveReplay(B);
 
     await store.upsertTarget({ collectionScopeKey: scopeA, sourceId: "sec-edgar", providerKey: "sec", entityKey: A, parameters: { forms: ["8-K"], overlapDays: 7 }, nextRunAt: new Date().toISOString() });
     await store.upsertTarget({ collectionScopeKey: scopeB, sourceId: "sec-edgar", providerKey: "sec", entityKey: B, parameters: { forms: ["8-K"], overlapDays: 7 }, nextRunAt: new Date().toISOString() });
 
     let sourceAvailable = false;
-    await assert.rejects(runNewsExecutorOnce({ store, workerId: `n0-consolidated-a-${suffix}`, collectionScopeKey: scopeA, secUserAgent: "SYNTRAKE N0 rehearsal security@syntrake.com", fetchImpl: async () => { if (!sourceAvailable) throw new Error("SOURCE_TEMPORARILY_UNAVAILABLE"); return response(A, accessionA); } }), /SOURCE_TEMPORARILY_UNAVAILABLE/);
+    await assert.rejects(runNewsExecutorOnce({ store, workerId: `n0-consolidated-a-${suffix}`, collectionScopeKey: scopeA, secUserAgent: "SYNTRAKE N0 rehearsal security@syntrake.com", fetchImpl: async () => { if (!sourceAvailable) throw new Error("SOURCE_TEMPORARILY_UNAVAILABLE"); return liveA.fetchImpl("https://data.sec.gov"); } }), /SOURCE_TEMPORARILY_UNAVAILABLE/);
     assert.equal(await store.getCheckpoint(scopeA), null, "T27 partial outage must not advance checkpoint");
     sourceAvailable = true;
     await admin.query("update news_core.collection_targets set next_run_at=clock_timestamp(), lease_owner=null, lease_until=null, active_execution_id=null where collection_scope_key=$1", [scopeA]);
-    await runNewsExecutorOnce({ store, workerId: `n0-consolidated-a-recovery-${suffix}`, collectionScopeKey: scopeA, secUserAgent: "SYNTRAKE N0 rehearsal security@syntrake.com", fetchImpl: async () => response(A, accessionA) });
-    await runNewsExecutorOnce({ store, workerId: `n0-consolidated-b-${suffix}`, collectionScopeKey: scopeB, secUserAgent: "SYNTRAKE N0 rehearsal security@syntrake.com", fetchImpl: async () => response(B, accessionB) });
+    await runNewsExecutorOnce({ store, workerId: `n0-consolidated-a-recovery-${suffix}`, collectionScopeKey: scopeA, secUserAgent: "SYNTRAKE N0 rehearsal security@syntrake.com", fetchImpl: liveA.fetchImpl });
+    let sourceBAvailable = false;
+    await assert.rejects(runNewsExecutorOnce({ store, workerId: `n0-consolidated-b-${suffix}`, collectionScopeKey: scopeB, secUserAgent: "SYNTRAKE N0 rehearsal security@syntrake.com", fetchImpl: async () => { if (!sourceBAvailable) throw new Error("SOURCE_TEMPORARILY_UNAVAILABLE"); return liveB.fetchImpl("https://data.sec.gov"); } }), /SOURCE_TEMPORARILY_UNAVAILABLE/);
+    assert.equal(await store.getCheckpoint(scopeB), null, "T15 B outage must not advance checkpoint");
+    sourceBAvailable = true;
+    await admin.query("update news_core.collection_targets set next_run_at=clock_timestamp(), lease_owner=null, lease_until=null, active_execution_id=null where collection_scope_key=$1", [scopeB]);
+    await runNewsExecutorOnce({ store, workerId: `n0-consolidated-b-recovery-${suffix}`, collectionScopeKey: scopeB, secUserAgent: "SYNTRAKE N0 rehearsal security@syntrake.com", fetchImpl: liveB.fetchImpl });
     assert.ok((await store.getCheckpoint(scopeA))?.cursor);
     assert.ok((await store.getCheckpoint(scopeB))?.cursor);
     assert.equal((await admin.query("select count(*)::int n from news_core.checkpoints where collection_scope_key=any($1::text[])", [[scopeA, scopeB]])).rows[0].n, 2, "T15 must keep two CIK checkpoints independent");
-    assert.equal((await admin.query("select count(*)::int n from news_core.publications where external_id=any($1::text[])", [[accessionA, accessionB]])).rows[0].n, 2);
+    assert.equal((await admin.query("select count(*)::int n from news_core.publications where external_id=any($1::text[])", [[liveA.externalId, liveB.externalId]])).rows[0].n, 2);
 
     await admin.query("update news_core.collection_targets set next_run_at=clock_timestamp(), lease_owner=null, lease_until=null, active_execution_id=null where collection_scope_key=any($1::text[])", [[scopeA, scopeB]]);
-    await runNewsExecutorOnce({ store, workerId: `n0-consolidated-replay-${suffix}`, collectionScopeKey: scopeA, secUserAgent: "SYNTRAKE N0 rehearsal security@syntrake.com", fetchImpl: async () => response(A, accessionA) });
-    assert.equal((await admin.query("select count(*)::int n from news_core.publications where external_id=$1", [accessionA])).rows[0].n, 1, "T15 replay must remain idempotent");
+    await runNewsExecutorOnce({ store, workerId: `n0-consolidated-replay-${suffix}`, collectionScopeKey: scopeA, secUserAgent: "SYNTRAKE N0 rehearsal security@syntrake.com", fetchImpl: liveA.fetchImpl });
+    assert.equal((await admin.query("select count(*)::int n from news_core.publications where external_id=$1", [liveA.externalId])).rows[0].n, 1, "T15 replay must remain idempotent");
 
     await store.ingestAdministrative(administrativeBatch(clockScope, clockFuture, "2099-01-01T00:00:00.000Z"));
     await store.ingestAdministrative(administrativeBatch(clockScope, clockPast, "2020-01-01T00:00:00.000Z"));

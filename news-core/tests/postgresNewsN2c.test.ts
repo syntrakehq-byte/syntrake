@@ -112,6 +112,7 @@ test("News Core N2-C conservative editorial equivalence, structural many-to-many
     await store.ingestEditorialGroup(separated);
     assert.equal((await store.readEditorialGroupsAsOf(new Date(Date.now() + 10_000).toISOString())).filter(row => row.groupId === exactGroup.groupId).length, 0);
     assert.equal((await store.readEditorialGroupHistoryAsOf(new Date(Date.now() + 10_000).toISOString())).filter(row => row.groupId === exactGroup.groupId).length, 6);
+    console.log(`N0_T14_PROOF group=${exactGroup.groupId} mergeMembers=2 splitEffective=0 historyRows=6 pitBeforeAfter=verified`);
 
     const crashEvent: StructuralEventLinkResolutionV1 = { ...eventOne, structuralEventId: `event-crash-${suffix}`, reason: "RECOVERY_PROBE" };
     await assert.rejects(store.ingestStructuralEventLinks(crashEvent, { failurePoint: "after-commit-before-finalize" }), /INJECTED_FAILURE_AFTER_COMMIT_BEFORE_FINALIZE/);

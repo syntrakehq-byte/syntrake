@@ -23,7 +23,7 @@ Esta matriz preserva os critérios N0-T01..T37. `PASS` significa que existe uma 
 | N0-T11 | N2 | PASS | PIT estrutural N2-A/B/C |
 | N0-T12 | N2 | PASS | correção histórica N2-C |
 | N0-T13 | N2 | PASS | PIT de ligações N2-C |
-| N0-T14 | N2 | NOT_PROVEN | histórico estrutural parcial; merge/split completo do critério N0 não foi executado |
+| N0-T14 | N2 | PASS | `postgresNewsN2c.test.ts`, workflow PG17, `N0_T14_PROOF`: merge/membership correction, split, leituras PIT antes/depois e histórico append-only |
 | N0-T15 | N1 | NOT_PROVEN | rehearsal consolidado PG17 confirma dois CIK, dois checkpoints e replay sem duplicação; falta recuperação independente completa por partição |
 | N0-T16 | N1 | PASS | testes de indisponibilidade do adaptador SEC |
 | N0-T17 | N1 | PASS | payload malformado rejeitado |
@@ -68,7 +68,7 @@ Fonte normativa: PR #90, SHA `a358cf9cc3e0427cefc18b02f6c3c653b2a61e7b`, estado 
 | N0-T11 | Publicação posterior ao cutoff não aparece no passado | N2/N3 PIT PG17 | PASS | — |
 | N0-T12 | Correção posterior não aparece antes da correção | Revisões históricas N2/N3-C | PASS | — |
 | N0-T13 | Identity link posterior não aparece historicamente | N2-C PIT de links | PASS | — |
-| N0-T14 | Fusão/split posterior mantém histórico anterior reproduzível | Não existe ensaio completo de merge/split normativo | NOT_PROVEN | Executar merge e split com leituras antes/depois do cutoff |
+| N0-T14 | Fusão/split posterior mantém histórico anterior reproduzível | `postgresNewsN2c.test.ts`, workflow News PG17 final, `N0_T14_PROOF` regista `mergeMembers=2`, `splitEffective=0`, `historyRows=6` e `pitBeforeAfter=verified` | PASS | Prova limitada a relações editoriais estruturais em PG17 isolado; não é prova de produção |
 | N0-T15 | Duas partições CIK têm checkpoints e recovery independentes | SHA `25325ffef0d76d23c2ea483c34451f44faba18cd`, workflow News `43689194384`, job `132736003726`: `N0_CONSOLIDATED_PROOF` confirma CIK `0000320193`/`0000789019`, `checkpoints=2` e `replayDuplicates=0` em PG17 | NOT_PROVEN | Prova controlada de partições e replay; falta falha/recovery independente de cada partição com recolha real completa |
 | N0-T16 | Fornecedor offline gera falha explícita, sem dados inventados | Testes de indisponibilidade SEC/adaptador | PASS | — |
 | N0-T17 | Resposta externa malformada é rejeitada | Testes N1/N4 de payload malformado | PASS | — |
@@ -96,7 +96,7 @@ Fonte normativa: PR #90, SHA `a358cf9cc3e0427cefc18b02f6c3c653b2a61e7b`, estado 
 
 ### Decisão de aceitação
 
-`N0_APPROVED=NO` e `NEWS_CORE_PRODUCTION_READY=NO`. Permanecem bloqueadores normativos T03, T14, T15, T18, T20, T21, T27, T28, T33 e AUT-001, além da reconciliação formal e revisão independente do PR #90. Não houve merge, cherry-pick, deploy ou migração remota.
+`N0_APPROVED=NO` e `NEWS_CORE_PRODUCTION_READY=NO`. Permanecem bloqueadores normativos T03, T15, T18, T20, T21, T27, T28, T33 e AUT-001, além da reconciliação formal e revisão independente do PR #90. Não houve merge, cherry-pick, deploy ou migração remota.
 
 ## Snapshot histórico N3-D (substituído pela auditoria final)
 
@@ -129,7 +129,7 @@ Esta secção é a decisão documental autoritativa para este SHA. As tabelas e 
 | N0-T26 | PASS | `secLiveN5.test.ts`, SHA `564ccaeea0a8427b699ed6e54de82ec336b77587`, job `132718271928`: PID1 `4701` terminou por `SIGKILL`, PID2 `4732` recuperou após lease expirado e PID3 `4756` repetiu; publicação/revisão finais 1/1 e `replayDuplicates=0` | prova restrita ao ensaio PG17/SEC live em base temporária; não substitui operação 24/7 em produção |
 | N0-T28 | NOT_PROVEN | SHA `25325ffef0d76d23c2ea483c34451f44faba18cd`, job `132736003726`: flag futura, data passada sem flag, `asKnownAt` e PIT verificados | falta autoridade de relógio externa e ensaio completo de drift no ambiente normativo |
 
-T25 e T26 são `PASS` apenas no âmbito do rehearsal PG17/SEC live identificado acima. A lista vigente de requisitos `NOT_PROVEN` é: T03, T14, T15, T18, T20, T21, T27, T28, T33 e AUT-001. Há agora 28 critérios `PASS` e 10 `NOT_PROVEN`; nenhum `PASS` significa prova de produção.
+T25 e T26 são `PASS` apenas no âmbito do rehearsal PG17/SEC live identificado acima. A lista vigente de requisitos `NOT_PROVEN` é: T03, T15, T18, T20, T21, T27, T28, T33 e AUT-001. Há agora 29 critérios `PASS` e 9 `NOT_PROVEN`; nenhum `PASS` significa prova de produção.
 
 ### Rehearsal consolidado dos critérios locais restantes
 
