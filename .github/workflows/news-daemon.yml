@@ -163,7 +163,13 @@ jobs:
           docker stop --time 15 "$cid" >/dev/null || true
           docker logs "$cid"
           docker rm "$cid" >/dev/null
-          publication_id="$(docker run --rm --network host postgres:17 psql "$NEWS_DATABASE_URL" -Atc "select publication_id from news_core.publications where source_id='sec-edgar' and form='8-K' and visibility_state='COMMITTED' order by ingested_at desc limit 1")"
+          publication_id=""
+          while IFS='|' read -r candidate_id candidate_url; do
+            if curl --fail --silent --show-error --max-time 20 -A "$SEC_USER_AGENT" "$candidate_url" >/dev/null; then
+              publication_id="$candidate_id"
+              break
+            fi
+          done < <(docker run --rm --network host postgres:17 psql "$NEWS_DATABASE_URL" -At -F '|' -c "select publication_id,original_url from news_core.publications where source_id='sec-edgar' and form='8-K' and visibility_state='COMMITTED' order by ingested_at desc limit 40")
           test -n "$publication_id"
           verifier_url="postgres://news_daemon_verifier:news-daemon-test-password@localhost:5432/syntrake_news_ci?options=-c%20role%3Dnews_pipeline_verifier"
           attestor_url="postgres://news_daemon_attestor:news-daemon-test-password@localhost:5432/syntrake_news_ci?options=-c%20role%3Dnews_factual_attestor"
