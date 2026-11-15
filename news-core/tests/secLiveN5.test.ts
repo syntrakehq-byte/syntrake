@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { Client, Pool } from "pg";
@@ -60,9 +61,9 @@ async function absentPublication(admin: Client, publications: ReplayFixture["pub
   throw new Error("N0_REPLAY_BASELINE_NOT_EMPTY");
 }
 
-function spawnT26Worker(connectionString: string, scope: string, payloadJson: string, mode: "barrier" | "recover"): ChildProcessWithoutNullStreams {
+function spawnT26Worker(connectionString: string, scope: string, payloadFile: string, mode: "barrier" | "recover"): ChildProcessWithoutNullStreams {
   return spawn(process.execPath, [path.resolve("node_modules/tsx/dist/cli.mjs"), path.resolve("news-core/tests/n0T26Worker.ts")], {
-    env: { ...process.env, NEWS_DATABASE_URL: connectionString, N0_T26_SCOPE: scope, N0_T26_PAYLOAD_BASE64: Buffer.from(payloadJson, "utf8").toString("base64"), N0_T26_WORKER_MODE: mode },
+    env: { ...process.env, NEWS_DATABASE_URL: connectionString, N0_T26_SCOPE: scope, N0_T26_PAYLOAD_FILE: payloadFile, N0_T26_WORKER_MODE: mode },
     stdio: ["ignore", "pipe", "pipe"],
   });
 }
@@ -106,10 +107,11 @@ test("N0-T26: PID1 SIGKILL after fetch recovers in PID2 without checkpoint loss 
   let pid1: ChildProcessWithoutNullStreams | undefined;
   let pid2: ChildProcessWithoutNullStreams | undefined;
   let pid3: ChildProcessWithoutNullStreams | undefined;
+  let payloadDir: string | undefined;
   try {
-    await applyN1Migrations(admin); const replay = await genuineSecReplay(); const pool = new Pool({ connectionString: isolated.connectionString, max: 4 }); const store = new PostgresNewsStore(pool); await installTarget(store, scope); const candidate = await absentPublication(admin, replay.publications); await store.close();
+    await applyN1Migrations(admin); const replay = await genuineSecReplay(); payloadDir = await mkdtemp(path.join(os.tmpdir(), "syntrake-n0-t26-")); const payloadFile = path.join(payloadDir, "sec-submissions.json"); await writeFile(payloadFile, replay.payloadJson, "utf8"); const pool = new Pool({ connectionString: isolated.connectionString, max: 4 }); const store = new PostgresNewsStore(pool); await installTarget(store, scope); const candidate = await absentPublication(admin, replay.publications); await store.close();
     assert.equal(Number((await admin.query("select count(*)::int n from news_core.publications where source_id='sec-edgar' and external_id=$1", [candidate.externalId])).rows[0].n), 0);
-    pid1 = spawnT26Worker(isolated.connectionString, scope, replay.payloadJson, "barrier");
+    pid1 = spawnT26Worker(isolated.connectionString, scope, payloadFile, "barrier");
     const pid1Number = pid1.pid;
     assert.ok(pid1Number && pid1Number > 0);
     await waitForWorkerOutput(pid1, "N0_T26_CHILD_READY");
@@ -120,7 +122,7 @@ test("N0-T26: PID1 SIGKILL after fetch recovers in PID2 without checkpoint loss 
     assert.equal(pid1Exit.signal, "SIGKILL", `PID1 must terminate by SIGKILL, got code=${pid1Exit.code} signal=${pid1Exit.signal}`);
     console.log(`N0_T26_PID1 pid=${pid1Number} exitSignal=${pid1Exit.signal} publicationsDuringCrash=0 checkpointsDuringCrash=0`);
     await admin.query("update news_core.collection_targets set next_run_at=clock_timestamp(), lease_owner=null, lease_until=null, active_execution_id=null where collection_scope_key=$1", [scope]);
-    pid2 = spawnT26Worker(isolated.connectionString, scope, replay.payloadJson, "recover");
+    pid2 = spawnT26Worker(isolated.connectionString, scope, payloadFile, "recover");
     const pid2Number = pid2.pid;
     assert.ok(pid2Number && pid2Number > 0 && pid2Number !== pid1Number);
     await waitForWorkerOutput(pid2, "N0_T26_CHILD_DONE");
@@ -130,7 +132,7 @@ test("N0-T26: PID1 SIGKILL after fetch recovers in PID2 without checkpoint loss 
     assert.equal(Number((await admin.query("select count(*)::int n from news_core.publication_revisions pr join news_core.publications p using (publication_id) where p.source_id='sec-edgar' and p.external_id=$1", [candidate.externalId])).rows[0].n), 1);
     assert.equal(Number((await admin.query("select count(*)::int n from news_core.checkpoints where collection_scope_key=$1 and visibility_state='COMMITTED'", [scope])).rows[0].n), 1);
     await admin.query("update news_core.collection_targets set next_run_at=clock_timestamp(), lease_owner=null, lease_until=null, active_execution_id=null where collection_scope_key=$1", [scope]);
-    pid3 = spawnT26Worker(isolated.connectionString, scope, replay.payloadJson, "recover");
+    pid3 = spawnT26Worker(isolated.connectionString, scope, payloadFile, "recover");
     const pid3Number = pid3.pid;
     assert.ok(pid3Number && pid3Number !== pid1Number && pid3Number !== pid2Number);
     await waitForWorkerOutput(pid3, "N0_T26_CHILD_DONE");
@@ -143,6 +145,7 @@ test("N0-T26: PID1 SIGKILL after fetch recovers in PID2 without checkpoint loss 
     if (pid1 && !pid1.killed) pid1.kill("SIGKILL");
     if (pid2 && !pid2.killed) pid2.kill("SIGKILL");
     if (pid3 && !pid3.killed) pid3.kill("SIGKILL");
+    if (payloadDir) await rm(payloadDir, { recursive: true, force: true });
     await isolated.close();
   }
 });

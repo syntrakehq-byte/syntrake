@@ -1,13 +1,14 @@
 import { Pool } from "pg";
+import { readFile } from "node:fs/promises";
 import { runNewsExecutorOnce } from "../autonomousExecutor";
 import { PostgresNewsStore } from "../postgresStore";
 
 const databaseUrl = process.env.NEWS_DATABASE_URL;
 const scope = process.env.N0_T26_SCOPE;
-const payloadBase64 = process.env.N0_T26_PAYLOAD_BASE64;
+const payloadFile = process.env.N0_T26_PAYLOAD_FILE;
 const mode = process.env.N0_T26_WORKER_MODE;
-if (!databaseUrl || !scope || !payloadBase64 || !mode) throw new Error("N0_T26_WORKER_CONFIG_INVALID");
-const payload = Buffer.from(payloadBase64, "base64").toString("utf8");
+if (!databaseUrl || !scope || !payloadFile || !mode) throw new Error("N0_T26_WORKER_CONFIG_INVALID");
+const payload = await readFile(payloadFile, "utf8");
 const fetchImpl: typeof fetch = async () => new Response(payload, { status: 200, headers: { "content-type": "application/json" } });
 const pool = new Pool({ connectionString: databaseUrl, max: 2 });
 const store = new PostgresNewsStore(pool);
