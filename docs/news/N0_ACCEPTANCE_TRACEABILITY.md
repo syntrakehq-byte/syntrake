@@ -148,3 +148,14 @@ As afirmações históricas sobre writer `NOLOGIN`, DML direto e selagem também
 ### Prova BL4 factual estabilizada
 
 No SHA `7456db48a7973dd85431cb074f69333304f015b183`, os jobs News Core `132576255379`/`132577224460` do workflow `43637123793`/`43637436104` executaram `newsFactualSupervisorRecovery.test.ts` sem falhas. A publicação-alvo foi observada antes da leitura N5 em `state=DONE`, `completed=PERSISTED`, `pit_visibility_state=DURABLE`, com `finalized_at`, `as_known_at` e `committed_at` presentes. No SHA `564ccaeea0a8427b699ed6e54de82ec336b77587`, o job `132718271928` fechou T25/T26 com base temporária, baseline limpo, replay SEC genuíno e crash real de PID1 por `SIGKILL`, recuperação em PID2 e replay em PID3. T25/T26 estão `PASS` no âmbito do rehearsal; a operação 24/7 e a garantia de produção permanecem fora da prova.
+### Fecho consolidado de autonomia (SHA 58f06bad)
+
+O runbook `docs/news/VERCEL_DAEMONS_RUNBOOK.md` prepara uma opcao de execucao
+continua, mas nao constitui deploy, ensaio no ambiente de destino ou prova de
+compatibilidade Supabase/Vercel. A proposta Investing-only tambem nao derroga
+`N0-AUT-001`: autonomia 24/7 continua requisito obrigatorio.
+
+Os criterios T03, T15, T18, T20, T21, T27, T28, T33 e `N0-AUT-001` permanecem
+`NOT_PROVEN`. As provas locais parciais nao sao promovidas a `PASS`; nenhuma
+fonte, identidade, integracao ou resultado foi fabricado. `N0_APPROVED=NO` e
+`NEWS_CORE_PRODUCTION_READY=NO` permanecem.
