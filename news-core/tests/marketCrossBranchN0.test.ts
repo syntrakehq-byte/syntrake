@@ -16,7 +16,7 @@ test("T33: genuine Market Core DataEnvelope validates independently of News temp
   const marketModule = await import(modulePath) as {
     validateEnvelope: (value: unknown, predicate: (v: unknown) => v is string) => unknown;
   };
-  const isPrice = (value: unknown): value is string => typeof value === "string" && /^\\d+\\.\\d{2}$/.test(value);
+  const isPrice = (value: unknown): value is string => typeof value === "string" && /^\d+\.\d{2}$/.test(value);
   const market = {
     status: "AVAILABLE", value: "100.50",
     firstSeenAt: "2026-11-15T09:00:00.000Z",
