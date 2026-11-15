@@ -112,7 +112,7 @@ jobs:
           docker run --rm --network host postgres:17 psql "$NEWS_DATABASE_URL" -v ON_ERROR_STOP=1 -c "delete from news_core.executions where collection_scope_key='$scope'; delete from news_core.collection_targets where collection_scope_key='$scope'; delete from news_core.checkpoints where collection_scope_key='$scope';"
           baseline="$(docker run --rm --network host postgres:17 psql "$NEWS_DATABASE_URL" -Atc "select count(*) from news_core.checkpoints where collection_scope_key='$scope'")"
           test "$baseline" = 0
-          cid="$(docker run -d --name "$name" \
+          cid="$(docker run -d --network host --name "$name" \
             -e NEWS_DATABASE_URL="$db_url" \
             -e SEC_USER_AGENT="$SEC_USER_AGENT" \
             -e NEWS_EXECUTION_MODE=N1_ONLY \
