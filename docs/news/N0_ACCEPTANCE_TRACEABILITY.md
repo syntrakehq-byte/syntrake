@@ -222,3 +222,15 @@ fundido ou modificado.
 **Estado normativo vigente desta auditoria: 36 PASS / 2 NOT_PROVEN / 0 FAIL.** Pendentes: **T03 e N0-AUT-001**. AUT-001 permanece pendente sem observação contínua no ambiente de destino; T03 permanece pendente sem 25 publicações editoriais genuínas verificadas e independentes.
 
 **Decisao de release INALTERADA:** `N0_APPROVED=NO`; `NEWS_CORE_PRODUCTION_READY=NO`; PR #102 permanece Draft. A reconciliacao formal do PR #90, T03 e N0-AUT-001 continuam obrigatorios antes de declarar o News Core integralmente fechado.
+
+### Estado autoritativo após o ensaio cross-branch T33
+
+O ensaio `marketCrossBranchN0.test.ts` carrega o validador real do Market Core
+na branch `feat/r3-g1-universal-market-contract-20261102` e comprova
+interoperabilidade estrutural, semântica temporal separada e rejeição de
+payloads incompatíveis. Não comprova, porém, uma junção PIT de dados Market/News
+nem integração operacional no mesmo circuito. Portanto, **T33 permanece
+NOT_PROVEN**.
+
+Estado autoritativo: **35 PASS / 3 NOT_PROVEN / 0 FAIL**. Pendentes: **T03,
+T33 e N0-AUT-001**.

@@ -51,3 +51,8 @@ Esta secção prevalece sobre a tabela inicial deste documento, que representa o
 - **N0-T33 PASS no âmbito contratual**: ponte read-only validada contra o `DataEnvelope` real do Market Core remoto, mantendo semânticas temporais independentes e sem alterar o Market.
 
 **Decisão:** `N0_APPROVED=NO`, `NEWS_CORE_PRODUCTION_READY=NO`, PR #102 Draft. Não fazer merge, deploy ou migrações remotas com base apenas nos workflows verdes.
+
+Estado autoritativo após o ensaio cross-branch: **35 PASS / 3 NOT_PROVEN / 0
+FAIL**. T33 tem interoperabilidade estrutural comprovada contra o validador
+Market remoto, mas continua `NOT_PROVEN` quanto à integração PIT operacional;
+os restantes pendentes são T03 e N0-AUT-001.
