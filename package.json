@@ -34,6 +34,7 @@
     "test:news:n0:t27": "tsx --test --test-timeout=180000 news-core/tests/n0T27Backfill.test.ts",
     "test:news:n0:t20": "tsx --test --test-timeout=120000 news-core/tests/n0T20AccountIsolation.test.ts",
     "test:news:n0:contracts": "tsx --test news-core/tests/consumerContracts.test.ts",
+    "test:news:n0:t33": "tsx --test --test-timeout=180000 news-core/tests/marketNewsPitIntegrationN0.test.ts",
     "test:news:pg17": "tsx --test --test-timeout=180000 news-core/tests/postgresNews.test.ts && tsx --test --test-timeout=180000 news-core/tests/postgresNewsN2a.test.ts && tsx --test --test-timeout=180000 news-core/tests/postgresNewsN2b.test.ts && tsx --test --test-timeout=180000 news-core/tests/postgresNewsN2c.test.ts && tsx --test --test-timeout=180000 news-core/tests/postgresNewsN3c.test.ts",
     "news:worker": "tsx scripts/news-postgres-worker.ts",
     "news:supervisor": "tsx scripts/news-supervisor.ts"
