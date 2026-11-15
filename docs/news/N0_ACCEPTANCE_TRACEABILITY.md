@@ -225,7 +225,7 @@ fundido ou modificado.
 
 ### Ensaio dirigido N0-T03 — gate de 25 fontes reais
 
-Foi acrescentado `news-core/tests/n0T03EditorialAcceptance.test.ts`. O gate exige um manifesto externo verificável com exatamente 25 URLs HTTPS distintas, 25 publicadores distintos, autoria, datas, proveniência, dependências editoriais resolvidas e as 300 relações de independência com provas PIT válidas. Sem esse manifesto, o teste termina explicitamente como `SKIP` (`N0_T03_MANIFEST_REQUIRED`) e não promove o critério. A execução realizada neste SHA teve `pass=0`, `fail=0`, `skipped=1`; portanto T03 permanece `NOT_PROVEN`.
+Foi acrescentado `news-core/tests/n0T03EditorialAcceptance.test.ts`. O gate exige um manifesto externo verificável com exatamente 25 publicações distintas sobre o mesmo `eventId`, URLs HTTPS, autoria, datas, proveniência e dependências editoriais classificadas. Não exige 25 publicadores nem 300 relações de independência: essa é a distinção normativa entre T03 e T10. O ensaio passa a exigir apenas que o resultado não seja promovido a `CORROBORATED` sem as provas de independência de T10. Sem manifesto real, termina explicitamente como `SKIP` (`N0_T03_MANIFEST_REQUIRED`) e não promove o critério. A execução realizada neste SHA teve `pass=0`, `fail=0`, `skipped=1`; portanto T03 permanece `NOT_PROVEN`.
 
 ### Estado autoritativo após o ensaio cross-branch T33
 
