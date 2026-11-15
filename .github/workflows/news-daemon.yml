@@ -100,6 +100,9 @@ jobs:
         run: |
           npm ci
           npm run test:news:pg17
+          for migration in supabase/migrations/20261113100000_news_core_bl3_factual_backlog.sql supabase/migrations/20261113110000_news_core_bl3_backlog_fencing.sql; do
+            docker run --rm -i --network host postgres:17 psql "$NEWS_DATABASE_URL" -v ON_ERROR_STOP=1 < "$migration"
+          done
           docker run --rm --network host postgres:17 psql "$NEWS_DATABASE_URL" -v ON_ERROR_STOP=1 -c "do \$\$ begin if not exists (select 1 from pg_roles where rolname='news_daemon_test') then create role news_daemon_test login inherit password 'news-daemon-test-password' nocreatedb nocreaterole; end if; if not exists (select 1 from pg_roles where rolname='news_daemon_verifier') then create role news_daemon_verifier login inherit password 'news-daemon-test-password' nocreatedb nocreaterole; end if; if not exists (select 1 from pg_roles where rolname='news_daemon_attestor') then create role news_daemon_attestor login inherit password 'news-daemon-test-password' nocreatedb nocreaterole; end if; if not exists (select 1 from pg_roles where rolname='news_daemon_writer') then create role news_daemon_writer login inherit password 'news-daemon-test-password' nocreatedb nocreaterole; end if; end \$\$; alter role news_daemon_test set role = news_service; grant news_service to news_daemon_test; grant news_pipeline_verifier to news_daemon_verifier; grant news_factual_attestor to news_daemon_attestor; grant news_factual_writer to news_daemon_writer;"
       - name: Run real daemon entrypoint with PG17 and restart container
         shell: bash
@@ -182,8 +185,7 @@ jobs:
           factual_ready=0
           for i in $(seq 1 90); do
             factual_logs="$(docker logs "$factual_cid" 2>&1 || true)"
-            printf '%s\n' "$factual_logs" | grep -q '"status":"PERSISTED"' && factual_ready=1 && break
-            printf '%s\n' "$factual_logs" | grep -q 'NEWS_WORKER_READY' || true
+            [[ "$factual_logs" == *'"status":"PERSISTED"'* ]] && factual_ready=1 && break
             sleep 1
           done
           if ! test "$factual_ready" -eq 1; then
