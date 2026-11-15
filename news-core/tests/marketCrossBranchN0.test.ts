@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { assertMarketNewsBoundaryV1, validateNewsTemporalV1 } from "../consumerContracts";
+import { assertMarketNewsBoundaryV1, validateNewsTemporalV1, type MarketTemporalEnvelopeV1 } from "../consumerContracts";
 
 /**
  * N0-T33 cross-branch rehearsal: the actual Market Core validator is loaded
@@ -27,7 +27,7 @@ test("T33: genuine Market Core DataEnvelope validates independently of News temp
     quality: { flags: [], coverage: "FULL" },
     rights: { policyId: "rehearsal-only", display: true, retentionUntil: null },
   };
-  const validated = marketModule.validateEnvelope(market, isPrice) as typeof market;
+  const validated = marketModule.validateEnvelope(market, isPrice) as MarketTemporalEnvelopeV1;
   assert.strictEqual(validated, market);
   const news = validateNewsTemporalV1({
     firstSeenAt: "2026-11-15T09:00:00.000Z",
