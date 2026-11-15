@@ -103,16 +103,18 @@ async function stopWorker(worker: ChildProcessWithoutNullStreams | undefined): P
 
 async function waitForExpiredLease(admin: Client, scope: string, timeoutMs = 15_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
+  let snapshot = "unobserved";
   while (Date.now() < deadline) {
-    const result = await admin.query<{ expired: boolean; lease_until: string | null }>(
-      "select lease_until, (lease_until is not null and lease_until <= clock_timestamp()) as expired from news_core.collection_targets where collection_scope_key=$1",
+    const result = await admin.query<{ expired: boolean; lease_until: string | null; now: string; owner: string | null; execution_id: string | null; execution_state: string | null }>(
+      "select t.lease_until, clock_timestamp() as now, t.lease_owner as owner, t.active_execution_id as execution_id, e.state as execution_state, (t.lease_until is not null and t.lease_until <= clock_timestamp()) as expired from news_core.collection_targets t left join news_core.executions e on e.execution_id=t.active_execution_id where t.collection_scope_key=$1",
       [scope],
     );
     const row = result.rows[0];
     if (row?.expired) return;
+    snapshot = JSON.stringify(row ?? null);
     await new Promise(resolve => setTimeout(resolve, 50));
   }
-  throw new Error(`N0_T15_LEASE_DID_NOT_EXPIRE scope=${scope}`);
+  throw new Error(`N0_T15_LEASE_DID_NOT_EXPIRE scope=${scope} snapshot=${snapshot}`);
 }
 
 test("N0-T25: two attributable SEC cycles use a genuine isolated baseline and remain idempotent", { skip: !enabled && "N5_REAL_SOURCE=1 required for the official SEC proof" }, async () => {
