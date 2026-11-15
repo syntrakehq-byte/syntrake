@@ -56,3 +56,9 @@ Estado autoritativo após o ensaio cross-branch: **35 PASS / 3 NOT_PROVEN / 0
 FAIL**. T33 tem interoperabilidade estrutural comprovada contra o validador
 Market remoto, mas continua `NOT_PROVEN` quanto à integração PIT operacional;
 os restantes pendentes são T03 e N0-AUT-001.
+
+Atualização posterior: o run `43743856926` executou a consulta conjunta PIT
+Market/News em PostgreSQL 17 persistido, com os leitores reais de ambos os
+motores, e comprovou exclusão de revisões futuras no mesmo cutoff. T33 está
+`PASS` no âmbito isolado testado. Estado atual: **36 PASS / 2 NOT_PROVEN / 0
+FAIL**; pendentes T03 e N0-AUT-001.

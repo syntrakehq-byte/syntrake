@@ -234,3 +234,19 @@ NOT_PROVEN**.
 
 Estado autoritativo: **35 PASS / 3 NOT_PROVEN / 0 FAIL**. Pendentes: **T03,
 T33 e N0-AUT-001**.
+
+### Estado autoritativo após T33 PIT conjunto — 2026-11-15
+
+O teste `marketNewsPitIntegrationN0.test.ts` executou em PostgreSQL 17 uma
+consulta conjunta read-only usando `market_core.read_market_pit` do Market Core
+real e `news_core.read_fact_revisions_as_of` do News Core, com o mesmo cutoff.
+Revisões antigas foram devolvidas antes do cutoff e as revisões futuras apenas
+depois da sua disponibilidade; payloads incompatíveis e look-ahead foram
+rejeitados, mantendo `DataEnvelope` e `NewsEnvelope` separados.
+
+Prova CI: run `43743856926`, job `132902720944`, SHA
+`4953d0e5c55dfa760be66b3f81b6c3c8a26537ce`:
+`N0_T33_JOINT_PIT_PROOF pg17=true ... lookaheadRejected=true contractsSeparate=true`.
+
+**T33 passa no âmbito PG17 isolado e persistido.** Estado normativo atual:
+**36 PASS / 2 NOT_PROVEN / 0 FAIL**. Pendentes: **T03 e N0-AUT-001**.
