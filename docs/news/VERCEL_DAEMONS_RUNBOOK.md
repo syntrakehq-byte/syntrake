@@ -126,9 +126,9 @@ de destino ser auditada.
 
 ## Gate de imagem
 
-`Dockerfile.news-daemon`, `.dockerignore.news-daemon` e
+`Dockerfile.news-daemon`, `Dockerfile.news-daemon.dockerignore` e
 `vercel.daemons.example.toml` sao artefactos de referencia. O workflow
 `.github/workflows/news-daemon.yml` constroi a imagem em Ubuntu com Docker,
-verifica Node/`pg`/`tsx`, confirma fail-closed sem as tres capabilities factuais
-e executa os smoke suites existentes. Nenhum destes ficheiros altera o
-`vercel.json` ativo ou faz deploy.
+verifica o canario adversarial de contexto, executa o entrypoint real com PG17,
+confirma checkpoint/restart/fail-closed e executa o smoke suite existente.
+Nenhum destes ficheiros altera o `vercel.json` ativo ou faz deploy.

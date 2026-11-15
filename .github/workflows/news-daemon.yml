@@ -4,7 +4,7 @@ on:
   push:
     paths:
       - "Dockerfile.news-daemon"
-      - ".dockerignore.news-daemon"
+      - "Dockerfile.news-daemon.dockerignore"
       - "vercel.daemons.example.toml"
       - "scripts/news-supervisor.ts"
       - "scripts/news-postgres-worker.ts"
@@ -15,7 +15,7 @@ on:
   pull_request:
     paths:
       - "Dockerfile.news-daemon"
-      - ".dockerignore.news-daemon"
+      - "Dockerfile.news-daemon.dockerignore"
       - "vercel.daemons.example.toml"
       - "scripts/news-supervisor.ts"
       - "scripts/news-postgres-worker.ts"
@@ -46,6 +46,25 @@ jobs:
       SEC_USER_AGENT: "SYNTRAKE daemon image CI/1.0 security@syntrake.com"
     steps:
       - uses: actions/checkout@v4
+      - name: Verify Dockerfile-specific ignore with adversarial canary
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .docker-canary
+          printf 'synthetic-secret\n' > .docker-canary/.env
+          cat > Dockerfile.news-daemon-canary-audit <<'EOF'
+          FROM scratch
+          COPY .docker-canary/.env /canary
+          EOF
+          cp Dockerfile.news-daemon.dockerignore Dockerfile.news-daemon-canary-audit.dockerignore
+          set +e
+          docker build --file Dockerfile.news-daemon-canary-audit --tag syntrake-news-canary:${{ github.sha }} . >/tmp/news-daemon-canary.log 2>&1
+          status=$?
+          set -e
+          cat /tmp/news-daemon-canary.log
+          test "$status" -ne 0
+          rm -f Dockerfile.news-daemon-canary-audit Dockerfile.news-daemon-canary-audit.dockerignore
+          rm -rf .docker-canary
       - name: Build News Core daemon image
         run: docker build --file Dockerfile.news-daemon --tag syntrake-news-daemon:${{ github.sha }} .
       - name: Verify runtime and worker modules
@@ -68,7 +87,53 @@ jobs:
       - name: Verify image contains no environment files
         run: |
           test "$(docker run --rm --entrypoint node syntrake-news-daemon:${{ github.sha }} -e "const fs=require('fs'); process.stdout.write(fs.existsSync('/app/.env') ? 'bad' : 'ok')")" = ok
-      - name: Run existing PG17 supervisor smoke suite
+      - name: Prepare PG17 schema and least-privilege N1 role
         run: |
           npm ci
+          npm run test:news:pg17
+          docker run --rm --network host postgres:17 psql "$NEWS_DATABASE_URL" -v ON_ERROR_STOP=1 -c "do \$\$ begin if not exists (select 1 from pg_roles where rolname='news_daemon_test') then create role news_daemon_test login password 'news-daemon-test-password' nocreatedb nocreaterole; end if; end \$\$; grant news_service to news_daemon_test;"
+      - name: Run real daemon entrypoint with PG17 and restart container
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="news-daemon-${GITHUB_RUN_ID}"
+          db_url="postgres://news_daemon_test:news-daemon-test-password@localhost:5432/syntrake_news_ci"
+          cid="$(docker run -d --name "$name" \
+            -e NEWS_DATABASE_URL="$db_url" \
+            -e SEC_USER_AGENT="$SEC_USER_AGENT" \
+            -e NEWS_EXECUTION_MODE=N1_ONLY \
+            -e SEC_CIK=0000320193 \
+            -e NEWS_POLL_INTERVAL_MS=100 \
+            -e NEWS_LEASE_SECONDS=5 \
+            syntrake-news-daemon:${{ github.sha }})"
+          ready=0
+          for i in $(seq 1 60); do
+            logs="$(docker logs "$cid" 2>&1 || true)"
+            printf '%s\n' "$logs" | grep -q 'NEWS_WORKER_READY' && ready=1 && break
+            sleep 1
+          done
+          test "$ready" -eq 1
+          for i in $(seq 1 60); do
+            count="$(docker run --rm --network host postgres:17 psql "$NEWS_DATABASE_URL" -Atc "select count(*) from news_core.checkpoints where source_id='sec-edgar'")"
+            test "$count" -ge 1 && break
+            sleep 1
+          done
+          test "$count" -ge 1
+          docker stop --time 15 "$cid"
+          test "$(docker inspect -f '{{.State.ExitCode}}' "$cid")" = 0
+          docker start "$cid" >/dev/null
+          restarted=0
+          for i in $(seq 1 30); do
+            logs="$(docker logs "$cid" 2>&1 || true)"
+            test "$(printf '%s\n' "$logs" | grep -c 'NEWS_WORKER_READY')" -ge 2 && restarted=1 && break
+            sleep 1
+          done
+          test "$restarted" -eq 1
+          after="$(docker run --rm --network host postgres:17 psql "$NEWS_DATABASE_URL" -Atc "select count(*) from news_core.checkpoints where source_id='sec-edgar'")"
+          test "$after" -ge 1
+          docker stop --time 15 "$cid" >/dev/null || true
+          docker logs "$cid"
+          docker rm "$cid" >/dev/null
+      - name: Run existing PG17 supervisor smoke suite
+        run: |
           npm run test:news:bl4:supervisor
