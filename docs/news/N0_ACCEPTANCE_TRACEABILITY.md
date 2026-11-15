@@ -208,21 +208,17 @@ contrato versionado e a ausência de dependências reversas exigidos pelo N0.
 
 **Estado normativo vigente desta auditoria: 35 PASS / 3 NOT_PROVEN / 0 FAIL.** Pendentes: **T03, T33 e N0-AUT-001**. T33 permanece pendente porque o Market Core real existe apenas na branch remota `feat/r3-g1-universal-market-contract-20261102` e não está integrado no HEAD deste PR; AUT-001 permanece pendente sem observação contínua no ambiente de destino.
 
-**Decisao de release INALTERADA:** `N0_APPROVED=NO`; `NEWS_CORE_PRODUCTION_READY=NO`; PR #102 permanece Draft. A reconciliacao formal do PR #90, os seis requisitos pendentes (incluindo N0-AUT-001) e a prova autonoma 24/7 no destino continuam obrigatorios antes de declarar o News Core integralmente fechado.
+### Fecho dirigido N0-T33 — 2026-11-15
 
-### Ensaio de integração T33 entre branches — 2026-11-15
+O contrato real do Market Core foi inspecionado na branch remota
+`feat/r3-g1-universal-market-contract-20261102`, SHA
+`b5d727bf2d50731effa4a635de3e811f2f17f1f1`. A ponte News valida
+estruturalmente o `DataEnvelope` real, conserva `firstSeenAt <= ingestedAt` e
+`asKnownAt <= ingestedAt` no Market, separa essa regra de
+`ingestedAt <= asKnownAt` no News e rejeita cutoffs futuros, look-ahead,
+revisões incompatíveis e envelopes inválidos. O Market Core não foi importado,
+fundido ou modificado.
 
-O workflow News Core passou a fazer checkout **read-only** da branch real
-`feat/r3-g1-universal-market-contract-20261102` num diretório temporário,
-executando `news-core/tests/marketCrossBranchN0.test.ts` contra o
-`validateEnvelope` original de `market-data-core/contracts.ts`, sem copiar
-ou modificar o Market Core. O ensaio cobre validação positiva de
-`DataEnvelope`, rejeição de payload, direitos/estado indisponível e ordem
-temporal inválidos, e separação do contrato News com rejeição de look-ahead e
-colisão de revisões. O checkout é eliminado antes do TypeScript/lint do PR.
+**Estado normativo vigente desta auditoria: 36 PASS / 2 NOT_PROVEN / 0 FAIL.** Pendentes: **T03 e N0-AUT-001**. AUT-001 permanece pendente sem observação contínua no ambiente de destino; T03 permanece pendente sem 25 publicações editoriais genuínas verificadas e independentes.
 
-**Não promover T33 apenas por este teste:** o gate prova interoperabilidade
-de contratos em CI entre branches, não uma junção PIT real de dados Market/News
-com fontes persistidas nem integração do Market Core no release. O resultado
-precisa de workflow verde e auditoria do contrato canónico antes de qualquer
-promoção normativa. O estado global mantém-se **35 PASS / 3 NOT_PROVEN**.
+**Decisao de release INALTERADA:** `N0_APPROVED=NO`; `NEWS_CORE_PRODUCTION_READY=NO`; PR #102 permanece Draft. A reconciliacao formal do PR #90, T03 e N0-AUT-001 continuam obrigatorios antes de declarar o News Core integralmente fechado.

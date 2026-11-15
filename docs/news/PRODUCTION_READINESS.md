@@ -38,7 +38,7 @@ As provas adversariais observadas no log PG17 incluem `permission denied` para I
 
 Esta secção prevalece sobre a tabela inicial deste documento, que representa o estado histórico do Bloco 1 e **não** o estado atual dos Blocos 2–5. A matriz normativa atual é `docs/news/N0_ACCEPTANCE_TRACEABILITY.md` e o PR #90 continua a ser a fonte de requisitos; a revisão formal independente permanece por concluir.
 
-- **35 PASS / 3 NOT_PROVEN / 0 FAIL** na auditoria N0 mais recente. Pendentes: **N0-T03, N0-T33, N0-AUT-001**.
+- **36 PASS / 2 NOT_PROVEN / 0 FAIL** na auditoria N0 mais recente. Pendentes: **N0-T03, N0-AUT-001**.
 - **N0-T18 PASS no âmbito canónico**: IP validado ligado ao socket TLS, sem segunda resolução DNS no transporte e com rejeição de redirects; não depende de uma zona DNS pública mutável.
 - **N0-T28 PASS no âmbito canónico**: `SOURCE_CLOCK_CONFLICT` para fonte futura, ausência de falso conflito para fonte passada e fronteira PIT independente do relógio da publicação; não depende de NTP externo.
 - **N0-T15 PASS no âmbito do rehearsal PG17/SEC live**: CIK Apple/Microsoft, processos independentes, `SIGKILL` em ambos os sentidos, recuperação por lease natural, checkpoints isolados e deduplicação; prova no workflow News Core `43710279989`, SHA `0f6fbb2a203c0544b507f6ff6e6ea8620b726ba6`.
@@ -48,5 +48,6 @@ Esta secção prevalece sobre a tabela inicial deste documento, que representa o
 - **N0-T20 PASS no âmbito PG17**: o workflow `43726149171`, job `132848394075`, isolou duas identidades LOGIN autenticadas com RLS server-side e confirmou que o namespace global News não encaminha dados privados.
 - **N0-T27 PASS no âmbito PG17/SEC live**: o mesmo job confirmou uma lacuna oficial, indisponibilidade, backoff natural, checkpoint estável e backfill idempotente de 147 accession, sem reset administrativo.
 - **N0-T21 PASS no âmbito contratual**: `news-consumer-v1` fornece a mesma fronteira consumer-neutral a Investing e Trading, sem implementar Trading nem criar dependências reversas.
+- **N0-T33 PASS no âmbito contratual**: ponte read-only validada contra o `DataEnvelope` real do Market Core remoto, mantendo semânticas temporais independentes e sem alterar o Market.
 
 **Decisão:** `N0_APPROVED=NO`, `NEWS_CORE_PRODUCTION_READY=NO`, PR #102 Draft. Não fazer merge, deploy ou migrações remotas com base apenas nos workflows verdes.
