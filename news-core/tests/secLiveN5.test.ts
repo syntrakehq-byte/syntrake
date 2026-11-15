@@ -77,7 +77,23 @@ function spawnT26Worker(connectionString: string, scope: string, payloadFile: st
   return spawn(process.execPath, [path.resolve("node_modules/tsx/dist/cli.mjs"), path.resolve("news-core/tests/n0T26Worker.ts")], {
     env: { ...process.env, NEWS_DATABASE_URL: connectionString, N0_T26_SCOPE: scope, N0_T26_PAYLOAD_FILE: payloadFile, N0_T26_WORKER_MODE: mode },
     stdio: ["ignore", "pipe", "pipe"],
+    detached: process.platform !== "win32",
   });
+}
+
+function workerPid(output: string, marker: string): number {
+  const match = output.match(new RegExp(`${marker} pid=(\\d+)`));
+  if (!match) throw new Error(`N0_WORKER_PID_MISSING marker=${marker} output=${output}`);
+  return Number(match[1]);
+}
+
+function killWorker(worker: ChildProcessWithoutNullStreams): boolean {
+  if (worker.exitCode !== null || worker.signalCode !== null) return false;
+  if (process.platform === "win32") return worker.kill("SIGKILL");
+  try { process.kill(-worker.pid!, "SIGKILL"); return true; } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+    throw error;
+  }
 }
 
 async function waitForWorkerOutput(worker: ChildProcessWithoutNullStreams, marker: string, timeoutMs = 30_000): Promise<string> {
@@ -97,7 +113,7 @@ async function waitForWorkerExit(worker: ChildProcessWithoutNullStreams): Promis
 
 async function stopWorker(worker: ChildProcessWithoutNullStreams | undefined): Promise<void> {
   if (!worker || worker.exitCode !== null || worker.signalCode !== null) return;
-  worker.kill("SIGKILL");
+  killWorker(worker);
   await waitForWorkerExit(worker);
 }
 
@@ -163,14 +179,15 @@ test("N0-T15: two real worker PIDs isolate SEC partitions across SIGKILL and nat
       await installTarget(store, healthyScope, survivor === 0 ? cikA : cikB);
       const blocked = spawnT26Worker(isolated.connectionString, failedScope, paths[failing], "barrier");
       children.push(blocked);
-      await waitForWorkerOutput(blocked, "N0_T26_CHILD_READY");
+      const blockedReady = await waitForWorkerOutput(blocked, "N0_T26_CHILD_READY");
+      const blockedWorkerPid = workerPid(blockedReady, "N0_T26_CHILD_READY");
       const healthy = spawnT26Worker(isolated.connectionString, healthyScope, paths[survivor], "recover");
       children.push(healthy);
       await waitForWorkerOutput(healthy, "N0_T26_CHILD_DONE");
       assert.equal((await waitForWorkerExit(healthy)).code, 0);
       assert.equal((await store.getCheckpoint(failedScope)), null, "crashed partition must not commit checkpoint");
       assert.ok((await store.getCheckpoint(healthyScope))?.cursor, "other partition must advance its own checkpoint");
-      assert.equal(blocked.kill("SIGKILL"), true);
+      assert.equal(killWorker(blocked), true);
       assert.equal((await waitForWorkerExit(blocked)).signal, "SIGKILL");
       const stillRunning = await admin.query<{ state: string }>("select e.state from news_core.executions e join news_core.collection_targets t on t.active_execution_id=e.execution_id where t.collection_scope_key=$1", [failedScope]);
       assert.equal(stillRunning.rows[0]?.state, "RUNNING", "crash must preserve the failed execution for real reclaim");
@@ -188,7 +205,7 @@ test("N0-T15: two real worker PIDs isolate SEC partitions across SIGKILL and nat
         [[failedScope, healthyScope]],
       );
       assert.equal(counts.rows.length, 2);
-      console.log(`N0_T15_PROCESS_PROOF crashCIK=${failing === 0 ? cikA : cikB} healthyCIK=${survivor === 0 ? cikA : cikB} killedPid=${blocked.pid} survivorPid=${healthy.pid} recoveryPid=${recovering.pid} noAdminLeaseReset=true checkpoints=2`);
+      console.log(`N0_T15_PROCESS_PROOF crashCIK=${failing === 0 ? cikA : cikB} healthyCIK=${survivor === 0 ? cikA : cikB} killedPid=${blockedWorkerPid} survivorPid=${healthy.pid} recoveryPid=${recovering.pid} noAdminLeaseReset=true checkpoints=2`);
     }
     const total = await admin.query<{ n: number; distinct_ids: number }>("select count(*)::int n, count(distinct external_id)::int distinct_ids from news_core.publications where source_id='sec-edgar'");
     assert.ok(total.rows[0].n > 0, "at least one genuine official filing must persist");
@@ -212,12 +229,12 @@ test("N0-T26: PID1 SIGKILL after fetch recovers in PID2 without checkpoint loss 
     await applyN1Migrations(admin); const replay = await genuineSecReplay(); payloadDir = await mkdtemp(path.join(os.tmpdir(), "syntrake-n0-t26-")); const payloadFile = path.join(payloadDir, "sec-submissions.json"); await writeFile(payloadFile, replay.payloadJson, "utf8"); const pool = new Pool({ connectionString: isolated.connectionString, max: 4 }); const store = new PostgresNewsStore(pool); await installTarget(store, scope); const candidate = await absentPublication(admin, replay.publications); await store.close();
     assert.equal(Number((await admin.query("select count(*)::int n from news_core.publications where source_id='sec-edgar' and external_id=$1", [candidate.externalId])).rows[0].n), 0);
     pid1 = spawnT26Worker(isolated.connectionString, scope, payloadFile, "barrier");
-    const pid1Number = pid1.pid;
-    assert.ok(pid1Number && pid1Number > 0);
-    await waitForWorkerOutput(pid1, "N0_T26_CHILD_READY");
+    const pid1Ready = await waitForWorkerOutput(pid1, "N0_T26_CHILD_READY");
+    const pid1Number = workerPid(pid1Ready, "N0_T26_CHILD_READY");
+    assert.ok(pid1Number > 0);
     assert.equal(Number((await admin.query("select count(*)::int n from news_core.publications where source_id='sec-edgar' and external_id=$1", [candidate.externalId])).rows[0].n), 0);
     assert.equal(Number((await admin.query("select count(*)::int n from news_core.checkpoints where collection_scope_key=$1", [scope])).rows[0].n), 0);
-    assert.equal(pid1.kill("SIGKILL"), true);
+    assert.equal(killWorker(pid1), true);
     const pid1Exit = await waitForWorkerExit(pid1);
     assert.equal(pid1Exit.signal, "SIGKILL", `PID1 must terminate by SIGKILL, got code=${pid1Exit.code} signal=${pid1Exit.signal}`);
     console.log(`N0_T26_PID1 pid=${pid1Number} exitSignal=${pid1Exit.signal} publicationsDuringCrash=0 checkpointsDuringCrash=0`);
