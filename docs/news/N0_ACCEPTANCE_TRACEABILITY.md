@@ -24,7 +24,7 @@ Esta matriz preserva os critérios N0-T01..T37. `PASS` significa que existe uma 
 | N0-T12 | N2 | PASS | correção histórica N2-C |
 | N0-T13 | N2 | PASS | PIT de ligações N2-C |
 | N0-T14 | N2 | NOT_PROVEN | histórico estrutural parcial; merge/split completo do critério N0 não foi executado |
-| N0-T15 | N1 | NOT_PROVEN | não há ensaio completo por CIK nesta auditoria |
+| N0-T15 | N1 | NOT_PROVEN | rehearsal consolidado PG17 confirma dois CIK, dois checkpoints e replay sem duplicação; falta recuperação independente completa por partição |
 | N0-T16 | N1 | PASS | testes de indisponibilidade do adaptador SEC |
 | N0-T17 | N1 | PASS | payload malformado rejeitado |
 | N0-T18 | N3/N4 | NOT_PROVEN | N4 cobre bloqueio determinístico de hosts privados e redirects; DNS rebinding em rede controlada ainda não foi provado |
@@ -36,8 +36,8 @@ Esta matriz preserva os critérios N0-T01..T37. `PASS` significa que existe uma 
 | N0-T24 | N1 | PASS | rollback/atomicidade em PG17 |
 | N0-T25 | N1/N4/N5 | PASS | `secLiveN5.test.ts`, workflow PG17/SEC live, baseline 0, accession genuíno, primeira ingestão 1, segunda 1, checkpoint e revisão única |
 | N0-T26 | N1/N3/N4 | PASS | `secLiveN5.test.ts`, processo-filho PID1 terminado por `SIGKILL` pós-fetch/pré-commit, checkpoint/publicação ausentes durante a falha, PID2 recupera e PID3 repete sem duplicação |
-| N0-T27 | N1/N3 | NOT_PROVEN | backfill real por partição não demonstrado |
-| N0-T28 | N2 | NOT_PROVEN | `postgresNewsN2a.test.ts` prova `SOURCE_CLOCK_CONFLICT` para data futura, mas falta as_known_at/PIT explícito para relógio adiantado e atrasado |
+| N0-T27 | N1/N3 | NOT_PROVEN | rehearsal consolidado confirma outage temporário sem avanço de checkpoint e recuperação; backfill integral após indisponibilidade ainda não demonstrado |
+| N0-T28 | N2 | NOT_PROVEN | rehearsal consolidado confirma `SOURCE_CLOCK_CONFLICT`, `asKnownAt` posterior à ingestão e PIT anterior oculto; não cobre autoridade de relógio externa completa |
 | N0-T29 | N1 | PASS | concorrência/idempotência PG17 |
 | N0-T30 | N1 | PASS | resposta vazia disponível distinguida de erro |
 | N0-T31 | N2/N3 | PASS | `scheduledFor` separado de `occurredAt` |
@@ -69,7 +69,7 @@ Fonte normativa: PR #90, SHA `a358cf9cc3e0427cefc18b02f6c3c653b2a61e7b`, estado 
 | N0-T12 | Correção posterior não aparece antes da correção | Revisões históricas N2/N3-C | PASS | — |
 | N0-T13 | Identity link posterior não aparece historicamente | N2-C PIT de links | PASS | — |
 | N0-T14 | Fusão/split posterior mantém histórico anterior reproduzível | Não existe ensaio completo de merge/split normativo | NOT_PROVEN | Executar merge e split com leituras antes/depois do cutoff |
-| N0-T15 | Duas partições CIK têm checkpoints e recovery independentes | Há partições/checkpoints no contrato e testes unitários, sem ensaio completo A/B live | NOT_PROVEN | Rehearsal com dois CIK e recovery independente |
+| N0-T15 | Duas partições CIK têm checkpoints e recovery independentes | SHA `25325ffef0d76d23c2ea483c34451f44faba18cd`, workflow News `43689194384`, job `132736003726`: `N0_CONSOLIDATED_PROOF` confirma CIK `0000320193`/`0000789019`, `checkpoints=2` e `replayDuplicates=0` em PG17 | NOT_PROVEN | Prova controlada de partições e replay; falta falha/recovery independente de cada partição com recolha real completa |
 | N0-T16 | Fornecedor offline gera falha explícita, sem dados inventados | Testes de indisponibilidade SEC/adaptador | PASS | — |
 | N0-T17 | Resposta externa malformada é rejeitada | Testes N1/N4 de payload malformado | PASS | — |
 | N0-T18 | SSRF e redirect para IP interno são bloqueados, incluindo rebinding | N4 cobre destinos privados, redirects e TLS; DNS rebinding controlado não foi provado | NOT_PROVEN | Ensaio de rede controlado contra resolução mutável |
@@ -81,8 +81,8 @@ Fonte normativa: PR #90, SHA `a358cf9cc3e0427cefc18b02f6c3c653b2a61e7b`, estado 
 | N0-T24 | Falha transacional não deixa metade da revisão | N3-C PG17, rollback/crash/idempotência | PASS | — |
 | N0-T25 | Zero sessões, dois ciclos e publicação genuína verificável | No SHA `3d3e97a241cccde2d658075642af8030272399c8`, job PG17/SEC live `132586237285`, `N0_T25_PROOF` regista CIK `0000320193`, accession `0001140361-26-042798`, fonte SEC, fingerprint, baseline 0, firstCount 1, secondCount 1 e checkpoint | PASS | Rehearsal usa uma resposta SEC live genuína e replay determinístico em base temporária; não prova autonomia 24/7 |
 | N0-T26 | Crash entre fetch e persistência recupera sem duplicação | No SHA `564ccaeea0a8427b699ed6e54de82ec336b77587`, workflow News Core `43683264677`, job `132718271928`: `N0_T26_PID1 pid=4701 exitSignal=SIGKILL publicationsDuringCrash=0 checkpointsDuringCrash=0`; `N0_T26_RECLAIM_READY` confirmou execução RUNNING ligada e lease expirado; `N0_T26_PROOF` registou PID2 `4732`, PID3 `4756`, `finalPublications=1`, `finalRevisions=1`, `replayDuplicates=0` | PASS | Prova limitada ao PostgreSQL 17/SEC live em base temporária e ao harness de crash; não é prova de produção 24/7 |
-| N0-T27 | Período de indisponibilidade recupera por backfill/checkpoint | Há recovery controlado e backfill de fila, mas não período real de indisponibilidade de fonte | NOT_PROVEN | Simular/ensaiar indisponibilidade temporal real e backfill completo |
-| N0-T28 | Conflito de relógio gera flag e não falsifica `asKnownAt` | `postgresNewsN2a.test.ts` em PG17 preserva `publishedAt=2099-01-01`, a data da fonte, e exige `SOURCE_CLOCK_CONFLICT` | NOT_PROVEN | A prova cobre relógio adiantado e flag, mas ainda não verifica explicitamente `asKnownAt`/PIT contra relógios adiantado e atrasado |
+| N0-T27 | Período de indisponibilidade recupera por backfill/checkpoint | SHA `25325ffef0d76d23c2ea483c34451f44faba18cd`, job `132736003726`: `T27=PARTIAL_PASS`, outage deixou checkpoint inalterado e ciclo posterior recuperou | NOT_PROVEN | Falta backfill integral de uma lacuna temporal e prova de indisponibilidade da fonte por período operacional |
+| N0-T28 | Conflito de relógio gera flag e não falsifica `asKnownAt` | Mesmo job: `T28=PARTIAL_PASS`, `futureFlag=SOURCE_CLOCK_CONFLICT`, `asKnownAtPIT=verified`, data passada sem flag indevida | NOT_PROVEN | Falta autoridade de relógio externa e ensaio completo de drift adiantado/atrasado no ambiente normativo |
 | N0-T29 | Duas tarefas concorrentes do mesmo item geram um resultado lógico | Constraints, claims, fencing e testes PG17 | PASS | — |
 | N0-T30 | Lista vazia de fonte funcional é `AVAILABLE` com `data=[]` | N5 envelope e testes de lista vazia | PASS | — |
 | N0-T31 | Evento futuro usa `scheduledFor`, não `occurredAt` | N3-A temporal e testes negativos | PASS | — |
@@ -127,9 +127,13 @@ Esta secção é a decisão documental autoritativa para este SHA. As tabelas e 
 | N0-T18 | NOT_PROVEN | `sourceSecurityN4.test.ts` cobre destinos privados, metadata, redirects, TLS e IPv4/IPv6; o transporte usa o IP validado | falta prova de rebinding real com segunda resolução mutável entre resolução e socket |
 | N0-T25 | PASS | `secLiveN5.test.ts`, job `132586237285`, baseline 0, accession genuíno, firstCount 1, secondCount 1, checkpoint e revisão única | prova limitada ao rehearsal SEC live + replay determinístico em base temporária |
 | N0-T26 | PASS | `secLiveN5.test.ts`, SHA `564ccaeea0a8427b699ed6e54de82ec336b77587`, job `132718271928`: PID1 `4701` terminou por `SIGKILL`, PID2 `4732` recuperou após lease expirado e PID3 `4756` repetiu; publicação/revisão finais 1/1 e `replayDuplicates=0` | prova restrita ao ensaio PG17/SEC live em base temporária; não substitui operação 24/7 em produção |
-| N0-T28 | NOT_PROVEN | `postgresNewsN2a.test.ts` em PG17 preserva `publishedAt=2099-01-01` e exige `SOURCE_CLOCK_CONFLICT` | falta verificação explícita de `asKnownAt`/PIT para relógio externo adiantado e atrasado |
+| N0-T28 | NOT_PROVEN | SHA `25325ffef0d76d23c2ea483c34451f44faba18cd`, job `132736003726`: flag futura, data passada sem flag, `asKnownAt` e PIT verificados | falta autoridade de relógio externa e ensaio completo de drift no ambiente normativo |
 
 T25 e T26 são `PASS` apenas no âmbito do rehearsal PG17/SEC live identificado acima. A lista vigente de requisitos `NOT_PROVEN` é: T03, T14, T15, T18, T20, T21, T27, T28, T33 e AUT-001. Há agora 28 critérios `PASS` e 10 `NOT_PROVEN`; nenhum `PASS` significa prova de produção.
+
+### Rehearsal consolidado dos critérios locais restantes
+
+No SHA `25325ffef0d76d23c2ea483c34451f44faba18cd`, o workflow News Core `43689194384`, job `132736003726`, executou `test:news:n0:consolidated` em PostgreSQL 17 real. O log `N0_CONSOLIDATED_PROOF` registou `T15=PARTIAL_PASS` (dois CIK/checkpoints e replay idempotente), `T27=PARTIAL_PASS` (outage sem avanço de checkpoint e recuperação) e `T28=PARTIAL_PASS` (flag de relógio futuro, data passada sem flag indevida e PIT por `asKnownAt`). Estes resultados são evidência parcial, não promoção automática a `PASS`.
 
 ### Reconciliação das secções legadas
 
