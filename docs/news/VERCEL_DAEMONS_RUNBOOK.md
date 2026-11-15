@@ -90,6 +90,21 @@ Comparar o resultado com os creditos e precos vigentes do plano Vercel no moment
 da aprovacao. Os valores publicados podem mudar e nao constituem cotacao para
 este projeto.
 
+Para o sizing preliminar de novembro de 2026, usando os valores publicados para
+Daemons beta ($0.128 por CPU-hora ativa apos 5 horas incluidas e $0.0212 por
+GB-hora de memoria provisionada apos 420 GB-horas incluidas), uma instancia de
+1 vCPU/2 GB durante 24 horas representa aproximadamente $2.43 de CPU e 48
+GB-horas de memoria; durante 48 horas, aproximadamente $5.50 de CPU e 96
+GB-horas de memoria. Estes calculos sao incrementais aproximados, assumem uma
+unica instancia e nao incluem plano, impostos, armazenamento, rede ou outras
+execucoes do projeto. O teto proposto de $10 e um limite de planeamento, nao uma
+garantia de billing nem uma autorizacao de despesa.
+
+Nao foi encontrada neste gate uma garantia de hard cap que interrompa
+automaticamente a instancia ao atingir $10. A ativacao deve exigir alertas,
+limite operacional externo e um procedimento humano de paragem; sem isso, a
+recomendacao e nao ativar.
+
 ## Rehearsal isolado de 24-48 horas
 
 Executar somente com autorizacao humana num projeto/base isolados:
@@ -108,3 +123,12 @@ Executar somente com autorizacao humana num projeto/base isolados:
 Este ensaio nao transforma estabilidade observada em garantia absoluta de
 disponibilidade. `N0-AUT-001` permanece obrigatorio e `NOT_PROVEN` ate a prova
 de destino ser auditada.
+
+## Gate de imagem
+
+`Dockerfile.news-daemon`, `.dockerignore.news-daemon` e
+`vercel.daemons.example.toml` sao artefactos de referencia. O workflow
+`.github/workflows/news-daemon.yml` constroi a imagem em Ubuntu com Docker,
+verifica Node/`pg`/`tsx`, confirma fail-closed sem as tres capabilities factuais
+e executa os smoke suites existentes. Nenhum destes ficheiros altera o
+`vercel.json` ativo ou faz deploy.

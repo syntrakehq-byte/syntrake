@@ -1,0 +1,75 @@
+name: news-daemon-image
+
+on:
+  push:
+    paths:
+      - "Dockerfile.news-daemon"
+      - ".dockerignore.news-daemon"
+      - "vercel.daemons.example.toml"
+      - "scripts/news-supervisor.ts"
+      - "scripts/news-postgres-worker.ts"
+      - "news-core/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/news-daemon.yml"
+  pull_request:
+    paths:
+      - "Dockerfile.news-daemon"
+      - ".dockerignore.news-daemon"
+      - "vercel.daemons.example.toml"
+      - "scripts/news-supervisor.ts"
+      - "scripts/news-postgres-worker.ts"
+      - "news-core/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/news-daemon.yml"
+
+jobs:
+  image-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: syntrake_news_ci
+        options: >-
+          --health-cmd "pg_isready -U postgres -d syntrake_news_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+        ports:
+          - 5432:5432
+    env:
+      NEWS_DATABASE_URL: postgres://postgres:postgres@localhost:5432/syntrake_news_ci
+      SEC_USER_AGENT: "SYNTRAKE daemon image CI/1.0 security@syntrake.com"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build News Core daemon image
+        run: docker build --file Dockerfile.news-daemon --tag syntrake-news-daemon:${{ github.sha }} .
+      - name: Verify runtime and worker modules
+        run: |
+          docker run --rm --entrypoint node syntrake-news-daemon:${{ github.sha }} --version
+          docker run --rm --entrypoint node syntrake-news-daemon:${{ github.sha }} -e "require('pg'); require('tsx')"
+      - name: Verify factual mode fails closed without segregated capabilities
+        shell: bash
+        run: |
+          set +e
+          output="$(docker run --rm \
+            -e NEWS_DATABASE_URL="$NEWS_DATABASE_URL" \
+            -e SEC_USER_AGENT="$SEC_USER_AGENT" \
+            --entrypoint node syntrake-news-daemon:${{ github.sha }} \
+            node_modules/tsx/dist/cli.mjs scripts/news-postgres-worker.ts 2>&1)"
+          status=$?
+          printf '%s\n' "$output"
+          test "$status" -ne 0
+          printf '%s\n' "$output" | grep -q 'NEWS_FACTUAL_PIPELINE_CONFIG_INCOMPLETE'
+      - name: Verify image contains no environment files
+        run: |
+          test "$(docker run --rm --entrypoint node syntrake-news-daemon:${{ github.sha }} -e "const fs=require('fs'); process.stdout.write(fs.existsSync('/app/.env') ? 'bad' : 'ok')")" = ok
+      - name: Run existing PG17 supervisor and factual smoke suites
+        run: |
+          npm ci
+          npm run test:news:bl4:supervisor
+          npm run test:news:bl4:factual

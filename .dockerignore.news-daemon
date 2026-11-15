@@ -1,0 +1,16 @@
+*
+!package.json
+!package-lock.json
+!scripts/
+!scripts/news-supervisor.ts
+!scripts/news-postgres-worker.ts
+!news-core/
+!news-core/**/*.ts
+!tsconfig.json
+.env*
+.git/
+.next/
+Data/
+audit-report.json
+supabase/.temp/
+tmp_*

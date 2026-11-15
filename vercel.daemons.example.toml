@@ -1,0 +1,8 @@
+# Reference only. This file is intentionally not named vercel.toml and is not
+# consumed by Vercel automatically.
+
+[daemons.news-core]
+root = "."
+entrypoint = "Dockerfile.news-daemon"
+command = ["node", "--import", "tsx/esm", "scripts/news-supervisor.ts"]
+instances.iad1 = 1
