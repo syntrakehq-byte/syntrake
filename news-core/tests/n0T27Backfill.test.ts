@@ -37,7 +37,11 @@ function oldestFilingReplay(payload: SecPayload): SecPayload {
   const recent = payload.filings.recent;
   const accessionNumbers = recent.accessionNumber;
   if (!Array.isArray(accessionNumbers) || accessionNumbers.length < 2) throw new Error("N0_T27_NEEDS_MULTIPLE_OFFICIAL_FILINGS");
-  const index = accessionNumbers.length - 1;
+  const forms = recent.form;
+  const allowed = new Set(["10-K", "10-Q", "8-K", "20-F", "6-K"]);
+  if (!Array.isArray(forms) || forms.length !== accessionNumbers.length) throw new Error("N0_T27_INVALID_OFFICIAL_ARRAY:form");
+  const index = forms.findLastIndex(value => typeof value === "string" && allowed.has(value));
+  if (index < 0) throw new Error("N0_T27_NEEDS_ELIGIBLE_OFFICIAL_FILING");
   const required = ["form", "accessionNumber", "filingDate", "primaryDocument", "primaryDocDescription"];
   const filtered = Object.fromEntries(required.map(key => {
     const values = recent[key];
