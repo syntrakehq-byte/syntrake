@@ -89,6 +89,10 @@ jobs:
           N5_REAL_SOURCE: "1"
           SEC_USER_AGENT: "SYNTRAKE N5 CI/1.0 security@syntrake.com"
       - run: npm run test:news:n0:consolidated
+      - name: N0-T03 verified 25-publication manifest gate (no skip)
+        env:
+          N0_T03_MANIFEST: news-core/tests/fixtures/n0-t03-crowdstrike-2024-07-19.json
+        run: npx tsx --test news-core/tests/n0T03EditorialAcceptance.test.ts
       - run: npm run test:news:n0:t27
         env:
           SEC_USER_AGENT: "SYNTRAKE N0 T27 CI/1.0 security@syntrake.com"
