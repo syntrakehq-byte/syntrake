@@ -101,6 +101,20 @@ async function stopWorker(worker: ChildProcessWithoutNullStreams | undefined): P
   await waitForWorkerExit(worker);
 }
 
+async function waitForExpiredLease(admin: Client, scope: string, timeoutMs = 15_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const result = await admin.query<{ expired: boolean; lease_until: string | null }>(
+      "select lease_until, (lease_until is not null and lease_until <= clock_timestamp()) as expired from news_core.collection_targets where collection_scope_key=$1",
+      [scope],
+    );
+    const row = result.rows[0];
+    if (row?.expired) return;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  throw new Error(`N0_T15_LEASE_DID_NOT_EXPIRE scope=${scope}`);
+}
+
 test("N0-T25: two attributable SEC cycles use a genuine isolated baseline and remain idempotent", { skip: !enabled && "N5_REAL_SOURCE=1 required for the official SEC proof" }, async () => {
   if (!DB_URL) throw new Error("NEWS_DATABASE_URL or TEST_DATABASE_URL is required for N0-T25");
   const isolated = await openIsolatedDatabase(); const admin = isolated.admin; const pool = new Pool({ connectionString: isolated.connectionString, max: 4 }); const store = new PostgresNewsStore(pool); const suffix = randomUUID().replaceAll("-", ""); const scope = `n0-t25-${suffix}`;
@@ -159,10 +173,11 @@ test("N0-T15: two real worker PIDs isolate SEC partitions across SIGKILL and nat
       const stillRunning = await admin.query<{ state: string }>("select e.state from news_core.executions e join news_core.collection_targets t on t.active_execution_id=e.execution_id where t.collection_scope_key=$1", [failedScope]);
       assert.equal(stillRunning.rows[0]?.state, "RUNNING", "crash must preserve the failed execution for real reclaim");
       // The original two-second lease must expire naturally, with no administrative update/reset.
-      await new Promise(resolve => setTimeout(resolve, 2_500));
+      await waitForExpiredLease(admin, failedScope);
       const recovering = spawnT26Worker(isolated.connectionString, failedScope, paths[failing], "recover");
       children.push(recovering);
-      await waitForWorkerOutput(recovering, "N0_T26_CHILD_DONE");
+      const recoveryOutput = await waitForWorkerOutput(recovering, "N0_T26_CHILD_DONE");
+      console.log(`N0_T15_RECOVERY_OUTPUT ${recoveryOutput.trim().replaceAll("\n", " ")}`);
       assert.equal((await waitForWorkerExit(recovering)).code, 0);
       assert.ok((await store.getCheckpoint(failedScope))?.cursor, "reclaimed partition must commit a checkpoint");
       assert.ok((await store.getCheckpoint(healthyScope))?.cursor, "healthy checkpoint must survive other worker recovery");
