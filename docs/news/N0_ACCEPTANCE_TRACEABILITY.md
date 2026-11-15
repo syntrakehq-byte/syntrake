@@ -159,3 +159,18 @@ Os criterios T03, T15, T18, T20, T21, T27, T28, T33 e `N0-AUT-001` permanecem
 `NOT_PROVEN`. As provas locais parciais nao sao promovidas a `PASS`; nenhuma
 fonte, identidade, integracao ou resultado foi fabricado. `N0_APPROVED=NO` e
 `NEWS_CORE_PRODUCTION_READY=NO` permanecem.
+
+## Revisao normativa independente de T18 e T28 — 2026-11-15 (estado vigente)
+
+Esta revisao compara **diretamente** os criterios do PR #90 (`a358cf9cc3e0427cefc18b02f6c3c653b2a61e7b`) com testes e codigo existentes no SHA `d7b3ef214b20414791269a77aa6a585702dd91aa`. **Substitui os estados T18/T28 e as contagens de todos os snapshots historicos anteriores deste documento, sem alterar a especificacao canonica.** A classificacao e especifica ao criterio N0, nao implica disponibilidade de producao nem aprovacao do PR #90.
+
+| Criterio | Estado normativo reavaliado | Prova no codigo/testes | Fronteira que NAO se afirma |
+|---|---|---|---|
+| **N0-T18** — `SSRF/redirect para IP interno`: bloqueado | **PASS (ambito canonico)** | `sourceSecurityN4.test.ts` cobre URLs privadas, metadata, hosts restritos, redirecionamentos e IPv4/IPv6; a prova `BL2 real SEC TLS transport pins the approved address and resists a second DNS resolution` obtém dados reais de `data.sec.gov`, usa um resolver cuja segunda resposta seria `127.0.0.1` e verifica **uma unica chamada de resolucao**. `sourceSecurity.ts:62-69,72-94,123-146` valida cada IP, faz pin do IP aprovado no `httpsRequest.lookup` e rejeita redirecionamento sem o seguir. `fetchPinnedHttpsForControlledTest` comprova socket TLS real para IP controlado. Workflow News Core `43707365286` PASS. | Nao houve experimento com zona DNS publica mutavel/controlo externo, que e hardening adicional; o criterio canonico **nao exige** tal infraestrutura nem segunda consulta DNS quando a implementacao elimina a segunda resolucao por pinning. |
+| **N0-T28** — `Conflito de relogio do fornecedor`: flag sem falsificar `asKnownAt` | **PASS (ambito canonico)** | `n0ConsolidatedRemaining.test.ts:90-100` em PG17: `publishedAt=2099` produz `SOURCE_CLOCK_CONFLICT`, data passada nao produz falso conflito, `asKnownAt >= ingestedAt` e uma consulta PIT anterior ao conhecimento devolve zero. `postgresStore.ts` atribui `ingested_at/as_known_at` pela fronteira duravel `news_core.seal_visibility_frontier`, nao pelo timestamp alegado na noticia. Job News Core `43707365286`, `N0_CONSOLIDATED_PROOF ... T28=PARTIAL_PASS ... asKnownAtPIT=verified` (rotulo historico do log, reavaliado aqui conforme criterio canonico). | Nao ha medicao NTP externa nem certificacao de deriva do relogio fisico. O PR #90 §3 aceita tempo emitido pelo servico de ingestao **ou** por autoridade definida; nao exige NTP externo como condicao de T28. |
+
+A protecao SSRF pode ser reforcada com mais cenarios de DNS mutavel, e o relogio pode ser monitorizado contra uma autoridade externa, mas **esses trabalhos nao devem ser confundidos com criterios de aceitacao adicionais** nem bloqueiam T18/T28 no ambito explicitamente escrito no N0.
+
+**Estado normativo vigente desta auditoria: 31 PASS / 7 NOT_PROVEN / 0 FAIL.** Pendentes: **T03, T15, T20, T21, T27, T33 e N0-AUT-001**. O resultado nao fecha nenhum desses sete criterios por associacao ou por exclusao de ambito.
+
+**Decisao de release INALTERADA:** `N0_APPROVED=NO`; `NEWS_CORE_PRODUCTION_READY=NO`; PR #102 permanece Draft. A reconciliacao formal do PR #90, os sete requisitos pendentes e a prova autonoma 24/7 no destino continuam obrigatorios antes de declarar o News Core integralmente fechado.
