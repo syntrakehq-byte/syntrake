@@ -24,7 +24,7 @@ Esta matriz preserva os critérios N0-T01..T37. `PASS` significa que existe uma 
 | N0-T12 | N2 | PASS | correção histórica N2-C |
 | N0-T13 | N2 | PASS | PIT de ligações N2-C |
 | N0-T14 | N2 | PASS | `postgresNewsN2c.test.ts`, workflow PG17, `N0_T14_PROOF`: merge/membership correction, split, leituras PIT antes/depois e histórico append-only |
-| N0-T15 | N1 | NOT_PROVEN | rehearsal consolidado PG17 confirma dois CIK, dois checkpoints e replay sem duplicação; falta recuperação independente completa por partição |
+| N0-T15 | N1 | PASS | workflow News Core `43710279989`, job `132800125135`, SHA `0f6fbb2a203c0544b507f6ff6e6ea8620b726ba6`: dois CIK reais (`0000320193`/`0000789019`), dois processos independentes, `SIGKILL` ao grupo real, reclaim natural após expiração do lease, checkpoints separados, fencing e replay sem duplicação |
 | N0-T16 | N1 | PASS | testes de indisponibilidade do adaptador SEC |
 | N0-T17 | N1 | PASS | payload malformado rejeitado |
 | N0-T18 | N3/N4 | NOT_PROVEN | N4 cobre bloqueio determinístico de hosts privados e redirects; DNS rebinding em rede controlada ainda não foi provado |
@@ -155,8 +155,9 @@ continua, mas nao constitui deploy, ensaio no ambiente de destino ou prova de
 compatibilidade Supabase/Vercel. A proposta Investing-only tambem nao derroga
 `N0-AUT-001`: autonomia 24/7 continua requisito obrigatorio.
 
-Os criterios T03, T15, T18, T20, T21, T27, T28, T33 e `N0-AUT-001` permanecem
-`NOT_PROVEN`. As provas locais parciais nao sao promovidas a `PASS`; nenhuma
+Os criterios T03, T18, T20, T21, T27, T33 e `N0-AUT-001` permanecem
+`NOT_PROVEN`. T15 foi promovido a `PASS` apenas depois da prova PG17/SEC live
+com dois processos e reclaim natural descrita abaixo; nenhuma
 fonte, identidade, integracao ou resultado foi fabricado. `N0_APPROVED=NO` e
 `NEWS_CORE_PRODUCTION_READY=NO` permanecem.
 
@@ -171,6 +172,18 @@ Esta revisao compara **diretamente** os criterios do PR #90 (`a358cf9cc3e0427cef
 
 A protecao SSRF pode ser reforcada com mais cenarios de DNS mutavel, e o relogio pode ser monitorizado contra uma autoridade externa, mas **esses trabalhos nao devem ser confundidos com criterios de aceitacao adicionais** nem bloqueiam T18/T28 no ambito explicitamente escrito no N0.
 
-**Estado normativo vigente desta auditoria: 31 PASS / 7 NOT_PROVEN / 0 FAIL.** Pendentes: **T03, T15, T20, T21, T27, T33 e N0-AUT-001**. O resultado nao fecha nenhum desses sete criterios por associacao ou por exclusao de ambito.
+### Fecho dirigido N0-T15 — 2026-11-15
+
+O workflow News Core `43710279989` (job `132800125135`) no SHA
+`0f6fbb2a203c0544b507f6ff6e6ea8620b726ba6` executou `test:news:n5:live` em
+PostgreSQL 17 real com recolha SEC oficial. A prova `N0-T15` executou ambas as
+direcoes: cada CIK foi processado por um worker separado, o worker bloqueado
+foi terminado pelo grupo de processos com `SIGKILL`, o owner e a execução
+permaneceram `RUNNING` até a expiração natural, e um PID distinto recuperou a
+partição sem reset administrativo do lease. Os checkpoints permaneceram
+independentes e o replay confirmou uma publicação por accession, sem
+duplicações. O mesmo workflow também manteve T26 verde.
+
+**Estado normativo vigente desta auditoria: 32 PASS / 6 NOT_PROVEN / 0 FAIL.** Pendentes: **T03, T20, T21, T27, T33 e N0-AUT-001**. Esta promoção fecha apenas T15 no âmbito demonstrado; não promove fontes editoriais, isolamento de contas, compatibilidade Trading, backfill integral ou autonomia de produção.
 
 **Decisao de release INALTERADA:** `N0_APPROVED=NO`; `NEWS_CORE_PRODUCTION_READY=NO`; PR #102 permanece Draft. A reconciliacao formal do PR #90, os sete requisitos pendentes e a prova autonoma 24/7 no destino continuam obrigatorios antes de declarar o News Core integralmente fechado.
