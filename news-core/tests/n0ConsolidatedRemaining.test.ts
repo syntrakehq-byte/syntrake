@@ -70,7 +70,17 @@ test("N0 consolidated local rehearsal: T15, T27 partial recovery and T28 clock/P
     assert.equal(await store.getCheckpoint(scopeB), null, "T15 simultaneous outage must not advance checkpoint B");
     sourceAvailable = true;
     sourceBAvailable = true;
-    await admin.query("update news_core.collection_targets set next_run_at=clock_timestamp(), lease_owner=null, lease_until=null, active_execution_id=null where collection_scope_key=any($1::text[])", [[scopeA, scopeB]]);
+    // Let the normal retry/backoff clock expire: do not clear leases or schedule recovery as DB admin.
+    const deadline = Date.now() + 20_000;
+    while (true) {
+      const due = await admin.query<{ due_count: number }>(
+        "select count(*)::int due_count from news_core.collection_targets where collection_scope_key=any($1::text[]) and next_run_at <= clock_timestamp() and (lease_until is null or lease_until < clock_timestamp())",
+        [[scopeA, scopeB]],
+      );
+      if (due.rows[0].due_count === 2) break;
+      assert.ok(Date.now() < deadline, "both failed CIK partitions must become retryable through natural backoff");
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
     await Promise.all([
       runNewsExecutorOnce({ store, workerId: `n0-consolidated-a-recovery-${suffix}`, collectionScopeKey: scopeA, secUserAgent: "SYNTRAKE N0 rehearsal security@syntrake.com", fetchImpl: liveA.fetchImpl }),
       runNewsExecutorOnce({ store, workerId: `n0-consolidated-b-recovery-${suffix}`, collectionScopeKey: scopeB, secUserAgent: "SYNTRAKE N0 rehearsal security@syntrake.com", fetchImpl: liveB.fetchImpl }),
@@ -98,7 +108,7 @@ test("N0 consolidated local rehearsal: T15, T27 partial recovery and T28 clock/P
     assert.ok(!pastRevisions[0].qualityFlags.includes("SOURCE_CLOCK_CONFLICT"), "past source time is not itself a conflict");
     const beforeAvailability = await store.readPublicationRevisionsAsOf(new Date(Date.parse(revisions[0].asKnownAt!) - 1).toISOString(), clockFuture);
     assert.equal(beforeAvailability.length, 0, "T28 PIT must hide knowledge before asKnownAt");
-    console.log(`N0_CONSOLIDATED_PROOF T15=STRONG_LOCAL cikA=${A} cikB=${B} publicationsA=${liveA.externalIds.length} publicationsB=${liveB.externalIds.length} simultaneousFailure=verified independentRecovery=verified replayDuplicates=0 T27=BACKFILL_LOCAL recovered=${liveA.externalIds.length} outage=checkpoint_unchanged_then_recovered T28=PARTIAL_PASS futureFlag=SOURCE_CLOCK_CONFLICT asKnownAtPIT=verified`);
+    console.log(`N0_CONSOLIDATED_PROOF T15=STRONG_LOCAL cikA=${A} cikB=${B} publicationsA=${liveA.externalIds.length} publicationsB=${liveB.externalIds.length} simultaneousFailure=verified scheduledRecovery=natural_backoff replayReset=administrative replayDuplicates=0 T27=BACKFILL_LOCAL recovered=${liveA.externalIds.length} outage=checkpoint_unchanged_then_recovered T28=PARTIAL_PASS futureFlag=SOURCE_CLOCK_CONFLICT asKnownAtPIT=verified`);
   } finally {
     for (const publicationId of [clockFuture, clockPast]) {
       await admin.query("delete from news_core.publication_revision_provenance where publication_revision_id like $1", [`${publicationId}%`]).catch(() => undefined);
