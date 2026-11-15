@@ -6,31 +6,45 @@ import { claimKeyV1, DeterministicEvidenceCorroboratorV1, type CorroborationInpu
 export type FactualDependencyV1 = Readonly<{ dependencyType: "N2_PUBLICATION_REVISION" | "N3A_PROPOSAL" | "N3B_EVALUATION" | "FACT_REVISION"; dependencyRef: string; asKnownAt: string }>;
 export type FactualEvidenceRefV1 = Readonly<{ evidenceId: string; evidenceKind: "N3A_PROPOSAL" | "N3B_EVIDENCE" | "N3B_PROOF"; claimKey: string; publicationRevisionId: string; sourceDocumentRef: string; contentLocator: string; provenanceRef: string; asKnownAt: string }>;
 export type FactualRelationV1 = Readonly<{ relatedRevisionId: string; relationType: "CORRECTS" | "CONTESTS" | "RETRACTS" }>;
-export type PersistFactualInputV1 = Readonly<{ canonicalClaimId: string; proposal: ClassificationProposalV1; corroboration: CorroborationResultV1; corroborationInput: CorroborationInputV1; evidence: readonly FactualEvidenceRefV1[]; dependencies: readonly FactualDependencyV1[]; relation?: FactualRelationV1; }>;
+export type PersistFactualInputV1 = Readonly<{ attestationId: string; canonicalClaimId: string; proposal: ClassificationProposalV1; corroboration: CorroborationResultV1; corroborationInput: CorroborationInputV1; evidence: readonly FactualEvidenceRefV1[]; dependencies: readonly FactualDependencyV1[]; relation?: FactualRelationV1; }>;
 export type PersistFactualResultV1 = Readonly<{ inserted: boolean; factEventId: string; factRevisionId: string | null; revisionNo: number | null; logicalFingerprint: string }>;
 export type FactAsOfRowV1 = Readonly<{ factEventId: string; factRevisionId: string; revisionNo: number; canonicalClaimId: string; category: string; claimType: string; statement: string; occurredAt: string | null; scheduledFor: string | null; confirmationStatus: string; lifecycleStatus: string; polarity: string; asKnownAt: string; committedAt: string }>;
 export type FactEvidenceAsOfRowV1 = Readonly<{ factRevisionId: string; evidenceId: string; evidenceKind: string; claimKey: string; publicationRevisionId: string; sourceDocumentRef: string; contentLocator: string; provenanceRef: string; asKnownAt: string }>;
 
 const stable = (value: unknown): string => { if (value === null || typeof value !== "object") return JSON.stringify(value); if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`; return `{${Object.keys(value as Record<string, unknown>).sort().map(k => `${JSON.stringify(k)}:${stable((value as Record<string, unknown>)[k])}`).join(",")}}`; };
-const fingerprint = (input: PersistFactualInputV1): string => createHash("sha256").update(stable({ canonicalClaimId: input.canonicalClaimId, proposal: { ...input.proposal, proposedAt: undefined }, corroboration: { ...input.corroboration, evaluatedAt: undefined }, evidence: [...input.evidence].sort((a,b) => a.evidenceId.localeCompare(b.evidenceId)), dependencies: [...input.dependencies].sort((a,b) => `${a.dependencyType}:${a.dependencyRef}`.localeCompare(`${b.dependencyType}:${b.dependencyRef}`)), relation: input.relation ?? null })).digest("hex");
+export const factualLogicalFingerprintV1 = (input: PersistFactualInputV1): string => createHash("sha256").update(stable({ canonicalClaimId: input.canonicalClaimId, proposal: { ...input.proposal, proposedAt: undefined }, corroboration: { ...input.corroboration, evaluatedAt: undefined }, evidence: [...input.evidence].sort((a,b) => a.evidenceId.localeCompare(b.evidenceId)), dependencies: [...input.dependencies].sort((a,b) => `${a.dependencyType}:${a.dependencyRef}`.localeCompare(`${b.dependencyType}:${b.dependencyRef}`)), relation: input.relation ?? null })).digest("hex");
 const instant = (value: string): number => { const result = Date.parse(value); if (!Number.isFinite(result)) throw new Error("NEWS_FACT_TIMESTAMP_INVALID"); return result; };
 
 export class PostgresFactualStore {
-  constructor(private readonly pool: Pool, private readonly databaseRole: "news_factual_writer" | "news_service" = "news_factual_writer") {}
+  constructor(private readonly pool: Pool, private readonly databaseRole: "news_factual_writer" | "news_service" | "news_reader" = "news_factual_writer") {}
   async close(): Promise<void> { await this.pool.end(); }
-  private async publishRevision(revisionId: string): Promise<void> {
+  private async publishRevision(revisionId: string, attestationId: string): Promise<void> {
     const client = await this.pool.connect();
     try {
       await client.query("begin");
       await client.query(`set local role ${this.databaseRole}`);
-      await client.query("select * from news_core.finalize_fact_revision($1)", [revisionId]);
+      await client.query("select * from news_core.publish_fact_revision_v1($1,$2)", [revisionId, attestationId]);
       await client.query("commit");
     } catch (error) { await client.query("rollback").catch(() => undefined); throw error; } finally { client.release(); }
+    const visible = await this.pool.connect();
+    try {
+      await visible.query("begin");
+      await visible.query(`set local role ${this.databaseRole}`);
+      await visible.query("select * from news_core.make_fact_revision_visible_v1($1,$2)", [revisionId, attestationId]);
+      await visible.query("commit");
+    } catch (error) { await visible.query("rollback").catch(() => undefined); throw error; } finally { visible.release(); }
+    const materializer = await this.pool.connect();
+    try {
+      await materializer.query("begin");
+      await materializer.query(`set local role ${this.databaseRole}`);
+      await materializer.query("select * from news_core.materialize_fact_revision_visibility_v1($1)", [revisionId]);
+      await materializer.query("commit");
+    } catch (error) { await materializer.query("rollback").catch(() => undefined); throw error; } finally { materializer.release(); }
   }
 
   async persist(input: PersistFactualInputV1, failurePoint: "none" | "before-commit" | "after-commit" = "none", holdBeforeCommitMs = 0): Promise<PersistFactualResultV1> {
-    const logicalFingerprint = fingerprint(input);
-    if (!input.canonicalClaimId || input.proposal.publicationRevisionId === "" || input.evidence.length === 0) throw new Error("NEWS_FACT_INPUT_INVALID");
+    const logicalFingerprint = factualLogicalFingerprintV1(input);
+    if (!input.attestationId || !input.canonicalClaimId || input.proposal.publicationRevisionId === "" || input.evidence.length === 0) throw new Error("NEWS_FACT_ATTESTATION_REQUIRED");
     if (input.proposal.occurredAt && input.proposal.scheduledFor) throw new Error("NEWS_FACT_TEMPORAL_FIELDS_CONFLICT");
     if (input.corroboration.canonicalClaimId !== input.canonicalClaimId || input.corroboration.claimKey !== claimKeyV1(input.proposal)) throw new Error("NEWS_FACT_CORROBORATION_IDENTITY_INVALID");
     for (const evidence of input.evidence) {
@@ -55,41 +69,39 @@ export class PostgresFactualStore {
       if (instant(input.proposal.proposedAt) > serverNow || instant(input.corroboration.evaluatedAt) > serverNow) throw new Error("NEWS_FACT_FUTURE_PROPOSAL");
       for (const dependency of input.dependencies) if (!dependency.dependencyRef || instant(dependency.asKnownAt) > serverNow) throw new Error("NEWS_FACT_FUTURE_DEPENDENCY");
       for (const evidence of input.evidence) if (instant(evidence.asKnownAt) > serverNow) throw new Error("NEWS_FACT_FUTURE_EVIDENCE");
-      const publication = await client.query<{ source_document_ref: string; as_known_at: Date }>("select source_document_ref,as_known_at from news_core.publication_revisions where publication_revision_id=$1 and visibility_state='COMMITTED'", [input.proposal.publicationRevisionId]);
-      if (publication.rowCount !== 1 || instant(input.proposal.dependencyAsKnownAt) < instant(publication.rows[0].as_known_at.toISOString())) throw new Error("NEWS_FACT_PUBLICATION_REVISION_INVALID");
-      for (const evidence of input.evidence) {
-        const revision = await client.query<{ source_document_ref: string; as_known_at: Date }>("select source_document_ref,as_known_at from news_core.publication_revisions where publication_revision_id=$1 and visibility_state='COMMITTED'", [evidence.publicationRevisionId]);
-        if (revision.rowCount !== 1 || revision.rows[0].source_document_ref !== evidence.sourceDocumentRef || instant(evidence.asKnownAt) < instant(revision.rows[0].as_known_at.toISOString())) throw new Error("NEWS_FACT_EVIDENCE_REFERENCE_INVALID");
-      }
-      const event = await client.query<{ fact_event_id: string }>("insert into news_core.fact_events(fact_event_id,canonical_claim_id,taxonomy_version,category) values ($1,$1,$2,$3) on conflict(canonical_claim_id) do nothing returning fact_event_id", [input.canonicalClaimId, input.proposal.taxonomyVersion, input.proposal.category]);
-      const eventId = event.rows[0]?.fact_event_id ?? (await client.query<{ fact_event_id: string }>("select fact_event_id from news_core.fact_events where canonical_claim_id=$1", [input.canonicalClaimId])).rows[0]?.fact_event_id;
-      if (!eventId) throw new Error("NEWS_FACT_EVENT_ID_UNAVAILABLE");
-      await client.query("select pg_advisory_xact_lock(hashtextextended($1, 20261112))", [eventId]);
-      await client.query("select fact_event_id from news_core.fact_events where fact_event_id=$1", [eventId]);
-      const existing = await client.query<{ fact_revision_id: string; revision_no: number; finalized_at: Date | null }>("select fact_revision_id,revision_no,finalized_at from news_core.fact_revisions where fact_event_id=$1 and logical_fingerprint=$2", [eventId, logicalFingerprint]);
-      if (existing.rowCount) {
-        await client.query("rollback");
-        if (!existing.rows[0].finalized_at) await this.publishRevision(existing.rows[0].fact_revision_id);
-        return { inserted: false, factEventId: eventId, factRevisionId: existing.rows[0].fact_revision_id, revisionNo: existing.rows[0].revision_no, logicalFingerprint };
-      }
-      const latest = await client.query<{ as_known_at: Date }>("select as_known_at from news_core.fact_revisions where fact_event_id=$1 and finalized_at is not null order by revision_no desc limit 1", [eventId]);
-      if (input.relation) {
-        const related = await client.query<{ fact_event_id: string; as_known_at: Date }>("select fact_event_id,as_known_at from news_core.fact_revisions where fact_revision_id=$1 and finalized_at is not null", [input.relation.relatedRevisionId]);
-        if (related.rowCount !== 1 || instant(related.rows[0].as_known_at.toISOString()) > serverNow) throw new Error("NEWS_FACT_RELATION_INVALID");
-      }
-      const revisionNo = latest.rowCount ? Number((await client.query<{ n: number }>("select revision_no n from news_core.fact_revisions where fact_event_id=$1 order by revision_no desc limit 1", [eventId])).rows[0].n) + 1 : 1;
-      const revisionId = `${eventId}:revision:${revisionNo}`;
-      await client.query("insert into news_core.fact_revisions(fact_revision_id,fact_event_id,revision_no,logical_fingerprint,rule_set_version,claim_type,statement,subject_ref,object_ref,occurred_at,scheduled_for,confirmation_status,lifecycle_status,polarity,focal_claim_key,publication_revision_id,quality_flags,supersedes_revision_id) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)", [revisionId,eventId,revisionNo,logicalFingerprint,input.proposal.ruleSetVersion,input.proposal.claimType,input.proposal.statement,input.proposal.subjectRef,input.proposal.objectRef,input.proposal.occurredAt,input.proposal.scheduledFor,input.corroboration.confirmationStatus,input.corroboration.lifecycleStatus,input.corroboration.polarity,input.corroboration.claimKey,input.proposal.publicationRevisionId, JSON.stringify(input.proposal.qualityFlags), latest.rowCount ? `${eventId}:revision:${revisionNo - 1}` : null]);
-      for (const evidence of input.evidence) await client.query("insert into news_core.fact_revision_evidence values ($1,$2,$3,$4,$5,$6,$7,$8,$9)", [revisionId,evidence.evidenceId,evidence.evidenceKind,evidence.claimKey,evidence.publicationRevisionId,evidence.sourceDocumentRef,evidence.contentLocator,evidence.provenanceRef,evidence.asKnownAt]);
-      for (const dependency of input.dependencies) await client.query("insert into news_core.fact_revision_dependencies values ($1,$2,$3,$4)", [revisionId,dependency.dependencyType,dependency.dependencyRef,dependency.asKnownAt]);
-      await client.query("insert into news_core.fact_revision_publications values ($1,$2,'FOCAL',$3)", [revisionId,input.proposal.publicationRevisionId,input.proposal.dependencyAsKnownAt]);
-      if (input.relation) await client.query("insert into news_core.fact_revision_relations values ($1,$2,$3,$4)", [revisionId,input.relation.relatedRevisionId,input.relation.relationType,input.proposal.dependencyAsKnownAt]);
-      if (holdBeforeCommitMs > 0) await new Promise(resolve => setTimeout(resolve, holdBeforeCommitMs));
       if (failurePoint === "before-commit") throw new Error("INJECTED_FAILURE_BEFORE_COMMIT");
+      const payload = {
+        attestationId: input.attestationId,
+        canonicalClaimId: input.canonicalClaimId,
+        taxonomyVersion: input.proposal.taxonomyVersion,
+        category: input.proposal.category,
+        logicalFingerprint,
+        ruleSetVersion: input.proposal.ruleSetVersion,
+        claimType: input.proposal.claimType,
+        statement: input.proposal.statement,
+        subjectRef: input.proposal.subjectRef,
+        objectRef: input.proposal.objectRef,
+        occurredAt: input.proposal.occurredAt,
+        scheduledFor: input.proposal.scheduledFor,
+        confirmationStatus: input.corroboration.confirmationStatus,
+        lifecycleStatus: input.corroboration.lifecycleStatus,
+        polarity: input.corroboration.polarity,
+        focalClaimKey: input.corroboration.claimKey,
+        publicationRevisionId: input.proposal.publicationRevisionId,
+        qualityFlags: input.proposal.qualityFlags,
+        evidence: input.evidence,
+        dependencies: input.dependencies,
+        relation: input.relation ?? null,
+        seal: false,
+      };
+      const result = await client.query<{ inserted: boolean; fact_event_id: string; fact_revision_id: string; revision_no: number; logical_fingerprint: string }>("select * from news_core.persist_fact_revision_v1($1::jsonb)", [JSON.stringify(payload)]);
+      const row = result.rows[0];
+      if (!row) throw new Error("NEWS_FACT_WRITE_RESULT_UNAVAILABLE");
+      if (holdBeforeCommitMs > 0) await new Promise(resolve => setTimeout(resolve, holdBeforeCommitMs));
       await client.query("commit");
       if (failurePoint === "after-commit") throw new Error("INJECTED_FAILURE_AFTER_COMMIT");
-      await this.publishRevision(revisionId);
-      return { inserted: true, factEventId: eventId, factRevisionId: revisionId, revisionNo, logicalFingerprint };
+      if (!payload.seal && row.fact_revision_id) await this.publishRevision(row.fact_revision_id, input.attestationId);
+      return { inserted: row.inserted, factEventId: row.fact_event_id, factRevisionId: row.fact_revision_id, revisionNo: row.revision_no, logicalFingerprint: row.logical_fingerprint };
     } catch (error) { await client.query("rollback").catch(() => undefined); throw error; } finally { client.release(); }
   }
 

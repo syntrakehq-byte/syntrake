@@ -1,8 +1,11 @@
 import { lookup } from "node:dns/promises";
+import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 
 export const SEC_ALLOWED_HOSTS = new Set(["data.sec.gov", "www.sec.gov"]);
 type AddressLookup = (hostname: string, options: { all: true }) => Promise<readonly { address: string; family: 4 | 6 }[]>;
+type ApprovedTarget = { url: URL; address: string; family: 4 | 6 };
+const DEFAULT_TIMEOUT_MS = 20_000, MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
 
 function ipv4Value(address: string): number | null {
   const parts = address.split(".").map(Number);
@@ -53,22 +56,97 @@ function privateAddress(address: string): boolean {
 }
 
 export async function assertSafeExternalUrl(raw: string, allowedHosts: ReadonlySet<string> = SEC_ALLOWED_HOSTS, lookupImpl: AddressLookup = lookup as AddressLookup): Promise<URL> {
+  return (await resolveSafeExternalUrl(raw, allowedHosts, lookupImpl)).url;
+}
+
+async function resolveSafeExternalUrl(raw: string, allowedHosts: ReadonlySet<string>, lookupImpl: AddressLookup): Promise<ApprovedTarget> {
   let url: URL;
   try { url = new URL(raw); } catch { throw new Error("NEWS_SOURCE_URL_INVALID"); }
   if (url.protocol !== "https:" || url.username || url.password || url.port || !allowedHosts.has(url.hostname.toLowerCase())) throw new Error("NEWS_SOURCE_URL_NOT_ALLOWED");
   const addresses = await lookupImpl(url.hostname, { all: true });
   if (!addresses.length || addresses.some(item => privateAddress(item.address))) throw new Error("NEWS_SOURCE_PRIVATE_ADDRESS");
-  return url;
+  const [selected] = [...addresses].sort((left, right) => `${left.family}:${left.address}`.localeCompare(`${right.family}:${right.address}`));
+  return { url, address: selected.address, family: selected.family };
 }
 
-export async function fetchSafeExternal(input: string, init?: RequestInit, fetchImpl: typeof fetch = fetch): Promise<Response> {
-  const initial = await assertSafeExternalUrl(input);
-  const response = await fetchImpl(initial, { ...init, redirect: "manual" });
-  if (response.status >= 300 && response.status < 400) {
-    const location = response.headers.get("location");
-    if (!location) throw new Error("NEWS_SOURCE_REDIRECT_INVALID");
-    await assertSafeExternalUrl(new URL(location, initial).toString());
-    throw new Error("NEWS_SOURCE_REDIRECT_REQUIRES_REVALIDATION");
+function fetchPinnedHttps(target: ApprovedTarget, init: RequestInit | undefined, timeoutMs: number, ca?: string): Promise<Response> {
+  if (init?.body !== undefined && init.body !== null) return Promise.reject(new Error("NEWS_SOURCE_METHOD_UNSUPPORTED"));
+  return new Promise((resolve, reject) => {
+    const headers = new Headers(init?.headers);
+    let settled = false;
+    const absoluteTimer = setTimeout(() => req.destroy(new Error("NEWS_SOURCE_TIMEOUT")), timeoutMs);
+    const finish = (callback: () => void) => { if (settled) return; settled = true; clearTimeout(absoluteTimer); callback(); };
+    const req = httpsRequest({
+      hostname: target.url.hostname,
+      port: target.url.port ? Number(target.url.port) : 443,
+      path: `${target.url.pathname}${target.url.search}`,
+      method: init?.method ?? "GET",
+      headers: Object.fromEntries(headers.entries()),
+      servername: target.url.hostname,
+      rejectUnauthorized: true,
+      ...(ca ? { ca } : {}),
+      agent: false,
+      timeout: timeoutMs,
+      signal: init?.signal,
+      lookup: (_hostname, options, callback) => options.all
+        ? callback(null, [{ address: target.address, family: target.family }])
+        : callback(null, target.address, target.family),
+    }, response => {
+      const responseHeaders = response.headers as Record<string, string>;
+      if ([204, 205, 304].includes(response.statusCode ?? 0)) {
+        response.resume();
+        response.once("end", () => finish(() => resolve(new Response(null, { status: response.statusCode ?? 0, headers: responseHeaders }))));
+        return;
+      }
+      const chunks: Buffer[] = []; let total = 0;
+      response.on("data", chunk => {
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        total += buffer.length;
+        if (total > MAX_RESPONSE_BYTES) { req.destroy(new Error("NEWS_SOURCE_RESPONSE_TOO_LARGE")); return; }
+        chunks.push(buffer);
+      });
+      response.on("end", () => finish(() => resolve(new Response(Buffer.concat(chunks), { status: response.statusCode ?? 0, headers: responseHeaders }))));
+      response.on("error", error => finish(() => reject(error)));
+    });
+    req.once("timeout", () => req.destroy(new Error("NEWS_SOURCE_TIMEOUT")));
+    req.once("error", error => finish(() => reject(error)));
+    req.end();
+  });
+}
+
+/** Test-only harness for a real local TLS socket; production always uses fetchSafeExternal. */
+export function fetchPinnedHttpsForControlledTest(raw: string, address: string, family: 4 | 6, port: number, ca: string, init?: RequestInit, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<Response> {
+  const url = new URL(raw);
+  return fetchPinnedHttps({ url: new URL(`${url.protocol}//${url.hostname}:${port}${url.pathname}${url.search}`), address, family }, init, timeoutMs, ca);
+}
+
+export async function fetchSafeExternal(input: string, init?: RequestInit, fetchImpl: typeof fetch = fetch, lookupImpl: AddressLookup = lookup as AddressLookup): Promise<Response> {
+  const controller = new AbortController();
+  const deadline = Date.now() + DEFAULT_TIMEOUT_MS;
+  const externalSignal = init?.signal;
+  const forwardAbort = () => controller.abort(externalSignal?.reason ?? new DOMException("The operation was aborted", "AbortError"));
+  if (externalSignal?.aborted) forwardAbort(); else externalSignal?.addEventListener("abort", forwardAbort, { once: true });
+  const deadlineTimer = setTimeout(() => controller.abort(new Error("NEWS_SOURCE_TIMEOUT")), DEFAULT_TIMEOUT_MS);
+  const aborted = new Promise<never>((_, reject) => controller.signal.addEventListener("abort", () => reject(controller.signal.reason ?? new Error("NEWS_SOURCE_ABORTED")), { once: true }));
+  const requestInit = { ...init, signal: controller.signal };
+  const withinDeadline = <T>(operation: () => Promise<T>): Promise<T> => controller.signal.aborted
+    ? Promise.reject(controller.signal.reason ?? new Error("NEWS_SOURCE_ABORTED"))
+    : Promise.race([operation(), aborted]);
+  try {
+    const initial = await withinDeadline(() => resolveSafeExternalUrl(input, SEC_ALLOWED_HOSTS, lookupImpl));
+    const remaining = Math.max(1, deadline - Date.now());
+    const response = fetchImpl === fetch
+      ? await withinDeadline(() => fetchPinnedHttps(initial, requestInit, remaining))
+      : await withinDeadline(() => fetchImpl(initial.url, { ...requestInit, redirect: "manual" }));
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get("location");
+      if (!location) throw new Error("NEWS_SOURCE_REDIRECT_INVALID");
+      await withinDeadline(() => resolveSafeExternalUrl(new URL(location, initial.url).toString(), SEC_ALLOWED_HOSTS, lookupImpl));
+      throw new Error("NEWS_SOURCE_REDIRECT_REQUIRES_REVALIDATION");
+    }
+    return response;
+  } finally {
+    clearTimeout(deadlineTimer);
+    externalSignal?.removeEventListener("abort", forwardAbort);
   }
-  return response;
 }

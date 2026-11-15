@@ -1,0 +1,21 @@
+*
+!package.json
+!package-lock.json
+!scripts/
+!scripts/news-supervisor.ts
+!scripts/news-postgres-worker.ts
+!news-core/
+!news-core/**/*.ts
+!tsconfig.json
+
+# Defence in depth: never send environment files, credentials, keys or temp data
+# in any copied subtree of the build context.
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+**/*credentials*
+**/*secret*
+**/Data/
+**/tmp_*
+**/.temp/

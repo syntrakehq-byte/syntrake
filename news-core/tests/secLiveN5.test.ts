@@ -1,28 +1,277 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import { Client, Pool } from "pg";
-import { registerSecTarget, runNewsExecutorOnce } from "../autonomousExecutor";
+import { runNewsExecutorOnce } from "../autonomousExecutor";
+import { fetchSecFilings } from "../secAdapter";
+import { fetchSafeExternal } from "../sourceSecurity";
 import { PostgresNewsStore } from "../postgresStore";
 
 const DB_URL = process.env.NEWS_DATABASE_URL ?? process.env.TEST_DATABASE_URL;
 const enabled = process.env.N5_REAL_SOURCE === "1";
+const CIK = "0000320193";
 const migration = (name: string) => new URL(`../../supabase/migrations/${name}`, import.meta.url);
+const userAgent = () => process.env.SEC_USER_AGENT ?? "SYNTRAKE N5 CI/1.0 security@syntrake.com";
 
-test("N5 real SEC cycles run without web sessions and remain idempotent", { skip: !enabled && "N5_REAL_SOURCE=1 required for the official SEC proof" }, async () => {
-  if (!DB_URL) throw new Error("NEWS_DATABASE_URL or TEST_DATABASE_URL is required for N5 live proof");
-  const admin = new Client({ connectionString: DB_URL }); const pool = new Pool({ connectionString: DB_URL, max: 4 }); const store = new PostgresNewsStore(pool); const userAgent = process.env.SEC_USER_AGENT ?? "SYNTRAKE N5 CI/1.0 security@syntrake.com";
+type ReplayFixture = Readonly<{
+  publications: Awaited<ReturnType<typeof fetchSecFilings>>["publications"];
+  payloadJson: string;
+  fetchImpl: typeof fetch;
+}>;
+
+async function genuineSecReplay(cik = CIK): Promise<ReplayFixture> {
+  const response = await fetchSafeExternal(`https://data.sec.gov/submissions/CIK${cik}.json`, { headers: { "User-Agent": userAgent(), Accept: "application/json" }, signal: AbortSignal.timeout(30_000) });
+  assert.equal(response.ok, true, `SEC live response must be successful: ${response.status}`);
+  const payload = await response.json() as Record<string, unknown>;
+  assert.equal(payload.cik, cik, "SEC live payload must identify the requested CIK");
+  const fetchImpl: typeof fetch = async () => new Response(JSON.stringify(payload), { status: 200, headers: { "content-type": "application/json" } });
+  const parsed = await fetchSecFilings({ cik, userAgent: userAgent(), fetchImpl, now: new Date("2026-11-14T20:00:00.000Z") });
+  assert.ok(parsed.publications.length > 0, "the genuine SEC payload must contain filings");
+  return { publications: parsed.publications, payloadJson: JSON.stringify(payload), fetchImpl };
+}
+
+async function installTarget(store: PostgresNewsStore, scope: string, cik = CIK): Promise<void> {
+  await store.ensureSource("sec-edgar", "sec");
+  await store.upsertTarget({ collectionScopeKey: scope, sourceId: "sec-edgar", providerKey: "sec", entityKey: cik, parameters: { forms: ["10-K", "10-Q", "8-K", "20-F", "6-K"], overlapDays: 7 }, nextRunAt: new Date().toISOString() });
+}
+
+async function applyN1Migrations(admin: Client): Promise<void> {
+  for (const file of ["20261111150000_news_core_postgres_n1.sql", "20261111170000_news_core_n2a_revisions.sql"]) await admin.query(await readFile(migration(file), "utf8"));
+}
+
+async function openIsolatedDatabase(): Promise<{ admin: Client; connectionString: string; close: () => Promise<void> }> {
+  if (!DB_URL) throw new Error("NEWS_DATABASE_URL or TEST_DATABASE_URL is required");
+  const databaseName = `news_n0_${randomUUID().replaceAll("-", "")}`;
+  const provisioner = new Client({ connectionString: DB_URL }); await provisioner.connect();
+  await provisioner.query(`create database "${databaseName}"`);
+  const databaseUrl = new URL(DB_URL); databaseUrl.pathname = `/${databaseName}`;
+  const admin = new Client({ connectionString: databaseUrl.toString() }); await admin.connect();
+  return {
+    admin,
+    connectionString: databaseUrl.toString(),
+    close: async () => {
+      await admin.end();
+      // Child workers can close their pools just after their exit event. Terminate
+      // any final backend before dropping the isolated database so teardown cannot
+      // mask an already completed crash/recovery proof.
+      await provisioner.query("select pg_terminate_backend(pid) from pg_stat_activity where datname=$1 and pid<>pg_backend_pid()", [databaseName]);
+      await provisioner.query(`drop database if exists "${databaseName}"`);
+      await provisioner.end();
+    },
+  };
+}
+
+async function absentPublication(admin: Client, publications: ReplayFixture["publications"]): Promise<ReplayFixture["publications"][number]> {
+  for (const publication of publications) {
+    const count = Number((await admin.query("select count(*)::int n from news_core.publications where source_id=$1 and external_id=$2", [publication.sourceId, publication.externalId])).rows[0].n);
+    if (count === 0) return publication;
+  }
+  throw new Error("N0_REPLAY_BASELINE_NOT_EMPTY");
+}
+
+function spawnT26Worker(connectionString: string, scope: string, payloadFile: string, mode: "barrier" | "recover"): ChildProcessWithoutNullStreams {
+  return spawn(process.execPath, [path.resolve("node_modules/tsx/dist/cli.mjs"), path.resolve("news-core/tests/n0T26Worker.ts")], {
+    env: { ...process.env, NEWS_DATABASE_URL: connectionString, N0_T26_SCOPE: scope, N0_T26_PAYLOAD_FILE: payloadFile, N0_T26_WORKER_MODE: mode },
+    stdio: ["ignore", "pipe", "pipe"],
+    detached: process.platform !== "win32",
+  });
+}
+
+function workerPid(output: string, marker: string): number {
+  const match = output.match(new RegExp(`${marker} pid=(\\d+)`));
+  if (!match) throw new Error(`N0_WORKER_PID_MISSING marker=${marker} output=${output}`);
+  return Number(match[1]);
+}
+
+function killWorker(worker: ChildProcessWithoutNullStreams): boolean {
+  if (worker.exitCode !== null || worker.signalCode !== null) return false;
+  if (process.platform === "win32") return worker.kill("SIGKILL");
+  try { process.kill(-worker.pid!, "SIGKILL"); return true; } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+    throw error;
+  }
+}
+
+async function waitForWorkerOutput(worker: ChildProcessWithoutNullStreams, marker: string, timeoutMs = 30_000): Promise<string> {
+  return await new Promise((resolve, reject) => {
+    let output = "";
+    const timer = setTimeout(() => { worker.removeAllListeners("exit"); reject(new Error(`N0_T26_WORKER_TIMEOUT marker=${marker} output=${output}`)); }, timeoutMs);
+    const onData = (chunk: Buffer) => { output += chunk.toString(); if (output.includes(marker)) { clearTimeout(timer); worker.stdout.off("data", onData); resolve(output); } };
+    worker.stdout.on("data", onData); worker.stderr.on("data", chunk => { output += chunk.toString(); });
+    worker.once("exit", (code, signal) => { if (!output.includes(marker)) { clearTimeout(timer); reject(new Error(`N0_T26_WORKER_EXIT code=${code} signal=${signal} output=${output}`)); } });
+  });
+}
+
+async function waitForWorkerExit(worker: ChildProcessWithoutNullStreams): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
+  if (worker.exitCode !== null || worker.signalCode !== null) return { code: worker.exitCode, signal: worker.signalCode as NodeJS.Signals | null };
+  return await new Promise(resolve => worker.once("exit", (code, signal) => resolve({ code, signal })));
+}
+
+async function stopWorker(worker: ChildProcessWithoutNullStreams | undefined): Promise<void> {
+  if (!worker || worker.exitCode !== null || worker.signalCode !== null) return;
+  killWorker(worker);
+  await waitForWorkerExit(worker);
+}
+
+async function waitForExpiredLease(admin: Client, scope: string, timeoutMs = 15_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let snapshot = "unobserved";
+  while (Date.now() < deadline) {
+    const result = await admin.query<{ expired: boolean; lease_until: string | null; now: string; owner: string | null; execution_id: string | null; execution_state: string | null }>(
+      "select t.lease_until, clock_timestamp() as now, t.lease_owner as owner, t.active_execution_id as execution_id, e.state as execution_state, (t.lease_until is not null and t.lease_until <= clock_timestamp()) as expired from news_core.collection_targets t left join news_core.executions e on e.execution_id=t.active_execution_id where t.collection_scope_key=$1",
+      [scope],
+    );
+    const row = result.rows[0];
+    if (row?.expired) return;
+    snapshot = JSON.stringify(row ?? null);
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  throw new Error(`N0_T15_LEASE_DID_NOT_EXPIRE scope=${scope} snapshot=${snapshot}`);
+}
+
+test("N0-T25: two attributable SEC cycles use a genuine isolated baseline and remain idempotent", { skip: !enabled && "N5_REAL_SOURCE=1 required for the official SEC proof" }, async () => {
+  if (!DB_URL) throw new Error("NEWS_DATABASE_URL or TEST_DATABASE_URL is required for N0-T25");
+  const isolated = await openIsolatedDatabase(); const admin = isolated.admin; const pool = new Pool({ connectionString: isolated.connectionString, max: 4 }); const store = new PostgresNewsStore(pool); const suffix = randomUUID().replaceAll("-", ""); const scope = `n0-t25-${suffix}`;
   try {
-    await admin.connect(); await admin.query(await readFile(migration("20261111150000_news_core_postgres_n1.sql"), "utf8")); await admin.query(await readFile(migration("20261111170000_news_core_n2a_revisions.sql"), "utf8"));
-    const scope = await registerSecTarget(store, "0000320193");
-    const first = await runNewsExecutorOnce({ store, workerId: "n5-live-cycle-1", secUserAgent: userAgent, collectionScopeKey: scope, fetchTimeoutMs: 30_000 });
+    await applyN1Migrations(admin); const replay = await genuineSecReplay(); await installTarget(store, scope);
+    const candidate = await absentPublication(admin, replay.publications);
+    assert.equal(Number((await admin.query("select count(*)::int n from news_core.publications where source_id='sec-edgar' and external_id=$1", [candidate.externalId])).rows[0].n), 0);
+    const first = await runNewsExecutorOnce({ store, workerId: `n0-t25-cycle-1-${suffix}`, secUserAgent: userAgent(), collectionScopeKey: scope, fetchImpl: replay.fetchImpl, fetchTimeoutMs: 30_000 });
     assert.equal(first.claimed, true);
-    const afterFirst = await store.getCheckpoint(scope); assert.ok(afterFirst?.cursor);
-    const countAfterFirst = Number((await admin.query("select count(*)::int n from news_core.publications where source_id='sec-edgar'")).rows[0].n);
-    await admin.query("update news_core.collection_targets set next_run_at=clock_timestamp(), lease_until=null where collection_scope_key=$1", [scope]);
-    const second = await runNewsExecutorOnce({ store, workerId: "n5-live-cycle-2", secUserAgent: userAgent, collectionScopeKey: scope, fetchTimeoutMs: 30_000 });
-    assert.equal(second.claimed, true);
-    const countAfterSecond = Number((await admin.query("select count(*)::int n from news_core.publications where source_id='sec-edgar'")).rows[0].n);
-    assert.equal(countAfterSecond, countAfterFirst, "the second overlap cycle must not create duplicate publications");
-  } finally { await Promise.all([store.close(), admin.end()]); }
+    const firstRows = await admin.query("select count(*)::int n, min(origin_fingerprint) origin_fingerprint from news_core.publications where source_id='sec-edgar' and external_id=$1", [candidate.externalId]);
+    assert.equal(firstRows.rows[0].n, 1, "the first cycle must durably ingest the genuine accession"); assert.equal(firstRows.rows[0].origin_fingerprint, candidate.originFingerprint); assert.ok((await store.getCheckpoint(scope))?.cursor);
+    await admin.query("update news_core.collection_targets set next_run_at=clock_timestamp(), lease_owner=null, lease_until=null, active_execution_id=null where collection_scope_key=$1", [scope]);
+    const second = await runNewsExecutorOnce({ store, workerId: `n0-t25-cycle-2-${suffix}`, secUserAgent: userAgent(), collectionScopeKey: scope, fetchImpl: replay.fetchImpl, fetchTimeoutMs: 30_000 });
+    assert.equal(second.claimed, true); assert.equal(Number((await admin.query("select count(*)::int n from news_core.publications where source_id='sec-edgar' and external_id=$1", [candidate.externalId])).rows[0].n), 1);
+    assert.equal((await store.readPublicationRevisionsAsOf(new Date(Date.now() + 60_000).toISOString(), candidate.publicationId)).length, 1);
+    console.log(`N0_T25_PROOF cik=${CIK} accession=${candidate.externalId} source=${candidate.sourceId} originFingerprint=${candidate.originFingerprint} baseline=0 firstCount=1 secondCount=1 checkpointAfterFirst=yes`);
+  } finally { await store.close(); await isolated.close(); }
+});
+
+
+test("N0-T15: two real worker PIDs isolate SEC partitions across SIGKILL and natural lease recovery", { skip: !enabled && "N5_REAL_SOURCE=1 required for the official SEC proof" }, async () => {
+  if (!DB_URL) throw new Error("NEWS_DATABASE_URL or TEST_DATABASE_URL is required for N0-T15");
+  const isolated = await openIsolatedDatabase();
+  const admin = isolated.admin;
+  const suffix = randomUUID().replaceAll("-", "");
+  const cikA = "0000320193", cikB = "0000789019";
+  const scopes = [`n0-t15-a-${suffix}`, `n0-t15-b-${suffix}`];
+  const dir = await mkdtemp(path.join(os.tmpdir(), "syntrake-n0-t15-"));
+  const children: ChildProcessWithoutNullStreams[] = [];
+  let store: PostgresNewsStore | undefined;
+  try {
+    await applyN1Migrations(admin);
+    const [replayA, replayB] = await Promise.all([genuineSecReplay(cikA), genuineSecReplay(cikB)]);
+    assert.ok(replayA.publications.length > 0 && replayB.publications.length > 0);
+    const paths = [path.join(dir, "cik-a.json"), path.join(dir, "cik-b.json")];
+    await Promise.all(paths.map((file, i) => writeFile(file, i === 0 ? replayA.payloadJson : replayB.payloadJson, "utf8")));
+    store = new PostgresNewsStore(new Pool({ connectionString: isolated.connectionString, max: 4 }));
+    // Run both directions: crash A while B makes progress, then crash B while A makes progress.
+    for (const failing of [0, 1]) {
+      const survivor = 1 - failing;
+      const failedScope = `${scopes[failing]}-round-${failing}`;
+      const healthyScope = `${scopes[survivor]}-round-${failing}`;
+      await installTarget(store, failedScope, failing === 0 ? cikA : cikB);
+      await installTarget(store, healthyScope, survivor === 0 ? cikA : cikB);
+      const blocked = spawnT26Worker(isolated.connectionString, failedScope, paths[failing], "barrier");
+      children.push(blocked);
+      const blockedReady = await waitForWorkerOutput(blocked, "N0_T26_CHILD_READY");
+      const blockedWorkerPid = workerPid(blockedReady, "N0_T26_CHILD_READY");
+      const healthy = spawnT26Worker(isolated.connectionString, healthyScope, paths[survivor], "recover");
+      children.push(healthy);
+      await waitForWorkerOutput(healthy, "N0_T26_CHILD_DONE");
+      assert.equal((await waitForWorkerExit(healthy)).code, 0);
+      assert.equal((await store.getCheckpoint(failedScope)), null, "crashed partition must not commit checkpoint");
+      assert.ok((await store.getCheckpoint(healthyScope))?.cursor, "other partition must advance its own checkpoint");
+      assert.equal(killWorker(blocked), true);
+      assert.equal((await waitForWorkerExit(blocked)).signal, "SIGKILL");
+      const stillRunning = await admin.query<{ state: string }>("select e.state from news_core.executions e join news_core.collection_targets t on t.active_execution_id=e.execution_id where t.collection_scope_key=$1", [failedScope]);
+      assert.equal(stillRunning.rows[0]?.state, "RUNNING", "crash must preserve the failed execution for real reclaim");
+      // The original two-second lease must expire naturally, with no administrative update/reset.
+      await waitForExpiredLease(admin, failedScope);
+      const recovering = spawnT26Worker(isolated.connectionString, failedScope, paths[failing], "recover");
+      children.push(recovering);
+      const recoveryOutput = await waitForWorkerOutput(recovering, "N0_T26_CHILD_DONE");
+      console.log(`N0_T15_RECOVERY_OUTPUT ${recoveryOutput.trim().replaceAll("\n", " ")}`);
+      assert.equal((await waitForWorkerExit(recovering)).code, 0);
+      assert.ok((await store.getCheckpoint(failedScope))?.cursor, "reclaimed partition must commit a checkpoint");
+      assert.ok((await store.getCheckpoint(healthyScope))?.cursor, "healthy checkpoint must survive other worker recovery");
+      const counts = await admin.query<{ cik: string; n: number }>(
+        "select entity_key cik, count(*)::int n from news_core.collection_targets where collection_scope_key=any($1::text[]) group by entity_key order by entity_key",
+        [[failedScope, healthyScope]],
+      );
+      assert.equal(counts.rows.length, 2);
+      console.log(`N0_T15_PROCESS_PROOF crashCIK=${failing === 0 ? cikA : cikB} healthyCIK=${survivor === 0 ? cikA : cikB} killedPid=${blockedWorkerPid} survivorPid=${healthy.pid} recoveryPid=${recovering.pid} noAdminLeaseReset=true checkpoints=2`);
+    }
+    const total = await admin.query<{ n: number; distinct_ids: number }>("select count(*)::int n, count(distinct external_id)::int distinct_ids from news_core.publications where source_id='sec-edgar'");
+    assert.ok(total.rows[0].n > 0, "at least one genuine official filing must persist");
+    assert.equal(total.rows[0].n, total.rows[0].distinct_ids, "cross-process replays must never duplicate official accessions");
+  } finally {
+    await Promise.all(children.map(stopWorker));
+    if (store) await store.close();
+    await isolated.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("N0-T26: PID1 SIGKILL after fetch recovers in PID2 without checkpoint loss or duplication", { skip: !enabled && "N5_REAL_SOURCE=1 required for the official SEC proof" }, async () => {
+  if (!DB_URL) throw new Error("NEWS_DATABASE_URL or TEST_DATABASE_URL is required for N0-T26");
+  const isolated = await openIsolatedDatabase(); const admin = isolated.admin; const suffix = randomUUID().replaceAll("-", ""); const scope = `n0-t26-${suffix}`;
+  let pid1: ChildProcessWithoutNullStreams | undefined;
+  let pid2: ChildProcessWithoutNullStreams | undefined;
+  let pid3: ChildProcessWithoutNullStreams | undefined;
+  let payloadDir: string | undefined;
+  try {
+    await applyN1Migrations(admin); const replay = await genuineSecReplay(); payloadDir = await mkdtemp(path.join(os.tmpdir(), "syntrake-n0-t26-")); const payloadFile = path.join(payloadDir, "sec-submissions.json"); await writeFile(payloadFile, replay.payloadJson, "utf8"); const pool = new Pool({ connectionString: isolated.connectionString, max: 4 }); const store = new PostgresNewsStore(pool); await installTarget(store, scope); const candidate = await absentPublication(admin, replay.publications); await store.close();
+    assert.equal(Number((await admin.query("select count(*)::int n from news_core.publications where source_id='sec-edgar' and external_id=$1", [candidate.externalId])).rows[0].n), 0);
+    pid1 = spawnT26Worker(isolated.connectionString, scope, payloadFile, "barrier");
+    const pid1Ready = await waitForWorkerOutput(pid1, "N0_T26_CHILD_READY");
+    const pid1Number = workerPid(pid1Ready, "N0_T26_CHILD_READY");
+    assert.ok(pid1Number > 0);
+    assert.equal(Number((await admin.query("select count(*)::int n from news_core.publications where source_id='sec-edgar' and external_id=$1", [candidate.externalId])).rows[0].n), 0);
+    assert.equal(Number((await admin.query("select count(*)::int n from news_core.checkpoints where collection_scope_key=$1", [scope])).rows[0].n), 0);
+    assert.equal(killWorker(pid1), true);
+    const pid1Exit = await waitForWorkerExit(pid1);
+    assert.equal(pid1Exit.signal, "SIGKILL", `PID1 must terminate by SIGKILL, got code=${pid1Exit.code} signal=${pid1Exit.signal}`);
+    console.log(`N0_T26_PID1 pid=${pid1Number} exitSignal=${pid1Exit.signal} publicationsDuringCrash=0 checkpointsDuringCrash=0`);
+    // Preserve PID1's execution linkage and make only its lease stale. The real
+    // claim path must fence/recover the crashed RUNNING execution before PID2
+    // acquires the target; clearing active_execution_id here would bypass that
+    // production recovery path and leave an orphan RUNNING execution.
+    await admin.query("update news_core.collection_targets set next_run_at=clock_timestamp(), lease_until=clock_timestamp()-interval '1 second' where collection_scope_key=$1", [scope]);
+    const reclaimState = await admin.query<{ execution_state: string; lease_until: string | null; active_execution_id: string | null }>(
+      "select e.state as execution_state,t.lease_until,t.active_execution_id from news_core.collection_targets t left join news_core.executions e on e.execution_id=t.active_execution_id where t.collection_scope_key=$1",
+      [scope],
+    );
+    console.log(`N0_T26_RECLAIM_READY scope=${scope} executionState=${reclaimState.rows[0]?.execution_state ?? "NULL"} leaseUntil=${reclaimState.rows[0]?.lease_until ?? "NULL"} activeExecution=${reclaimState.rows[0]?.active_execution_id ?? "NULL"}`);
+    pid2 = spawnT26Worker(isolated.connectionString, scope, payloadFile, "recover");
+    const pid2Number = pid2.pid;
+    assert.ok(pid2Number && pid2Number > 0 && pid2Number !== pid1Number);
+    await waitForWorkerOutput(pid2, "N0_T26_CHILD_DONE");
+    const pid2Exit = await waitForWorkerExit(pid2);
+    assert.equal(pid2Exit.code, 0);
+    assert.equal(Number((await admin.query("select count(*)::int n from news_core.publications where source_id='sec-edgar' and external_id=$1", [candidate.externalId])).rows[0].n), 1);
+    assert.equal(Number((await admin.query("select count(*)::int n from news_core.publication_revisions pr join news_core.publications p using (publication_id) where p.source_id='sec-edgar' and p.external_id=$1", [candidate.externalId])).rows[0].n), 1);
+    assert.equal(Number((await admin.query("select count(*)::int n from news_core.checkpoints where collection_scope_key=$1 and visibility_state='COMMITTED'", [scope])).rows[0].n), 1);
+    await admin.query("update news_core.collection_targets set next_run_at=clock_timestamp(), lease_owner=null, lease_until=null, active_execution_id=null where collection_scope_key=$1", [scope]);
+    pid3 = spawnT26Worker(isolated.connectionString, scope, payloadFile, "recover");
+    const pid3Number = pid3.pid;
+    assert.ok(pid3Number && pid3Number !== pid1Number && pid3Number !== pid2Number);
+    await waitForWorkerOutput(pid3, "N0_T26_CHILD_DONE");
+    const pid3Exit = await waitForWorkerExit(pid3);
+    assert.equal(pid3Exit.code, 0);
+    assert.equal(Number((await admin.query("select count(*)::int n from news_core.publications where source_id='sec-edgar' and external_id=$1", [candidate.externalId])).rows[0].n), 1);
+    assert.equal(Number((await admin.query("select count(*)::int n from news_core.publication_revisions pr join news_core.publications p using (publication_id) where p.source_id='sec-edgar' and p.external_id=$1", [candidate.externalId])).rows[0].n), 1);
+    console.log(`N0_T26_PROOF cik=${CIK} accession=${candidate.externalId} pid1=${pid1Number} pid1Signal=${pid1Exit.signal} pid2=${pid2Number} pid3=${pid3Number} checkpointDuringCrash=absent finalPublications=1 finalRevisions=1 replayDuplicates=0`);
+  } finally {
+    await stopWorker(pid1);
+    await stopWorker(pid2);
+    await stopWorker(pid3);
+    if (payloadDir) await rm(payloadDir, { recursive: true, force: true });
+    await isolated.close();
+  }
 });
