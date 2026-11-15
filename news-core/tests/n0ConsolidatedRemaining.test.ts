@@ -38,6 +38,9 @@ test("N0 consolidated local rehearsal: T15, T27 partial recovery and T28 clock/P
   const clockScope = `n0-consolidated-clock-${suffix}`;
   const clockFuture = `n0-consolidated-future-${suffix}`;
   const clockPast = `n0-consolidated-past-${suffix}`;
+  const accessionTail = String(parseInt(suffix.slice(0, 6), 16) % 1_000_000).padStart(6, "0");
+  const accessionA = `0000320193-26-${accessionTail}`;
+  const accessionB = `0000789019-26-${accessionTail}`;
   try {
     await admin.connect();
     assert.match((await admin.query<{ v: string }>("select current_setting('server_version') v")).rows[0].v, /^17\./);
@@ -49,19 +52,19 @@ test("N0 consolidated local rehearsal: T15, T27 partial recovery and T28 clock/P
     await store.upsertTarget({ collectionScopeKey: scopeB, sourceId: "sec-edgar", providerKey: "sec", entityKey: B, parameters: { forms: ["8-K"], overlapDays: 7 }, nextRunAt: new Date().toISOString() });
 
     let sourceAvailable = false;
-    await assert.rejects(runNewsExecutorOnce({ store, workerId: `n0-consolidated-a-${suffix}`, collectionScopeKey: scopeA, secUserAgent: "SYNTRAKE N0 rehearsal security@syntrake.com", fetchImpl: async () => { if (!sourceAvailable) throw new Error("SOURCE_TEMPORARILY_UNAVAILABLE"); return response(A, `0000320193-26-${suffix.slice(0, 6)}`); } }), /SOURCE_TEMPORARILY_UNAVAILABLE/);
+    await assert.rejects(runNewsExecutorOnce({ store, workerId: `n0-consolidated-a-${suffix}`, collectionScopeKey: scopeA, secUserAgent: "SYNTRAKE N0 rehearsal security@syntrake.com", fetchImpl: async () => { if (!sourceAvailable) throw new Error("SOURCE_TEMPORARILY_UNAVAILABLE"); return response(A, accessionA); } }), /SOURCE_TEMPORARILY_UNAVAILABLE/);
     assert.equal(await store.getCheckpoint(scopeA), null, "T27 partial outage must not advance checkpoint");
     sourceAvailable = true;
-    await runNewsExecutorOnce({ store, workerId: `n0-consolidated-a-recovery-${suffix}`, collectionScopeKey: scopeA, secUserAgent: "SYNTRAKE N0 rehearsal security@syntrake.com", fetchImpl: async () => response(A, `0000320193-26-${suffix.slice(0, 6)}`) });
-    await runNewsExecutorOnce({ store, workerId: `n0-consolidated-b-${suffix}`, collectionScopeKey: scopeB, secUserAgent: "SYNTRAKE N0 rehearsal security@syntrake.com", fetchImpl: async () => response(B, `0000789019-26-${suffix.slice(0, 6)}`) });
+    await runNewsExecutorOnce({ store, workerId: `n0-consolidated-a-recovery-${suffix}`, collectionScopeKey: scopeA, secUserAgent: "SYNTRAKE N0 rehearsal security@syntrake.com", fetchImpl: async () => response(A, accessionA) });
+    await runNewsExecutorOnce({ store, workerId: `n0-consolidated-b-${suffix}`, collectionScopeKey: scopeB, secUserAgent: "SYNTRAKE N0 rehearsal security@syntrake.com", fetchImpl: async () => response(B, accessionB) });
     assert.ok((await store.getCheckpoint(scopeA))?.cursor);
     assert.ok((await store.getCheckpoint(scopeB))?.cursor);
     assert.equal((await admin.query("select count(*)::int n from news_core.checkpoints where collection_scope_key=any($1::text[])", [[scopeA, scopeB]])).rows[0].n, 2, "T15 must keep two CIK checkpoints independent");
-    assert.equal((await admin.query("select count(*)::int n from news_core.publications where external_id=any($1::text[])", [[`0000320193-26-${suffix.slice(0, 6)}`, `0000789019-26-${suffix.slice(0, 6)}`]])).rows[0].n, 2);
+    assert.equal((await admin.query("select count(*)::int n from news_core.publications where external_id=any($1::text[])", [[accessionA, accessionB]])).rows[0].n, 2);
 
     await admin.query("update news_core.collection_targets set next_run_at=clock_timestamp(), lease_owner=null, lease_until=null, active_execution_id=null where collection_scope_key=any($1::text[])", [[scopeA, scopeB]]);
-    await runNewsExecutorOnce({ store, workerId: `n0-consolidated-replay-${suffix}`, collectionScopeKey: scopeA, secUserAgent: "SYNTRAKE N0 rehearsal security@syntrake.com", fetchImpl: async () => response(A, `0000320193-26-${suffix.slice(0, 6)}`) });
-    assert.equal((await admin.query("select count(*)::int n from news_core.publications where external_id=$1", [`0000320193-26-${suffix.slice(0, 6)}`])).rows[0].n, 1, "T15 replay must remain idempotent");
+    await runNewsExecutorOnce({ store, workerId: `n0-consolidated-replay-${suffix}`, collectionScopeKey: scopeA, secUserAgent: "SYNTRAKE N0 rehearsal security@syntrake.com", fetchImpl: async () => response(A, accessionA) });
+    assert.equal((await admin.query("select count(*)::int n from news_core.publications where external_id=$1", [accessionA])).rows[0].n, 1, "T15 replay must remain idempotent");
 
     await store.ingestAdministrative(administrativeBatch(clockScope, clockFuture, "2099-01-01T00:00:00.000Z"));
     await store.ingestAdministrative(administrativeBatch(clockScope, clockPast, "2020-01-01T00:00:00.000Z"));
@@ -83,6 +86,7 @@ test("N0 consolidated local rehearsal: T15, T27 partial recovery and T28 clock/P
       await admin.query("delete from news_core.publications where publication_id=$1", [publicationId]).catch(() => undefined);
     }
     await admin.query("delete from news_core.checkpoints where collection_scope_key=any($1::text[])", [[scopeA, scopeB, clockScope]]).catch(() => undefined);
+    await admin.query("delete from news_core.executions where collection_scope_key=any($1::text[])", [[scopeA, scopeB]]).catch(() => undefined);
     await admin.query("delete from news_core.collection_targets where collection_scope_key=any($1::text[])", [[scopeA, scopeB]]).catch(() => undefined);
     await Promise.all([store.close(), admin.end()]);
   }
