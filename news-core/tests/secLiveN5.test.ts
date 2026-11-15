@@ -50,7 +50,19 @@ async function openIsolatedDatabase(): Promise<{ admin: Client; connectionString
   await provisioner.query(`create database "${databaseName}"`);
   const databaseUrl = new URL(DB_URL); databaseUrl.pathname = `/${databaseName}`;
   const admin = new Client({ connectionString: databaseUrl.toString() }); await admin.connect();
-  return { admin, connectionString: databaseUrl.toString(), close: async () => { await admin.end(); await provisioner.query(`drop database if exists "${databaseName}"`); await provisioner.end(); } };
+  return {
+    admin,
+    connectionString: databaseUrl.toString(),
+    close: async () => {
+      await admin.end();
+      // Child workers can close their pools just after their exit event. Terminate
+      // any final backend before dropping the isolated database so teardown cannot
+      // mask an already completed crash/recovery proof.
+      await provisioner.query("select pg_terminate_backend(pid) from pg_stat_activity where datname=$1 and pid<>pg_backend_pid()", [databaseName]);
+      await provisioner.query(`drop database if exists "${databaseName}"`);
+      await provisioner.end();
+    },
+  };
 }
 
 async function absentPublication(admin: Client, publications: ReplayFixture["publications"]): Promise<ReplayFixture["publications"][number]> {
@@ -80,6 +92,12 @@ async function waitForWorkerOutput(worker: ChildProcessWithoutNullStreams, marke
 
 async function waitForWorkerExit(worker: ChildProcessWithoutNullStreams): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
   return await new Promise(resolve => worker.once("exit", (code, signal) => resolve({ code, signal })));
+}
+
+async function stopWorker(worker: ChildProcessWithoutNullStreams | undefined): Promise<void> {
+  if (!worker || worker.exitCode !== null || worker.signalCode !== null) return;
+  worker.kill("SIGKILL");
+  await waitForWorkerExit(worker);
 }
 
 test("N0-T25: two attributable SEC cycles use a genuine isolated baseline and remain idempotent", { skip: !enabled && "N5_REAL_SOURCE=1 required for the official SEC proof" }, async () => {
@@ -142,9 +160,9 @@ test("N0-T26: PID1 SIGKILL after fetch recovers in PID2 without checkpoint loss 
     assert.equal(Number((await admin.query("select count(*)::int n from news_core.publication_revisions pr join news_core.publications p using (publication_id) where p.source_id='sec-edgar' and p.external_id=$1", [candidate.externalId])).rows[0].n), 1);
     console.log(`N0_T26_PROOF cik=${CIK} accession=${candidate.externalId} pid1=${pid1Number} pid1Signal=${pid1Exit.signal} pid2=${pid2Number} pid3=${pid3Number} checkpointDuringCrash=absent finalPublications=1 finalRevisions=1 replayDuplicates=0`);
   } finally {
-    if (pid1 && !pid1.killed) pid1.kill("SIGKILL");
-    if (pid2 && !pid2.killed) pid2.kill("SIGKILL");
-    if (pid3 && !pid3.killed) pid3.kill("SIGKILL");
+    await stopWorker(pid1);
+    await stopWorker(pid2);
+    await stopWorker(pid3);
     if (payloadDir) await rm(payloadDir, { recursive: true, force: true });
     await isolated.close();
   }
