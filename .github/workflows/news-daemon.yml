@@ -63,9 +63,6 @@ jobs:
           printf 'synthetic-secret\n' > news-core/.docker-canary/.env
           printf 'synthetic-key\n' > scripts/.docker-canary/token.key
           printf 'synthetic-credentials\n' > scripts/.docker-canary/credentials.txt
-          cat > .docker-canary/scripts/news-canary-legit.ts <<'EOF'
-          export const legitimateCanary = true;
-          EOF
           cat > Dockerfile.news-daemon-canary-legit <<'EOF'
           FROM scratch
           COPY scripts/news-supervisor.ts /legit/supervisor.ts
