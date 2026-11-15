@@ -1,0 +1,53 @@
+services:
+  postgres:
+    image: postgres:17-bookworm
+    container_name: syntrake-news-aut001-postgres
+    command: ["postgres", "-c", "track_commit_timestamp=on"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${AUT001_POSTGRES_PASSWORD:?set in the external env file}
+      POSTGRES_DB: syntrake_news_aut001
+      NEWS_SERVICE_PASSWORD: ${AUT001_NEWS_SERVICE_PASSWORD:?set in the external env file}
+      NEWS_VERIFIER_PASSWORD: ${AUT001_NEWS_VERIFIER_PASSWORD:?set in the external env file}
+      NEWS_ATTESTOR_PASSWORD: ${AUT001_NEWS_ATTESTOR_PASSWORD:?set in the external env file}
+      NEWS_WRITER_PASSWORD: ${AUT001_NEWS_WRITER_PASSWORD:?set in the external env file}
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - syntrake_news_aut001_pgdata:/var/lib/postgresql/data
+      - ../../supabase/migrations:/migrations:ro
+      - ./init-news-db.sh:/docker-entrypoint-initdb.d/20-news-core.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d syntrake_news_aut001"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  news-daemon:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.news-daemon
+    container_name: syntrake-news-aut001-daemon
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      NEWS_EXECUTION_MODE: FACTUAL
+      NEWS_DATABASE_URL: postgresql://news_service:${AUT001_NEWS_SERVICE_PASSWORD}@postgres:5432/syntrake_news_aut001
+      NEWS_PIPELINE_VERIFIER_DATABASE_URL: postgresql://news_pipeline_verifier:${AUT001_NEWS_VERIFIER_PASSWORD}@postgres:5432/syntrake_news_aut001
+      NEWS_FACTUAL_ATTESTOR_DATABASE_URL: postgresql://news_factual_attestor:${AUT001_NEWS_ATTESTOR_PASSWORD}@postgres:5432/syntrake_news_aut001
+      NEWS_FACTUAL_WRITER_DATABASE_URL: postgresql://news_factual_writer:${AUT001_NEWS_WRITER_PASSWORD}@postgres:5432/syntrake_news_aut001
+      SEC_CIK: "0000320193"
+      SEC_USER_AGENT: "SYNTRAKE AUT001 local test security@syntrake.invalid"
+      NEWS_POLL_INTERVAL_MS: "5000"
+      NEWS_LEASE_SECONDS: "60"
+      NEWS_FACTUAL_DOCUMENT_LIMIT: "20"
+      NEWS_WORKER_ID: "aut001-container"
+    init: true
+
+volumes:
+  syntrake_news_aut001_pgdata:
+    name: syntrake_news_aut001_pgdata
