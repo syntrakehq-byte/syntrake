@@ -55,6 +55,7 @@ test("N0 consolidated local rehearsal: T15, T27 partial recovery and T28 clock/P
     await assert.rejects(runNewsExecutorOnce({ store, workerId: `n0-consolidated-a-${suffix}`, collectionScopeKey: scopeA, secUserAgent: "SYNTRAKE N0 rehearsal security@syntrake.com", fetchImpl: async () => { if (!sourceAvailable) throw new Error("SOURCE_TEMPORARILY_UNAVAILABLE"); return response(A, accessionA); } }), /SOURCE_TEMPORARILY_UNAVAILABLE/);
     assert.equal(await store.getCheckpoint(scopeA), null, "T27 partial outage must not advance checkpoint");
     sourceAvailable = true;
+    await admin.query("update news_core.collection_targets set next_run_at=clock_timestamp(), lease_owner=null, lease_until=null, active_execution_id=null where collection_scope_key=$1", [scopeA]);
     await runNewsExecutorOnce({ store, workerId: `n0-consolidated-a-recovery-${suffix}`, collectionScopeKey: scopeA, secUserAgent: "SYNTRAKE N0 rehearsal security@syntrake.com", fetchImpl: async () => response(A, accessionA) });
     await runNewsExecutorOnce({ store, workerId: `n0-consolidated-b-${suffix}`, collectionScopeKey: scopeB, secUserAgent: "SYNTRAKE N0 rehearsal security@syntrake.com", fetchImpl: async () => response(B, accessionB) });
     assert.ok((await store.getCheckpoint(scopeA))?.cursor);
