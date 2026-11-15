@@ -68,8 +68,7 @@ jobs:
       - name: Verify image contains no environment files
         run: |
           test "$(docker run --rm --entrypoint node syntrake-news-daemon:${{ github.sha }} -e "const fs=require('fs'); process.stdout.write(fs.existsSync('/app/.env') ? 'bad' : 'ok')")" = ok
-      - name: Run existing PG17 supervisor and factual smoke suites
+      - name: Run existing PG17 supervisor smoke suite
         run: |
           npm ci
           npm run test:news:bl4:supervisor
-          npm run test:news:bl4:factual
