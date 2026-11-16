@@ -60,6 +60,9 @@ test("BL3 operational executor runs SEC through N3 and N5 with positive and cons
       checkpoint: { sourceId: "sec-edgar", collectionScopeKey: `bl3-known-${suffix}`, cursor: "0001193125-21-054710", updatedAt: knownNow },
     });
     await news.reconcileFactualBacklog();
+    await news.enqueueFactualBacklog([{
+      publicationId: knownPublicationId, sourceId: "sec-edgar", originFingerprint: "0001193125-21-054710", externalId: "0001193125-21-054710", originalUrl: "https://www.sec.gov/Archives/edgar/data/320193/000119312521054710/d101693d8k.htm", title: "Apple Inc. 8-K 2021-02-24", publishedAt: "2021-02-24T00:00:00.000Z", firstSeenAt: knownNow, ingestedAt: knownNow, asKnownAt: knownNow, form: "8-K",
+    }]);
     const atomicScope = `bl3-atomic-${suffix}`;
     const atomicPublicationId = `bl3-atomic-publication-${suffix}`;
     const atomicNow = new Date().toISOString();
