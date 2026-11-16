@@ -10,6 +10,7 @@ const DB_URL = process.env.NEWS_DATABASE_URL ?? process.env.TEST_DATABASE_URL;
 const n1Migration = new URL("../../supabase/migrations/20261111150000_news_core_postgres_n1.sql", import.meta.url);
 const n2Migration = new URL("../../supabase/migrations/20261111170000_news_core_n2a_revisions.sql", import.meta.url);
 const n2bMigration = new URL("../../supabase/migrations/20261111180000_news_core_n2b_entity_links.sql", import.meta.url);
+const ng4Migration = new URL("../../supabase/migrations/20261116140000_news_core_ng4_context.sql", import.meta.url);
 
 test("News Core N2-B canonical bridge, conservative matches and PIT", { skip: !DB_URL && "NEWS_DATABASE_URL or TEST_DATABASE_URL required: real PG17 only" }, async () => {
   const admin = new Client({ connectionString: DB_URL });
@@ -28,6 +29,7 @@ test("News Core N2-B canonical bridge, conservative matches and PIT", { skip: !D
   try {
     await admin.connect();
     assert.match((await admin.query<{ v: string }>("select current_setting('server_version') v")).rows[0].v, /^17\./);
+    await admin.query("drop function if exists news_core.read_publication_revisions_as_of(timestamptz,text)");
     await admin.query(await readFile(n1Migration, "utf8"));
     await admin.query("insert into news_core.sources(source_id,provider_key,source_type) values ($1,'n2b-fixture','SEC_EDGAR')", [sourceId]);
     const frontier = await admin.query<{ frontier_id: string; published_at: Date }>("insert into news_core.visibility_frontiers default values returning frontier_id,published_at");
@@ -37,6 +39,7 @@ test("News Core N2-B canonical bridge, conservative matches and PIT", { skip: !D
     futureFrontierId = futureFrontier.rows[0].frontier_id;
     await admin.query("insert into news_core.publications(publication_id,source_id,origin_fingerprint,external_id,original_url,title,first_seen_at,ingested_at,as_known_at,form,visibility_state,visibility_frontier_id) values ($1,$2,$3,$4,$5,$6,$7,$8,$8,'8-K','COMMITTED',$9)", [futurePublicationId, sourceId, `origin-${futurePublicationId}`, futurePublicationId, "https://www.sec.gov/Archives/edgar/data/1/future.htm", "Future parent event", now, future, futureFrontierId]);
     await admin.query(await readFile(n2Migration, "utf8"));
+    await admin.query(await readFile(ng4Migration, "utf8"));
     await admin.query(await readFile(n2bMigration, "utf8"));
 
     const exact: MarketCoreResolutionV1 = {

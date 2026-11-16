@@ -11,6 +11,7 @@ const n1 = new URL("../../supabase/migrations/20261111150000_news_core_postgres_
 const n2a = new URL("../../supabase/migrations/20261111170000_news_core_n2a_revisions.sql", import.meta.url);
 const n2b = new URL("../../supabase/migrations/20261111180000_news_core_n2b_entity_links.sql", import.meta.url);
 const n2c = new URL("../../supabase/migrations/20261112100000_news_core_n2c_editorial_relations.sql", import.meta.url);
+const ng4 = new URL("../../supabase/migrations/20261116140000_news_core_ng4_context.sql", import.meta.url);
 
 test("News Core N2-C conservative editorial equivalence, structural many-to-many and PIT", { skip: !DB_URL && "NEWS_DATABASE_URL or TEST_DATABASE_URL required: real PG17 only" }, async () => {
   const admin = new Client({ connectionString: DB_URL });
@@ -25,6 +26,7 @@ test("News Core N2-C conservative editorial equivalence, structural many-to-many
   try {
     await admin.connect();
     assert.match((await admin.query<{ v: string }>("select current_setting('server_version') v")).rows[0].v, /^17\./);
+    await admin.query("drop function if exists news_core.read_publication_revisions_as_of(timestamptz,text)");
     await admin.query(await readFile(n1, "utf8"));
     await admin.query("insert into news_core.sources(source_id,provider_key,source_type) values ($1,'n2c-fixture','SEC_EDGAR')", [sourceId]);
     for (const [index, publicationId] of publicationIds.entries()) {
@@ -33,6 +35,7 @@ test("News Core N2-C conservative editorial equivalence, structural many-to-many
       await admin.query("insert into news_core.observations(observation_id,provider_key,provider_observation_key,publication_id,observed_at,retrieved_at,publisher_key,visibility_state,visibility_frontier_id) values ($1,'n2c-fixture',$2,$3,$4,$4,'n2c','COMMITTED',$5)", [`observation-${publicationId}`, `observation-${publicationId}`, publicationId, now, frontier.rows[0].frontier_id]);
     }
     await admin.query(await readFile(n2a, "utf8"));
+    await admin.query(await readFile(ng4, "utf8"));
     await admin.query(await readFile(n2b, "utf8"));
     await admin.query(await readFile(n2c, "utf8"));
 

@@ -48,6 +48,7 @@ test("News Core N3-C append-only factual persistence, PIT, idempotence and secur
   };
   try {
     await admin.connect();
+    await admin.query("drop function if exists news_core.read_publication_revisions_as_of(timestamptz,text)");
     assert.match((await admin.query<{ v: string }>("select current_setting('server_version') v")).rows[0].v, /^17\./);
     assert.equal((await admin.query<{ v: string }>("select current_setting('track_commit_timestamp') as v")).rows[0].v, "on", "strict PIT requires PostgreSQL commit timestamps");
     await admin.query(await readFile(migration("20261111150000_news_core_postgres_n1.sql"), "utf8"));
@@ -56,6 +57,7 @@ test("News Core N3-C append-only factual persistence, PIT, idempotence and secur
     await admin.query("insert into news_core.publications(publication_id,source_id,origin_fingerprint,external_id,original_url,title,first_seen_at,ingested_at,as_known_at,form,visibility_state,visibility_frontier_id) values ($1,$2,$3,$4,$5,'N3C fixture',$6,$6,$6,'8-K','COMMITTED',$7)", [publicationId, sourceId, `origin:${suffix}`, publicationId, sourceDocumentRef, knownOne, frontier.rows[0].frontier_id]);
     await admin.query("insert into news_core.observations(observation_id,provider_key,provider_observation_key,publication_id,observed_at,retrieved_at,publisher_key,visibility_state,visibility_frontier_id) values ($1,'n3c-fixture',$1,$2,$3,$3,'n3c','COMMITTED',$4)", [`observation:${suffix}`, publicationId, knownOne, frontier.rows[0].frontier_id]);
     await admin.query(await readFile(migration("20261111170000_news_core_n2a_revisions.sql"), "utf8"));
+    await admin.query(await readFile(migration("20261116140000_news_core_ng4_context.sql"), "utf8"));
     await admin.query(await readFile(migration("20261112120000_news_core_n3c_factual_persistence.sql"), "utf8"));
     await admin.query(await readFile(migration("20261112170000_news_core_n3c_factual_writer_boundary.sql"), "utf8"));
     await admin.query("set role news_factual_attestor");

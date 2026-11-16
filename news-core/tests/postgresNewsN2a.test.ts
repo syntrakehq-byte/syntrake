@@ -8,6 +8,7 @@ import { PostgresNewsStore, type NewsRevisionInput } from "../postgresStore";
 const DB_URL = process.env.NEWS_DATABASE_URL ?? process.env.TEST_DATABASE_URL;
 const n1Migration = new URL("../../supabase/migrations/20261111150000_news_core_postgres_n1.sql", import.meta.url);
 const n2Migration = new URL("../../supabase/migrations/20261111170000_news_core_n2a_revisions.sql", import.meta.url);
+const ng4Migration = new URL("../../supabase/migrations/20261116140000_news_core_ng4_context.sql", import.meta.url);
 
 test("News Core N2-A PostgreSQL 17 immutable revisions/PIT/concurrency", { skip: !DB_URL && "NEWS_DATABASE_URL or TEST_DATABASE_URL required: real PG17 only" }, async () => {
   const admin = new Client({ connectionString: DB_URL });
@@ -24,6 +25,7 @@ test("News Core N2-A PostgreSQL 17 immutable revisions/PIT/concurrency", { skip:
     await admin.connect();
     const version = await admin.query<{ v: string }>("select current_setting('server_version') v");
     assert.match(version.rows[0].v, /^17\./);
+    await admin.query("drop function if exists news_core.read_publication_revisions_as_of(timestamptz,text)");
     await admin.query(await readFile(n1Migration, "utf8"));
     const now = new Date().toISOString();
     await admin.query("insert into news_core.sources(source_id,provider_key,source_type) values ($1,'n2a-provider','SEC_EDGAR') on conflict do nothing", [sourceId]);
@@ -38,6 +40,7 @@ test("News Core N2-A PostgreSQL 17 immutable revisions/PIT/concurrency", { skip:
     await admin.query("insert into news_core.observations(observation_id,provider_key,provider_observation_key,publication_id,observed_at,retrieved_at,publisher_key,visibility_state,pending_transaction_id) values ($1,'n2a-provider',$2,$3,$4,$4,'n2a','PENDING',$5)", [`observation-${pendingPublicationId}`, `observation-${pendingPublicationId}`, pendingPublicationId, now, pendingTx]);
     await admin.query("commit");
     await admin.query(await readFile(n2Migration, "utf8"));
+    await admin.query(await readFile(ng4Migration, "utf8"));
     await store.ensureSource(sourceId, "n2a-provider");
 
     const backfilledProvenance = await admin.query<{ provider_observation_key: string | null; visibility_frontier_id: string; visibility_state: string }>("select provider_observation_key,visibility_frontier_id::text,visibility_state from news_core.publication_revision_provenance where publication_revision_id=$1", [`${publicationId}:revision:1`]);
