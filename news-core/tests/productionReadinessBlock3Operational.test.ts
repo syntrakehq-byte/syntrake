@@ -59,6 +59,10 @@ test("BL3 operational executor runs SEC through N3 and N5 with positive and cons
       observations: [{ observationId: `${knownPublicationId}:observation`, providerKey: "sec", providerObservationKey: "0001193125-21-054710", publicationId: knownPublicationId, observedAt: knownNow, retrievedAt: knownNow, publisherKey: "sec-edgar" }],
       checkpoint: { sourceId: "sec-edgar", collectionScopeKey: `bl3-known-${suffix}`, cursor: "0001193125-21-054710", updatedAt: knownNow },
     });
+    await news.ingestPublicationRevision({
+      revision: { publicationRevisionId: `${knownPublicationId}:revision:1`, publicationId: knownPublicationId, revisionNo: 1, title: "Apple Inc. 8-K 2021-02-24", publishedAt: "2021-02-24T00:00:00.000Z", form: "8-K", contentFingerprint: "official-sec-document-pending", sourceDocumentRef: "https://www.sec.gov/Archives/edgar/data/320193/000119312521054710/d101693d8k.htm", qualityFlags: [], supersedesRevisionId: null },
+      provenance: { provenanceId: `${knownPublicationId}:provenance:1`, publicationRevisionId: `${knownPublicationId}:revision:1`, sourceId: "sec-edgar", providerKey: "sec", providerObservationKey: "0001193125-21-054710:document", originalUrl: "https://www.sec.gov/Archives/edgar/data/320193/000119312521054710/d101693d8k.htm", sourceDocumentRef: "https://www.sec.gov/Archives/edgar/data/320193/000119312521054710/d101693d8k.htm", retrievedAt: knownNow, qualityFlags: [] },
+    });
     const atomicScope = `bl3-atomic-${suffix}`;
     const atomicPublicationId = `bl3-atomic-publication-${suffix}`;
     const atomicNow = new Date().toISOString();
