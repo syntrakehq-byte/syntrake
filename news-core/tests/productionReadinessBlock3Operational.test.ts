@@ -38,11 +38,8 @@ test("BL3 operational executor runs SEC through N3 and N5 with positive and cons
     // the same isolated PostgreSQL service. Keep only these generated test roles
     // idempotent; production capability roles and privileges remain unchanged.
     for (const role of [verifierRole, attestorRole, writerRole]) {
-      await admin.query(`do $$ begin
-        if not exists (select 1 from pg_roles where rolname = '${role}') then
-          execute 'create role ${role} login inherit nocreatedb nocreaterole';
-        end if;
-      end $$`);
+      const roleExists = (await admin.query<{ exists: boolean }>("select exists (select 1 from pg_roles where rolname=$1) exists", [role])).rows[0].exists;
+      if (!roleExists) await admin.query(`create role ${role} login inherit nocreatedb nocreaterole`);
       await admin.query(`alter role ${role} login inherit password '${ROLE_PASSWORD}' nocreatedb nocreaterole`);
     }
     await admin.query(`grant news_pipeline_verifier to ${verifierRole}`);
