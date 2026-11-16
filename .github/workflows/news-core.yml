@@ -70,6 +70,10 @@ jobs:
       - run: npm run test:news:n3a
       - run: npm run test:news:n3b
       - run: npm run test:news:pg17
+      - name: Global News PostgreSQL N-G3 persistence and PIT
+        env:
+          NEWS_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/syntrake_news_ci
+        run: npx tsx --test --test-timeout=180000 news-core/tests/postgresNewsGlobalN3.test.ts
       - run: npm run test:news:n3d
       - run: npm run test:news:bl3
         env:

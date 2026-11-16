@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import type { NewsBatch, NewsPublication, NewsPublicationRevision, NewsRevisionProvenance } from "./contracts";
+import type { GlobalNewsItem } from "./globalNewsAdapter";
+import type { GlobalNewsRegistryEntry } from "./globalNewsRegistry";
+import { globalItemsToNewsBatch } from "./globalNewsPersistence";
 import { canonicalCandidate, validateEntityResolution, type MarketCoreResolutionV1 } from "./entityResolution";
 import { stableEditorialFingerprint, validateEditorialGroupResolution, validateStructuralEventLinkResolution, type EditorialGroupResolutionV1, type StructuralEventLinkResolutionV1 } from "./editorialRelations";
 
@@ -237,6 +240,18 @@ export class PostgresNewsStore {
       `insert into news_core.sources(source_id,provider_key,source_type) values ($1,$2,$3)
        on conflict (source_id) do update set provider_key=excluded.provider_key`, [sourceId, providerKey, sourceType],
     );
+  }
+  async ensureGlobalSource(source: GlobalNewsRegistryEntry): Promise<void> {
+    await this.pool.query(
+      `insert into news_core.sources(source_id,provider_key,source_type,publisher_id,category,geo_scope,endpoint,rights_policy_id,storage_policy,retention_days,source_status)
+       values ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9::jsonb,$10,$11)
+       on conflict (source_id) do update set provider_key=excluded.provider_key,source_type=excluded.source_type,publisher_id=excluded.publisher_id,category=excluded.category,geo_scope=excluded.geo_scope,endpoint=excluded.endpoint,rights_policy_id=excluded.rights_policy_id,storage_policy=excluded.storage_policy,retention_days=excluded.retention_days,source_status=excluded.source_status`,
+      [source.sourceId, `global-${source.sourceType.toLowerCase()}`, source.sourceType, source.publisherId, source.category, JSON.stringify(source.geoScope), source.endpoint, source.rightsPolicyId, JSON.stringify(source.storagePolicy), source.storagePolicy.retentionDays, source.status],
+    );
+  }
+  async ingestGlobalBatch(source: GlobalNewsRegistryEntry, items: readonly GlobalNewsItem[], options: IngestOptions = {}): Promise<{ insertedPublications: number; insertedObservations: number }> {
+    await this.ensureGlobalSource(source);
+    return this.ingestAdministrative(globalItemsToNewsBatch(source, items), options);
   }
   async upsertTarget(target: NewsTarget): Promise<void> {
     await this.pool.query(
