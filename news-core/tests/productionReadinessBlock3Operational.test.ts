@@ -61,12 +61,23 @@ test("BL3 operational executor runs SEC through N3 and N5 with positive and cons
     await admin.query("delete from news_core.factual_pipeline_backlog where publication_id=$1", [atomicPublicationId]);
     assert.ok((await news.reconcileFactualBacklog()) >= 1, "backfill must restore committed publications missing from the factual queue");
     assert.equal(Number((await admin.query("select count(*)::int n from news_core.factual_pipeline_backlog where publication_id=$1", [atomicPublicationId])).rows[0].n), 1, "backfill must restore the committed publication target");
-    const first = await runNewsExecutorOnce({ store: news, factualPipeline: pipeline, workerId: `bl3-operational-${suffix}`, secUserAgent: process.env.SEC_USER_AGENT ?? "SYNTRAKE BL3 operational CI/1.0 security@syntrake.com", collectionScopeKey: scope, fetchTimeoutMs: 120_000 });
+    const executorOptions = { store: news, factualPipeline: pipeline, secUserAgent: process.env.SEC_USER_AGENT ?? "SYNTRAKE BL3 operational CI/1.0 security@syntrake.com", collectionScopeKey: scope, fetchTimeoutMs: 120_000 };
+    const first = await runNewsExecutorOnce({ ...executorOptions, workerId: `bl3-operational-${suffix}-1` });
     assert.equal(first.claimed, true);
-    assert.ok(first.factualOutcomes.some(outcome => outcome.status === "PERSISTED"), "operational executor must persist one supported SEC document");
-    assert.ok(first.factualOutcomes.some(outcome => outcome.status === "REFUSED"), "operational executor must record a separate conservative refusal");
-    const persisted = first.factualOutcomes.find(outcome => outcome.status === "PERSISTED");
-    const refused = first.factualOutcomes.find(outcome => outcome.status === "REFUSED");
+    const factualOutcomes = [...first.factualOutcomes];
+    // A live SEC window can legitimately contain only unsupported or
+    // non-matching filings. Drain a bounded number of already persisted
+    // backlog windows before declaring the positive path absent; never
+    // re-download or reinterpret a refusal as a fact.
+    for (let cycle = 2; cycle <= 4 && !factualOutcomes.some(outcome => outcome.status === "PERSISTED"); cycle += 1) {
+      await admin.query("update news_core.collection_targets set next_run_at=clock_timestamp(), lease_until=null where collection_scope_key=$1", [scope]);
+      const next = await runNewsExecutorOnce({ ...executorOptions, workerId: `bl3-operational-${suffix}-${cycle}` });
+      factualOutcomes.push(...next.factualOutcomes);
+    }
+    assert.ok(factualOutcomes.some(outcome => outcome.status === "PERSISTED"), "operational executor must persist one supported SEC document");
+    assert.ok(factualOutcomes.some(outcome => outcome.status === "REFUSED"), "operational executor must record a separate conservative refusal");
+    const persisted = factualOutcomes.find(outcome => outcome.status === "PERSISTED");
+    const refused = factualOutcomes.find(outcome => outcome.status === "REFUSED");
     const queued = Number((await admin.query("select count(*)::int n from news_core.factual_pipeline_backlog where state <> 'DONE' or completed_status is not null")).rows[0].n);
     assert.ok(queued > 20, "the durable factual backlog must retain a batch larger than the N1 document limit");
     const preparedFairness = await admin.query<{ publication_id: string }>(`with chosen as (
