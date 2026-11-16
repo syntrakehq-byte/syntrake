@@ -16,7 +16,7 @@ export type GlobalNewsSource = Readonly<{
 
 export type GlobalNewsItem = Readonly<{
   sourceId: string;
-  providerKey: "json-feed";
+  providerKey: "json-feed" | "rss" | "atom";
   externalId: string;
   publicationId: string;
   originalUrl: string;

@@ -168,10 +168,16 @@ export async function fetchSafeRegisteredNewsFeed(
     throw new Error("NEWS_FEED_SOURCE_HOST_MISMATCH");
   }
   const allowedHosts = new Set([approvedHost]);
-  const initial = await resolveSafeExternalUrl(feedUrl, allowedHosts, lookupImpl);
-  const response = await fetchPinnedHttps(initial, { ...init, redirect: "manual" }, DEFAULT_TIMEOUT_MS);
-  if (response.status >= 300 && response.status < 400) {
-    throw new Error("NEWS_FEED_REDIRECT_NOT_ALLOWED");
+  let current = await resolveSafeExternalUrl(feedUrl, allowedHosts, lookupImpl);
+  for (let redirects = 0; redirects <= 5; redirects += 1) {
+    const response = await fetchPinnedHttps(current, { ...init, redirect: "manual" }, DEFAULT_TIMEOUT_MS);
+    if (response.status < 300 || response.status >= 400) return response;
+    const location = response.headers.get("location");
+    await response.body?.cancel();
+    if (!location || redirects === 5) throw new Error("NEWS_FEED_REDIRECT_NOT_ALLOWED");
+    const next = new URL(location, current.url);
+    if (next.hostname !== approvedHost) throw new Error("NEWS_FEED_REDIRECT_NOT_ALLOWED");
+    current = await resolveSafeExternalUrl(next.toString(), allowedHosts, lookupImpl);
   }
-  return response;
+  throw new Error("NEWS_FEED_REDIRECT_NOT_ALLOWED");
 }

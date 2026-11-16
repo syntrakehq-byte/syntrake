@@ -17,6 +17,13 @@ News Core is a **global financial/economic news ingestion and factual evidence s
 - Registry entries preserve source/publisher identity, category, geographic scope, endpoint allowlist, rights, rate policy, retention/presentation policy, status and independent checkpoint scope.
 - Enforces HTTPS, approved publisher article hosts, deterministic identity/fingerprints, strict ISO timestamps, explicit unknown dates, duplicate detection and whole-batch failure.
 - Registry validation rejects private/loopback endpoint literals, credentials, ports, query-string secrets, duplicate source identities and duplicate checkpoint scopes. RSS/Atom/API/document entries are representable but remain disabled until their source-specific adapters exist.
+
+## N-G2 increment — verified collector layer
+
+- RSS 2.0 and Atom normalizers now share the existing `GlobalNewsItem` identity, provenance and rights contract; JSON Feed continues to use the existing adapter.
+- The registry collector uses the pinned HTTPS transport, validates redirects against the registered host, rejects unsafe XML constructs and article URLs, bounds batches through the registry policy, and isolates source failures.
+- Official API integrations have a common adapter interface, but no paid or unverified API provider is activated. A feed with zero new items is reported as `EMPTY`, not as a source failure.
+- Live rehearsal on 2026-11-16 successfully normalized publications from the official ECB, Federal Reserve and SEC RSS endpoints. This proves the tested endpoints only; it does not establish global coverage or production readiness.
 - No network calls, persisted data, checkpoints, licensing assumptions, production toggles or external costs. Security against DNS rebinding and SSRF remains the responsibility of an explicitly designed future source-specific fetch path; never pass unverified remote URLs to generic fetch.
 - This is NOT an operational global news collector.
 

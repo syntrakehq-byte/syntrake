@@ -61,7 +61,12 @@ jobs:
           docker exec "$cid" psql -U postgres -d syntrake_news_ci -Atc "show track_commit_timestamp" | grep -qx on
       - run: npm run test:news
       - name: Global News adapters and source isolation
-        run: npx tsx --test news-core/tests/globalNewsAdapter.test.ts news-core/tests/globalNewsPoller.test.ts news-core/tests/globalNewsRegistry.test.ts
+        run: npx tsx --test news-core/tests/globalNewsAdapter.test.ts news-core/tests/globalNewsPoller.test.ts news-core/tests/globalNewsRegistry.test.ts news-core/tests/globalNewsXml.test.ts news-core/tests/globalNewsCollector.test.ts
+      - name: Global News official RSS rehearsal
+        env:
+          RUN_GLOBAL_NEWS_LIVE: "1"
+          SEC_USER_AGENT: "SYNTRAKE Global News CI/1.0 security@syntrake.com"
+        run: npx tsx --test --test-timeout=120000 news-core/tests/globalNewsLive.test.ts
       - run: npm run test:news:n3a
       - run: npm run test:news:n3b
       - run: npm run test:news:pg17
