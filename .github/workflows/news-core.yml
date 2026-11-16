@@ -61,7 +61,7 @@ jobs:
           docker exec "$cid" psql -U postgres -d syntrake_news_ci -Atc "show track_commit_timestamp" | grep -qx on
       - run: npm run test:news
       - name: Global News adapters and source isolation
-        run: npx tsx --test news-core/tests/globalNewsAdapter.test.ts news-core/tests/globalNewsPoller.test.ts news-core/tests/globalNewsRegistry.test.ts news-core/tests/globalNewsXml.test.ts news-core/tests/globalNewsCollector.test.ts news-core/tests/globalNewsFactualN4.test.ts
+        run: npx tsx --test news-core/tests/globalNewsAdapter.test.ts news-core/tests/globalNewsPoller.test.ts news-core/tests/globalNewsRegistry.test.ts news-core/tests/globalNewsXml.test.ts news-core/tests/globalNewsCollector.test.ts news-core/tests/globalNewsFactualN4.test.ts news-core/tests/globalNewsPitSelectionN4.test.ts
       - name: Global News official RSS rehearsal
         env:
           RUN_GLOBAL_NEWS_LIVE: "1"
@@ -74,6 +74,10 @@ jobs:
         env:
           NEWS_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/syntrake_news_ci
         run: npx tsx --test --test-timeout=180000 news-core/tests/postgresNewsGlobalN3.test.ts
+      - name: Global News PostgreSQL N-G5 identity and editorial PIT
+        env:
+          NEWS_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/syntrake_news_ci
+        run: npx tsx --test --test-timeout=180000 news-core/tests/postgresNewsGlobalN5.test.ts
       - run: npm run test:news:n3d
       - run: npm run test:news:bl3
         env:

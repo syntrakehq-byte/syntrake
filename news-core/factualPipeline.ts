@@ -5,7 +5,7 @@ import { DeterministicFactClassifierV1, excerptHashV1, type ClassificationInputV
 import { claimKeyV1, DeterministicEvidenceCorroboratorV1, type CorroborationInputV1 } from "./evidenceCorroboration";
 import { factualLogicalFingerprintV1, PostgresFactualStore, type PersistFactualInputV1 } from "./factualPersistence";
 import { PostgresNewsStore } from "./postgresStore";
-import type { NewsPublication } from "./contracts";
+import type { NewsPublication, NewsPublicationRevision } from "./contracts";
 
 export type FactualPipelineOutcomeV1 = Readonly<{
   publicationId: string;
@@ -26,6 +26,17 @@ export type FactualPipelineOptionsV1 = Readonly<{
   maxDocuments?: number;
   processingHoldMs?: number;
 }>;
+
+/** Selects only committed revisions known at the publication's own frontier. */
+export function selectGlobalRevisionAtKnownAtV1(revisions: readonly NewsPublicationRevision[], asKnownAt: string | null): NewsPublicationRevision | null {
+  if (!asKnownAt || !Number.isFinite(Date.parse(asKnownAt))) return null;
+  const cutoff = Date.parse(asKnownAt);
+  return revisions
+    .filter(revision => revision.ingestedAt !== null && revision.asKnownAt !== null && Date.parse(revision.asKnownAt) <= cutoff)
+    .slice()
+    .sort((left, right) => (left.revisionNo - right.revisionNo) || left.publicationRevisionId.localeCompare(right.publicationRevisionId))
+    .at(-1) ?? null;
+}
 
 const sha256 = (value: string): string => createHash("sha256").update(value, "utf8").digest("hex");
 const stripDocument = (html: string): string => html.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/\s+/g, " ").trim();
@@ -64,12 +75,13 @@ export class NewsFactualPipelineV1 {
   private async processGlobalOne(publication: NewsPublication, signal?: AbortSignal, assertActive?: () => void): Promise<FactualPipelineOutcomeV1> {
     const canonicalClaimId = `global:${publication.sourceId}:${publication.externalId}`;
     const excerpt = publication.contentExcerpt?.trim();
+    if (!publication.asKnownAt) return { publicationId: publication.publicationId, canonicalClaimId, status: "REFUSED", reason: "N2_PUBLICATION_AS_KNOWN_AT_UNAVAILABLE" };
     if (!excerpt) return { publicationId: publication.publicationId, canonicalClaimId, status: "REFUSED", reason: "N3A_FACTUAL_EXCERPT_UNAVAILABLE" };
-    const asOf = new Date(Date.now() + 3_000).toISOString();
-    const revisions = await this.options.news.readPublicationRevisionsAsOf(asOf, publication.publicationId);
-    const revision = revisions.at(-1);
+    const revisions = await this.options.news.readPublicationRevisionsAsOf(publication.asKnownAt, publication.publicationId);
+    const revision = selectGlobalRevisionAtKnownAtV1(revisions, publication.asKnownAt);
     if (!revision?.asKnownAt || !revision.ingestedAt) return { publicationId: publication.publicationId, canonicalClaimId, status: "REFUSED", reason: "N2_PUBLICATION_REVISION_UNAVAILABLE" };
-    const revisionExcerpt = revision.contentExcerpt?.trim() || excerpt;
+    const revisionExcerpt = revision.contentExcerpt?.trim();
+    if (!revisionExcerpt) return { publicationId: publication.publicationId, canonicalClaimId, status: "REFUSED", reason: "N3A_FACTUAL_EXCERPT_UNAVAILABLE" };
     const evidenceId = `global-document-excerpt-${publication.sourceId}-${publication.externalId}`;
     const provenanceRef = `${publication.publicationId}:provenance:${revision.revisionNo}`;
     const classificationInput: ClassificationInputV1 = {
