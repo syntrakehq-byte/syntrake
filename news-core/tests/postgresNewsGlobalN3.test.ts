@@ -27,6 +27,7 @@ test("N-G3 persists three global sources with replay, independent checkpoints, r
     try {
       const version = await client.query<{ v: string }>("select current_setting('server_version') v");
       assert.match(version.rows[0].v, /^17\./);
+      await client.query("drop function if exists news_core.read_publication_revisions_as_of(timestamptz,text)");
       for (const name of ["20261111150000_news_core_postgres_n1.sql", "20261111170000_news_core_n2a_revisions.sql", "20261116130000_news_core_global_persistence.sql", "20261116140000_news_core_ng4_context.sql"]) await client.query(await readFile(migration(name), "utf8"));
     } finally { client.release(); }
     const before = new Date().toISOString();
