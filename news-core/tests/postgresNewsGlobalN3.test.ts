@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { Pool } from "pg";
 import { PostgresNewsStore } from "../postgresStore";
+import { registerGlobalTarget, runNewsExecutorOnce } from "../autonomousExecutor";
 import type { GlobalNewsItem } from "../globalNewsAdapter";
 import type { GlobalNewsRegistryEntry } from "../globalNewsRegistry";
 
@@ -44,5 +45,12 @@ test("N-G3 persists three global sources with replay, independent checkpoints, r
     const history = await store.readPublicationRevisionsAsOf(new Date(Date.now() + 4_000).toISOString(), ecbItem.publicationId);
     assert.equal(history.length, 2);
     assert.equal(history[1].title, "ECB corrected release");
+    const workerSource = source(`worker-${suffix}`, "www.ecb.europa.eu");
+    const workerItem = item(workerSource.sourceId, workerSource.allowedArticleHosts[0], "worker", now);
+    const workerScope = await registerGlobalTarget(store, workerSource);
+    await pool.query("update news_core.collection_targets set next_run_at=clock_timestamp() where collection_scope_key=$1", [workerScope]);
+    const workerResult = await runNewsExecutorOnce({ store, workerId: `global-worker-${suffix}`, secUserAgent: "SYNTRAKE PG17 test test@example.invalid", collectionScopeKey: workerScope, globalSources: [workerSource], globalRetrieve: async () => [workerItem], leaseSeconds: 60 });
+    assert.equal(workerResult.claimed, true);
+    assert.equal((await store.readAsOf(new Date(Date.now() + 4_000).toISOString())).filter(row => row.publicationId === workerItem.publicationId).length, 1);
   } finally { await store.close(); }
 });

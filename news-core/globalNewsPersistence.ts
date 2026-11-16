@@ -4,10 +4,11 @@ import type { GlobalNewsRegistryEntry } from "./globalNewsRegistry";
 import type { NewsBatch } from "./contracts";
 
 function stable(value: string): string { return createHash("sha256").update(value).digest("hex"); }
+export function globalProviderKey(sourceType: GlobalNewsRegistryEntry["sourceType"]): string { return `global-${sourceType.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`; }
 
 /** Converts a normalized N-G2 batch to the existing transactional N1 shape. */
 export function globalItemsToNewsBatch(source: GlobalNewsRegistryEntry, items: readonly GlobalNewsItem[], updatedAt = new Date().toISOString()): NewsBatch {
-  const providerKey = `global-${source.sourceType.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+  const providerKey = globalProviderKey(source.sourceType);
   const ordered = [...items].sort((left, right) => left.externalId.localeCompare(right.externalId));
   const publications = ordered.map(item => ({
     publicationId: item.publicationId, sourceId: item.sourceId, originFingerprint: item.contentFingerprint,

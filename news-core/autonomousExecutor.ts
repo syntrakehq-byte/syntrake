@@ -1,6 +1,9 @@
 import { fetchSecFilings, secCollectionScopeKey } from "./secAdapter";
 import { PostgresNewsStore, type ClaimedTarget, type ExecutionLease } from "./postgresStore";
 import { NewsFactualPipelineV1, type FactualPipelineOutcomeV1 } from "./factualPipeline";
+import { fetchAndParseRegisteredSource } from "./globalNewsCollector";
+import { globalProviderKey } from "./globalNewsPersistence";
+import type { GlobalNewsRegistryEntry } from "./globalNewsRegistry";
 
 export type NewsExecutorOptions = Readonly<{
   store: PostgresNewsStore; workerId: string; secUserAgent: string; leaseSeconds?: number;
@@ -8,10 +11,20 @@ export type NewsExecutorOptions = Readonly<{
   onExecutionError?: (error: unknown) => void;
   factualPipeline?: NewsFactualPipelineV1;
   factualPublicationIds?: readonly string[];
+  globalSources?: readonly GlobalNewsRegistryEntry[];
+  globalRetrieve?: (source: GlobalNewsRegistryEntry, signal?: AbortSignal) => Promise<readonly import("./globalNewsAdapter").GlobalNewsItem[]>;
 }>;
 
 async function runTarget(store: PostgresNewsStore, target: ClaimedTarget, options: NewsExecutorOptions, signal: AbortSignal, lease: ExecutionLease): Promise<{ ingested: number; factualOutcomes: readonly FactualPipelineOutcomeV1[] }> {
-  if (target.providerKey !== "sec") throw new Error("UNSUPPORTED_NEWS_PROVIDER");
+  if (target.providerKey !== "sec") {
+    const source = options.globalSources?.find(candidate => candidate.sourceId === target.sourceId && globalProviderKey(candidate.sourceType) === target.providerKey);
+    if (!source) throw new Error("UNSUPPORTED_NEWS_PROVIDER");
+    const items = await (options.globalRetrieve ?? fetchAndParseRegisteredSource)(source, signal);
+    if (signal.aborted) throw new Error("NEWS_EXECUTION_CANCELLED");
+    const committed = await store.ingestGlobalBatch(source, items, {});
+    const factualOutcomes = options.factualPipeline ? await drainFactualBacklog(store, options.factualPipeline, options, signal, lease) : [];
+    return { ingested: committed.insertedPublications, factualOutcomes };
+  }
   const checkpoint = await store.getCheckpoint(target.collectionScopeKey);
   const result = await fetchSecFilings({ cik: target.entityKey, userAgent: options.secUserAgent, cursor: checkpoint?.cursor, fetchImpl: options.fetchImpl, now: options.now, signal });
   if (signal.aborted) throw new Error("NEWS_EXECUTION_CANCELLED");
@@ -117,4 +130,10 @@ export async function registerSecTarget(store: PostgresNewsStore, cik: string): 
   await store.ensureSource("sec-edgar", "sec");
   await store.upsertTarget({ collectionScopeKey: scope, sourceId: "sec-edgar", providerKey: "sec", entityKey: cik, parameters: { forms: ["10-K", "10-Q", "8-K", "20-F", "6-K"], overlapDays: 7 } });
   return scope;
+}
+
+export async function registerGlobalTarget(store: PostgresNewsStore, source: GlobalNewsRegistryEntry): Promise<string> {
+  await store.ensureGlobalSource(source);
+  await store.upsertTarget({ collectionScopeKey: source.checkpointScope, sourceId: source.sourceId, providerKey: globalProviderKey(source.sourceType), entityKey: source.publisherId, parameters: { endpoint: source.endpoint, sourceType: source.sourceType, rightsPolicyId: source.rightsPolicyId } });
+  return source.checkpointScope;
 }
