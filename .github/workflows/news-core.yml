@@ -61,7 +61,7 @@ jobs:
           docker exec "$cid" psql -U postgres -d syntrake_news_ci -Atc "show track_commit_timestamp" | grep -qx on
       - run: npm run test:news
       - name: Global News adapters and source isolation
-        run: npx tsx --test news-core/tests/globalNewsAdapter.test.ts news-core/tests/globalNewsPoller.test.ts
+        run: npx tsx --test news-core/tests/globalNewsAdapter.test.ts news-core/tests/globalNewsPoller.test.ts news-core/tests/globalNewsRegistry.test.ts
       - run: npm run test:news:n3a
       - run: npm run test:news:n3b
       - run: npm run test:news:pg17

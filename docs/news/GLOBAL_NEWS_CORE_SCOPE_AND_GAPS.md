@@ -13,8 +13,10 @@ News Core is a **global financial/economic news ingestion and factual evidence s
 
 ## First increment in this branch
 
-- Pure normalized JSON Feed v1/v1.1 adapter and explicit source configuration type.
+- Versioned source registry plus pure normalized JSON Feed v1/v1.1 adapter and explicit source configuration type.
+- Registry entries preserve source/publisher identity, category, geographic scope, endpoint allowlist, rights, rate policy, retention/presentation policy, status and independent checkpoint scope.
 - Enforces HTTPS, approved publisher article hosts, deterministic identity/fingerprints, strict ISO timestamps, explicit unknown dates, duplicate detection and whole-batch failure.
+- Registry validation rejects private/loopback endpoint literals, credentials, ports, query-string secrets, duplicate source identities and duplicate checkpoint scopes. RSS/Atom/API/document entries are representable but remain disabled until their source-specific adapters exist.
 - No network calls, persisted data, checkpoints, licensing assumptions, production toggles or external costs. Security against DNS rebinding and SSRF remains the responsibility of an explicitly designed future source-specific fetch path; never pass unverified remote URLs to generic fetch.
 - This is NOT an operational global news collector.
 
