@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { normalizeNewsTextV1 } from "./textNormalization";
 
 /**
  * Neutral, source-agnostic normalized news item.
@@ -77,7 +78,7 @@ export function parseJsonNewsFeed(source: GlobalNewsSource, payload: unknown, re
   for (const raw of feed.items) {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("GLOBAL_NEWS_ITEM_INVALID");
     const item = raw as Record<string, unknown>;
-    const externalId = safeString(item.id, 512), title = safeString(item.title, 1500), urlValue = safeString(item.url, 4096);
+    const externalId = safeString(item.id, 512), title = safeString(typeof item.title === "string" ? normalizeNewsTextV1(item.title) : item.title, 1500), urlValue = safeString(item.url, 4096);
     if (!externalId || !title || !urlValue) throw new Error("GLOBAL_NEWS_ITEM_INVALID");
     const url = httpsUrl(urlValue);
     if (!source.allowedArticleHosts.includes(url.hostname.toLowerCase())) throw new Error("GLOBAL_NEWS_ARTICLE_HOST_NOT_ALLOWED");
@@ -85,7 +86,7 @@ export function parseJsonNewsFeed(source: GlobalNewsSource, payload: unknown, re
     seen.add(externalId);
     const publishedAt = timestamp(item.date_published), updatedAt = timestamp(item.date_modified);
     if (publishedAt && updatedAt && Date.parse(updatedAt) < Date.parse(publishedAt)) throw new Error("GLOBAL_NEWS_DATE_ORDER_INVALID");
-    const summary = item.summary == null ? null : safeString(item.summary, 4000);
+    const summary = item.summary == null ? null : safeString(typeof item.summary === "string" ? normalizeNewsTextV1(item.summary) : item.summary, 4000);
     if (item.summary != null && summary === null) throw new Error("GLOBAL_NEWS_ITEM_INVALID");
     const publicationId = fingerprint(`global-news:${source.sourceId}:${externalId}`).slice(0, 32);
     result.push(Object.freeze({

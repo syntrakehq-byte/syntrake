@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { GlobalNewsItem } from "./globalNewsAdapter";
 import type { GlobalNewsRegistryEntry } from "./globalNewsRegistry";
 import type { NewsBatch } from "./contracts";
+import { normalizeNewsTextV1 } from "./textNormalization";
 
 function stable(value: string): string { return createHash("sha256").update(value).digest("hex"); }
 export function globalProviderKey(sourceType: GlobalNewsRegistryEntry["sourceType"]): string { return `global-${sourceType.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`; }
@@ -14,6 +15,7 @@ export function globalItemsToNewsBatch(source: GlobalNewsRegistryEntry, items: r
     publicationId: item.publicationId, sourceId: item.sourceId, originFingerprint: item.contentFingerprint,
     externalId: item.externalId, originalUrl: item.originalUrl, title: item.title, publishedAt: item.publishedAt,
     firstSeenAt: item.retrievedAt, ingestedAt: null, asKnownAt: null, form: `GLOBAL_${source.sourceType}`,
+    contentExcerpt: source.storagePolicy.content === "PERMITTED_TEXT" && item.summary ? normalizeNewsTextV1(item.summary).slice(0, 4000) || null : null,
   }));
   const observations = ordered.map(item => ({
     observationId: stable(`${source.sourceId}:observation:${item.externalId}`).slice(0, 40), providerKey,

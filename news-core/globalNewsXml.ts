@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { GlobalNewsItem } from "./globalNewsAdapter";
 import { validateGlobalNewsRegistryEntry, type GlobalNewsRegistryEntry } from "./globalNewsRegistry";
+import { normalizeNewsTextV1 } from "./textNormalization";
 
 const MAX_XML_BYTES = 5 * 1024 * 1024;
 const tag = (value: string, name: string): string | null => {
@@ -12,12 +13,9 @@ const attr = (value: string, name: string): string | null => {
   const match = value.match(new RegExp(`\\b${name}\\s*=\\s*(["'])(.*?)\\1`, "i"));
   return match?.[2]?.trim() || null;
 };
-function decode(value: string): string {
-  return value.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1").replace(/&#(x[0-9a-f]+|\d+);/gi, (_, code: string) => String.fromCodePoint(code.toLowerCase().startsWith("x") ? parseInt(code.slice(1), 16) : Number(code))).replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
-}
-function text(value: string | null): string | null { if (!value) return null; const clean = decode(value).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim(); return clean || null; }
+function text(value: string | null): string | null { if (!value) return null; const clean = normalizeNewsTextV1(value); return clean || null; }
 function iso(value: string | null): string | null { if (!value) return null; const date = new Date(value); return Number.isFinite(date.valueOf()) ? date.toISOString() : null; }
-function url(value: string | null): string | null { if (!value) return null; try { const parsed = new URL(decode(value)); return parsed.protocol === "https:" && !parsed.username && !parsed.password && !parsed.hash && !parsed.port ? parsed.toString() : null; } catch { return null; } }
+function url(value: string | null): string | null { if (!value) return null; try { const parsed = new URL(normalizeNewsTextV1(value)); return parsed.protocol === "https:" && !parsed.username && !parsed.password && !parsed.hash && !parsed.port ? parsed.toString() : null; } catch { return null; } }
 function fingerprint(value: string): string { return createHash("sha256").update(value).digest("hex"); }
 function validateXml(raw: string): void {
   if (Buffer.byteLength(raw, "utf8") > MAX_XML_BYTES || /<!DOCTYPE|<!ENTITY|SYSTEM\s+["']|PUBLIC\s+["']/i.test(raw) || !/^\s*<\?xml|^\s*</.test(raw)) throw new Error("GLOBAL_NEWS_XML_INVALID");

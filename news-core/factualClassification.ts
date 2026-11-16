@@ -218,6 +218,9 @@ export class DeterministicFactClassifierV1 implements FactClassifierV1 {
     };
     for (const evidence of input.evidence.filter(item => item.kind === "DOCUMENT_EXCERPT" && item.excerpt)) {
       for (const text of splitSentences(evidence.excerpt as string)) {
+        // Demonstratives and pronouns without an antecedent are not enough to
+        // identify a factual event, even when a rule keyword matches.
+        if (/^(?:this|that)\s+(?:proposal|decision|event|measure)\b/i.test(text)) continue;
         for (const rule of RULES) {
           const match = rule.pattern.exec(text);
           if (!match) continue;

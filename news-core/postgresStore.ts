@@ -288,7 +288,8 @@ export class PostgresNewsStore {
        select p.publication_id, jsonb_build_object(
          'publicationId',p.publication_id,'sourceId',p.source_id,'originFingerprint',p.origin_fingerprint,
          'externalId',p.external_id,'originalUrl',p.original_url,'title',p.title,'publishedAt',p.published_at,
-         'firstSeenAt',p.first_seen_at,'ingestedAt',p.ingested_at,'asKnownAt',p.as_known_at,'form',p.form)
+         'firstSeenAt',p.first_seen_at,'ingestedAt',p.ingested_at,'asKnownAt',p.as_known_at,'form',p.form,
+         'contentExcerpt',p.content_excerpt)
          from news_core.publications p
          left join news_core.factual_pipeline_backlog b on b.publication_id=p.publication_id
         where p.visibility_state='COMMITTED' and p.as_known_at is not null and b.publication_id is null
@@ -379,10 +380,10 @@ export class PostgresNewsStore {
       for (const publication of batch.publications) {
         const result = await client.query(
           `insert into news_core.publications
-           (publication_id,source_id,origin_fingerprint,external_id,original_url,title,published_at,first_seen_at,ingested_at,as_known_at,form,visibility_state,pending_transaction_id)
-           values ($1,$2,$3,$4,$5,$6,$7::timestamptz,$8::timestamptz,null,null,$9,'PENDING',$10)
+           (publication_id,source_id,origin_fingerprint,external_id,original_url,title,published_at,first_seen_at,ingested_at,as_known_at,form,content_excerpt,visibility_state,pending_transaction_id)
+           values ($1,$2,$3,$4,$5,$6,$7::timestamptz,$8::timestamptz,null,null,$9,$10,'PENDING',$11)
            on conflict (publication_id) do nothing`,
-          [publication.publicationId, publication.sourceId, publication.originFingerprint, publication.externalId, publication.originalUrl, publication.title, publication.publishedAt, publication.firstSeenAt, publication.form, txid],
+          [publication.publicationId, publication.sourceId, publication.originFingerprint, publication.externalId, publication.originalUrl, publication.title, publication.publishedAt, publication.firstSeenAt, publication.form, publication.contentExcerpt ?? null, txid],
         );
         insertedPublications += result.rowCount ?? 0;
       }
@@ -455,10 +456,10 @@ export class PostgresNewsStore {
     const revisionId = `${publication.publicationId}:revision:1`;
     await client.query(
       `insert into news_core.publication_revisions
-        (publication_revision_id,publication_id,revision_no,title,published_at,form,content_fingerprint,source_document_ref,quality_flags,pending_transaction_id)
-       values ($1,$2,1,$3,$4::timestamptz,$5,null,$6,$7::jsonb,$8)
+        (publication_revision_id,publication_id,revision_no,title,published_at,form,content_fingerprint,content_excerpt,source_document_ref,quality_flags,pending_transaction_id)
+       values ($1,$2,1,$3,$4::timestamptz,$5,null,$6,$7,$8::jsonb,$9)
        on conflict (publication_revision_id) do nothing`,
-      [revisionId, publication.publicationId, publication.title, publication.publishedAt, publication.form, publication.originalUrl, JSON.stringify(qualityFlags), txid],
+      [revisionId, publication.publicationId, publication.title, publication.publishedAt, publication.form, publication.contentExcerpt ?? null, publication.originalUrl, JSON.stringify(qualityFlags), txid],
     );
     await client.query(
       `insert into news_core.publication_revision_provenance
@@ -508,10 +509,10 @@ export class PostgresNewsStore {
       }
       const inserted = await client.query(
         `insert into news_core.publication_revisions
-          (publication_revision_id,publication_id,revision_no,title,published_at,form,content_fingerprint,source_document_ref,quality_flags,supersedes_revision_id,pending_transaction_id)
-         values ($1,$2,$3,$4,$5::timestamptz,$6,$7,$8,$9::jsonb,$10,$11)
+          (publication_revision_id,publication_id,revision_no,title,published_at,form,content_fingerprint,content_excerpt,source_document_ref,quality_flags,supersedes_revision_id,pending_transaction_id)
+         values ($1,$2,$3,$4,$5::timestamptz,$6,$7,$8,$9,$10::jsonb,$11,$12)
          on conflict (publication_id,revision_no) do nothing`,
-        [revision.publicationRevisionId, revision.publicationId, revision.revisionNo, revision.title, revision.publishedAt, revision.form, revision.contentFingerprint, revision.sourceDocumentRef, JSON.stringify(revision.qualityFlags), revision.supersedesRevisionId, txid],
+        [revision.publicationRevisionId, revision.publicationId, revision.revisionNo, revision.title, revision.publishedAt, revision.form, revision.contentFingerprint, revision.contentExcerpt ?? null, revision.sourceDocumentRef, JSON.stringify(revision.qualityFlags), revision.supersedesRevisionId, txid],
       );
       if ((inserted.rowCount ?? 0) === 0) {
         const existing = await client.query(

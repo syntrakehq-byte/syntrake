@@ -57,8 +57,50 @@ export class NewsFactualPipelineV1 {
     return attestationId;
   }
 
+  /** Process content already obtained by an approved non-SEC adapter. The
+   * adapter's excerpt is the only factual document input; title/URL alone are
+   * deliberately insufficient. This uses the same N3-A -> N3-B -> N3-C path
+   * as SEC and never upgrades a global publication beyond REPORTED. */
+  private async processGlobalOne(publication: NewsPublication, signal?: AbortSignal, assertActive?: () => void): Promise<FactualPipelineOutcomeV1> {
+    const canonicalClaimId = `global:${publication.sourceId}:${publication.externalId}`;
+    const excerpt = publication.contentExcerpt?.trim();
+    if (!excerpt) return { publicationId: publication.publicationId, canonicalClaimId, status: "REFUSED", reason: "N3A_FACTUAL_EXCERPT_UNAVAILABLE" };
+    const asOf = new Date(Date.now() + 3_000).toISOString();
+    const revisions = await this.options.news.readPublicationRevisionsAsOf(asOf, publication.publicationId);
+    const revision = revisions.at(-1);
+    if (!revision?.asKnownAt || !revision.ingestedAt) return { publicationId: publication.publicationId, canonicalClaimId, status: "REFUSED", reason: "N2_PUBLICATION_REVISION_UNAVAILABLE" };
+    const revisionExcerpt = revision.contentExcerpt?.trim() || excerpt;
+    const evidenceId = `global-document-excerpt-${publication.sourceId}-${publication.externalId}`;
+    const provenanceRef = `${publication.publicationId}:provenance:${revision.revisionNo}`;
+    const classificationInput: ClassificationInputV1 = {
+      contractVersion: "news-fact-classification-v1", taxonomyVersion: "news-fact-taxonomy-v1", ruleSetVersion: "deterministic-rule-v1",
+      publicationRevision: { ...revision, contentFingerprint: revision.contentFingerprint, visibilityState: "COMMITTED" },
+      evidence: [{ evidenceId, publicationRevisionId: revision.publicationRevisionId, kind: "DOCUMENT_EXCERPT", sourceDocumentRef: revision.sourceDocumentRef, contentLocator: "publication:contentExcerpt", excerpt: revisionExcerpt, excerptHash: excerptHashV1(revisionExcerpt), hashSemantics: "LOCAL_CONTENT_HASH_ONLY", structuredField: null, structuredValue: null, structuredAuthority: null, observedAt: revision.asKnownAt, retrievedAt: revision.asKnownAt, asKnownAt: revision.asKnownAt, provenanceRef }],
+      proposedAt: revision.asKnownAt,
+    };
+    const classification = this.verifier.classify(classificationInput);
+    if (classification.proposals.length === 0) return { publicationId: publication.publicationId, canonicalClaimId, status: "REFUSED", reason: classification.refusalReasons[0] ?? "N3A_REFUSED" };
+    const proposal = classification.proposals[0];
+    assertActive?.();
+    const claimKey = claimKeyV1(proposal);
+    const corroborationInput: CorroborationInputV1 = { contractVersion: "news-evidence-corroboration-v1", ruleSetVersion: "evidence-corroboration-rule-v1", proposal, claimKey,
+      claimIdentities: [{ claimKey, canonicalClaimId, publicationRevisionId: revision.publicationRevisionId, statementFingerprint: sha256(proposal.statement), asKnownAt: proposal.proposedAt }], claimEquivalences: [], cutoffAsKnownAt: proposal.proposedAt, evaluatedAt: revision.asKnownAt,
+      evidence: [{ evidenceId: `n3b-${evidenceId}`, claimKey, originId: `${publication.sourceId}-origin`, sourceDocumentRef: revision.sourceDocumentRef, publicationRevisionId: revision.publicationRevisionId, provenanceRef, contentLocator: "publication:contentExcerpt", statementHash: sha256(proposal.statement), support: "SUPPORTS", asKnownAt: revision.asKnownAt, availableAsKnownAt: revision.asKnownAt, proposalEvidenceId: evidenceId }], verificationProofs: [],
+      origins: [{ originId: `${publication.sourceId}-origin`, sourceDocumentRef: revision.sourceDocumentRef, publicationRevisionId: revision.publicationRevisionId, publisherRef: publication.sourceId, editorialGroupRef: null, sourceKind: "SECONDARY", provenanceRef, availableAsKnownAt: revision.asKnownAt, competence: [{ claimKey, status: "UNKNOWN", basis: "IDENTIFIED_REPORT", evidenceRefs: [] }] }], independence: [] };
+    const corroboration = this.corroborator.evaluate(corroborationInput);
+    const persistInput: PersistFactualInputV1 = { attestationId: "pending", canonicalClaimId, proposal, corroborationInput, corroboration,
+      evidence: [{ evidenceId, evidenceKind: "N3A_PROPOSAL", claimKey, publicationRevisionId: revision.publicationRevisionId, sourceDocumentRef: revision.sourceDocumentRef, contentLocator: "publication:contentExcerpt", provenanceRef, asKnownAt: revision.asKnownAt }],
+      dependencies: [{ dependencyType: "N2_PUBLICATION_REVISION", dependencyRef: revision.publicationRevisionId, asKnownAt: revision.asKnownAt }, { dependencyType: "N3A_PROPOSAL", dependencyRef: proposal.inputFingerprint, asKnownAt: proposal.proposedAt }, { dependencyType: "N3B_EVALUATION", dependencyRef: corroboration.fingerprint, asKnownAt: corroborationInput.evaluatedAt }] };
+    const payload: Record<string, unknown> = { canonicalClaimId, taxonomyVersion: proposal.taxonomyVersion, category: proposal.category, logicalFingerprint: factualLogicalFingerprintV1(persistInput), ruleSetVersion: proposal.ruleSetVersion, claimType: proposal.claimType, statement: proposal.statement, subjectRef: proposal.subjectRef, objectRef: proposal.objectRef, occurredAt: proposal.occurredAt, scheduledFor: proposal.scheduledFor, confirmationStatus: corroboration.confirmationStatus, lifecycleStatus: corroboration.lifecycleStatus, polarity: corroboration.polarity, focalClaimKey: claimKey, publicationRevisionId: revision.publicationRevisionId, qualityFlags: proposal.qualityFlags, evidence: persistInput.evidence, dependencies: persistInput.dependencies, relation: null };
+    const attestationId = await this.attest(payload);
+    assertActive?.();
+    const persisted = await this.factual.persist({ ...persistInput, attestationId });
+    return { publicationId: publication.publicationId, canonicalClaimId, status: "PERSISTED", reason: "FACTUAL_PIPELINE_COMPLETED", factEventId: persisted.factEventId, confirmationStatus: corroboration.confirmationStatus };
+  }
+
   private async processOne(publication: NewsPublication, signal?: AbortSignal, assertActive?: () => void): Promise<FactualPipelineOutcomeV1> {
     assertActive?.();
+    if (publication.sourceId !== "sec-edgar") return await this.processGlobalOne(publication, signal, assertActive);
     if (publication.form !== "8-K") return { publicationId: publication.publicationId, canonicalClaimId: `sec:${publication.externalId}`, status: "REFUSED", reason: "FACTUAL_DOCUMENT_FORM_UNSUPPORTED" };
     try {
       const response = await fetchSafeExternal(publication.originalUrl, { headers: { "User-Agent": this.options.userAgent, Accept: "text/html" }, signal: signal ?? AbortSignal.timeout(20_000) });

@@ -1,7 +1,7 @@
 export type NewsPublication = Readonly<{
   publicationId: string; sourceId: string; originFingerprint: string; externalId: string;
   originalUrl: string; title: string; publishedAt: string | null; firstSeenAt: string;
-  ingestedAt: string | null; asKnownAt: string | null; form: string;
+  ingestedAt: string | null; asKnownAt: string | null; form: string; contentExcerpt?: string | null;
 }>;
 export type NewsProviderObservation = Readonly<{
   observationId: string; providerKey: string; providerObservationKey: string; publicationId: string;
@@ -12,6 +12,7 @@ export type NewsBatch = Readonly<{ publications: readonly NewsPublication[]; obs
 export type NewsPublicationRevision = Readonly<{
   publicationRevisionId: string; publicationId: string; revisionNo: number; title: string;
   publishedAt: string | null; form: string; contentFingerprint: string | null;
+  contentExcerpt?: string | null;
   sourceDocumentRef: string; qualityFlags: readonly string[]; supersedesRevisionId: string | null;
   ingestedAt: string | null; asKnownAt: string | null;
 }>;
