@@ -59,6 +59,7 @@ test("BL3 operational executor runs SEC through N3 and N5 with positive and cons
       observations: [{ observationId: `${knownPublicationId}:observation`, providerKey: "sec", providerObservationKey: "0001193125-21-054710", publicationId: knownPublicationId, observedAt: knownNow, retrievedAt: knownNow, publisherKey: "sec-edgar" }],
       checkpoint: { sourceId: "sec-edgar", collectionScopeKey: `bl3-known-${suffix}`, cursor: "0001193125-21-054710", updatedAt: knownNow },
     });
+    await news.reconcileFactualBacklog();
     const atomicScope = `bl3-atomic-${suffix}`;
     const atomicPublicationId = `bl3-atomic-publication-${suffix}`;
     const atomicNow = new Date().toISOString();
