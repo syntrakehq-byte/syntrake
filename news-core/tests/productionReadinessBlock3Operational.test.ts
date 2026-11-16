@@ -60,7 +60,7 @@ test("BL3 operational executor runs SEC through N3 and N5 with positive and cons
       checkpoint: { sourceId: "sec-edgar", collectionScopeKey: `bl3-known-${suffix}`, cursor: "0001193125-21-054710", updatedAt: knownNow },
     });
     await news.ingestPublicationRevision({
-      revision: { publicationRevisionId: `${knownPublicationId}:revision:1`, publicationId: knownPublicationId, revisionNo: 1, title: "Apple Inc. 8-K 2021-02-24", publishedAt: "2021-02-24T00:00:00.000Z", form: "8-K", contentFingerprint: "official-sec-document-pending", sourceDocumentRef: "https://www.sec.gov/Archives/edgar/data/320193/000119312521054710/d101693d8k.htm", qualityFlags: [], supersedesRevisionId: null },
+      revision: { publicationRevisionId: `${knownPublicationId}:revision:1`, publicationId: knownPublicationId, revisionNo: 1, title: "Apple Inc. 8-K 2021-02-24", publishedAt: "2021-02-24T00:00:00.000Z", form: "8-K", contentFingerprint: "60a83f6b55108e442c8ae96aa0a2a86d736a74378b6a02feff57b37e13d05de7", sourceDocumentRef: "https://www.sec.gov/Archives/edgar/data/320193/000119312521054710/d101693d8k.htm", qualityFlags: [], supersedesRevisionId: null },
       provenance: { provenanceId: `${knownPublicationId}:provenance:1`, publicationRevisionId: `${knownPublicationId}:revision:1`, sourceId: "sec-edgar", providerKey: "sec", providerObservationKey: "0001193125-21-054710:document", originalUrl: "https://www.sec.gov/Archives/edgar/data/320193/000119312521054710/d101693d8k.htm", sourceDocumentRef: "https://www.sec.gov/Archives/edgar/data/320193/000119312521054710/d101693d8k.htm", retrievedAt: knownNow, qualityFlags: [] },
     });
     const atomicScope = `bl3-atomic-${suffix}`;
