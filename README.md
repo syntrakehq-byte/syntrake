@@ -43,3 +43,9 @@ npm run audit:prod
 4. Deploy with the default Next.js settings.
 
 Syntrake does not custody funds or execute external transactions. Account access is handled by Clerk and subscriptions are handled by Stripe.
+
+## Architecture and engineering governance
+
+The [SYNTRAKE Architecture & Roadmap R0–R7 index](docs/architecture/current.md) defines the documented boundaries for Platform, Investing, Trading, and their acceptance gates. It also points to the historical architecture audit and the dated operational snapshot.
+
+Before development or a release, verify the accepted `main` SHA and the current GitHub, Supabase and Vercel evidence. A document visible only on a PR branch is not canonical; no architecture document by itself authorizes merges, database changes, deployments or financial execution.
