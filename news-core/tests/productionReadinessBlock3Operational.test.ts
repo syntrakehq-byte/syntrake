@@ -48,6 +48,17 @@ test("BL3 operational executor runs SEC through N3 and N5 with positive and cons
     const scope = `bl3-operational-sec-${suffix}`;
     await news.ensureSource("sec-edgar", "sec");
     await news.upsertTarget({ collectionScopeKey: scope, sourceId: "sec-edgar", providerKey: "sec", entityKey: "0000320193", parameters: { forms: ["10-K", "10-Q", "8-K", "20-F", "6-K"], overlapDays: 7 } });
+    // Use a genuine, stable SEC filing for the positive operational assertion.
+    // The document is fetched through the normal factual transport below; only
+    // its already verified N1 metadata is replayed to avoid depending on which
+    // live filing happens to be first in a 20-document SEC window.
+    const knownPublicationId = `bl3-known-sec-${suffix}`;
+    const knownNow = new Date().toISOString();
+    await news.ingestAdministrative({
+      publications: [{ publicationId: knownPublicationId, sourceId: "sec-edgar", originFingerprint: "0001193125-21-054710", externalId: "0001193125-21-054710", originalUrl: "https://www.sec.gov/Archives/edgar/data/320193/000119312521054710/d101693d8k.htm", title: "Apple Inc. 8-K 2021-02-24", publishedAt: "2021-02-24T00:00:00.000Z", firstSeenAt: knownNow, ingestedAt: null, asKnownAt: null, form: "8-K" }],
+      observations: [{ observationId: `${knownPublicationId}:observation`, providerKey: "sec", providerObservationKey: "0001193125-21-054710", publicationId: knownPublicationId, observedAt: knownNow, retrievedAt: knownNow, publisherKey: "sec-edgar" }],
+      checkpoint: { sourceId: "sec-edgar", collectionScopeKey: `bl3-known-${suffix}`, cursor: "0001193125-21-054710", updatedAt: knownNow },
+    });
     const atomicScope = `bl3-atomic-${suffix}`;
     const atomicPublicationId = `bl3-atomic-publication-${suffix}`;
     const atomicNow = new Date().toISOString();
