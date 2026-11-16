@@ -32,7 +32,8 @@ test("BL3 operational executor runs SEC through N3 and N5 with positive and cons
   try {
     await admin.connect();
     assert.match((await admin.query<{ version: string }>("select current_setting('server_version') version")).rows[0].version, /^17\./);
-    for (const file of ["20261111150000_news_core_postgres_n1.sql", "20261111170000_news_core_n2a_revisions.sql", "20261112120000_news_core_n3c_factual_persistence.sql", "20261112170000_news_core_n3c_factual_writer_boundary.sql", "20261112150000_news_core_n5_read_api.sql", "20261113100000_news_core_bl3_factual_backlog.sql", "20261113110000_news_core_bl3_backlog_fencing.sql"]) await admin.query(await readFile(migration(file), "utf8"));
+    await admin.query("drop function if exists news_core.read_publication_revisions_as_of(timestamptz,text)");
+    for (const file of ["20261111150000_news_core_postgres_n1.sql", "20261111170000_news_core_n2a_revisions.sql", "20261116140000_news_core_ng4_context.sql", "20261112120000_news_core_n3c_factual_persistence.sql", "20261112170000_news_core_n3c_factual_writer_boundary.sql", "20261112150000_news_core_n5_read_api.sql", "20261113100000_news_core_bl3_factual_backlog.sql", "20261113110000_news_core_bl3_backlog_fencing.sql"]) await admin.query(await readFile(migration(file), "utf8"));
     await admin.query(`create role ${verifierRole} login inherit password '${ROLE_PASSWORD}' nocreatedb nocreaterole`);
     await admin.query(`create role ${attestorRole} login inherit password '${ROLE_PASSWORD}' nocreatedb nocreaterole`);
     await admin.query(`create role ${writerRole} login inherit password '${ROLE_PASSWORD}' nocreatedb nocreaterole`);

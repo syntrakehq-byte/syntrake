@@ -29,7 +29,8 @@ test("Production readiness BL3 real SEC to N5 circuit is conservative and idempo
   try {
     await admin.connect();
     assert.match((await admin.query<{ version: string }>("select current_setting('server_version') version")).rows[0].version, /^17\./);
-    for (const file of ["20261111150000_news_core_postgres_n1.sql", "20261111170000_news_core_n2a_revisions.sql", "20261112120000_news_core_n3c_factual_persistence.sql", "20261112170000_news_core_n3c_factual_writer_boundary.sql", "20261112150000_news_core_n5_read_api.sql"]) await admin.query(await readFile(migration(file), "utf8"));
+    await admin.query("drop function if exists news_core.read_publication_revisions_as_of(timestamptz,text)");
+    for (const file of ["20261111150000_news_core_postgres_n1.sql", "20261111170000_news_core_n2a_revisions.sql", "20261116140000_news_core_ng4_context.sql", "20261112120000_news_core_n3c_factual_persistence.sql", "20261112170000_news_core_n3c_factual_writer_boundary.sql", "20261112150000_news_core_n5_read_api.sql"]) await admin.query(await readFile(migration(file), "utf8"));
 
     const collected = await fetchSecFilings({ cik: "0000320193", userAgent, now: new Date(), signal: AbortSignal.timeout(20_000) });
     const candidates = collected.publications.filter(item => item.form === "8-K").slice(0, 20);

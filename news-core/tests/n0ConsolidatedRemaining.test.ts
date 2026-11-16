@@ -49,8 +49,10 @@ test("N0 consolidated local rehearsal: T15, T27 partial recovery and T28 clock/P
   try {
     await admin.connect();
     assert.match((await admin.query<{ v: string }>("select current_setting('server_version') v")).rows[0].v, /^17\./);
+    await admin.query("drop function if exists news_core.read_publication_revisions_as_of(timestamptz,text)");
     await admin.query(await readFile(n1, "utf8"));
     await admin.query(await readFile(n2a, "utf8"));
+    await admin.query(await readFile(new URL("../../supabase/migrations/20261116140000_news_core_ng4_context.sql", import.meta.url), "utf8"));
     await store.ensureSource("sec-edgar", "sec");
     const liveA = await liveReplay(A);
     const liveB = await liveReplay(B);
