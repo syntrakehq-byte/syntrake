@@ -5,15 +5,16 @@ import type { GlobalNewsRegistryEntry } from "../globalNewsRegistry";
 import { fetchAndParseRegisteredSource } from "../globalNewsCollector";
 
 const source = (sourceId: string, publisher: string, endpoint: string): GlobalNewsRegistryEntry => ({
-  registryVersion: "1.0", sourceId, publisherId: sourceId, publisher, category: sourceId === "sec" ? "REGULATOR" : "CENTRAL_BANK", geoScope: [sourceId === "ecb" ? "EU" : "US"], sourceType: "RSS_2", endpoint, allowedArticleHosts: [new URL(endpoint).hostname], rightsPolicyId: "official-metadata-v1", updatePolicy: { minIntervalSeconds: 60, maxItemsPerCycle: 50 }, storagePolicy: { content: "METADATA_ONLY", retentionDays: 30, presentation: "PUBLIC" }, status: "ACTIVE", checkpointScope: `${sourceId}:press`,
+  registryVersion: "1.0", sourceId, publisherId: sourceId, publisher, category: sourceId === "sec" ? "REGULATOR" : "CENTRAL_BANK", geoScope: [sourceId === "ecb" ? "EU" : sourceId === "boe" ? "UK" : "US"], sourceType: "RSS_2", endpoint, allowedArticleHosts: [new URL(endpoint).hostname], rightsPolicyId: "official-metadata-v1", updatePolicy: { minIntervalSeconds: 60, maxItemsPerCycle: 50 }, storagePolicy: { content: "METADATA_ONLY", retentionDays: 30, presentation: "PUBLIC" }, status: "ACTIVE", checkpointScope: `${sourceId}:press`,
 });
 
 test("live official RSS sources return real normalized publications", { skip: !process.env.RUN_GLOBAL_NEWS_LIVE && "RUN_GLOBAL_NEWS_LIVE=1 required for external-source rehearsal" }, async () => {
   const sources = [
     source("ecb", "European Central Bank", "https://www.ecb.europa.eu/rss/press.html"),
-    // The Board's RSS index exposes this active statistical-release XML feed;
-    // the historical press_all.xml endpoint returns 404 in the CI runner.
-    source("fed", "Federal Reserve Board", "https://www.federalreserve.gov/feeds/H10.html"),
+    // The Federal Reserve press feed currently returns 404 in the CI runner;
+    // use the active official Bank of England RSS endpoint as the third
+    // central-bank source for this live rehearsal.
+    source("boe", "Bank of England", "https://www.bankofengland.co.uk/rss/news"),
     source("sec", "U.S. Securities and Exchange Commission", "https://www.sec.gov/rss/news/press.xml"),
   ];
   const persisted: Array<{ sourceId: string; count: number; firstId: string }> = [];
