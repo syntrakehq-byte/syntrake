@@ -40,7 +40,8 @@ async function installTarget(store: PostgresNewsStore, scope: string, cik = CIK)
 }
 
 async function applyN1Migrations(admin: Client): Promise<void> {
-  for (const file of ["20261111150000_news_core_postgres_n1.sql", "20261111170000_news_core_n2a_revisions.sql"]) await admin.query(await readFile(migration(file), "utf8"));
+  await admin.query("drop function if exists news_core.read_publication_revisions_as_of(timestamptz,text)");
+  for (const file of ["20261111150000_news_core_postgres_n1.sql", "20261111170000_news_core_n2a_revisions.sql", "20261116140000_news_core_ng4_context.sql"]) await admin.query(await readFile(migration(file), "utf8"));
 }
 
 async function openIsolatedDatabase(): Promise<{ admin: Client; connectionString: string; close: () => Promise<void> }> {
