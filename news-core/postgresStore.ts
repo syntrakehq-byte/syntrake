@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import type { NewsBatch, NewsPublication, NewsPublicationRevision, NewsRevisionProvenance } from "./contracts";
+import type { NewsIncrementalPositionV1 } from "./n5Api";
+import type { GlobalNewsItem } from "./globalNewsAdapter";
+import type { GlobalNewsRegistryEntry } from "./globalNewsRegistry";
+import { globalItemsToNewsBatch } from "./globalNewsPersistence";
 import { canonicalCandidate, validateEntityResolution, type MarketCoreResolutionV1 } from "./entityResolution";
 import { stableEditorialFingerprint, validateEditorialGroupResolution, validateStructuralEventLinkResolution, type EditorialGroupResolutionV1, type StructuralEventLinkResolutionV1 } from "./editorialRelations";
 
@@ -25,6 +29,11 @@ export type NewsRevisionInput = Readonly<{
 }>;
 export type NewsRevisionIngestResult = Readonly<{ inserted: boolean; publicationRevisionId: string }>;
 export type FactualBacklogClaim = Readonly<{ publication: NewsPublication; claimToken: string }>;
+export type GlobalOperationalState = Readonly<{
+  sourceId: string; collectionScopeKey: string; coverage: "KNOWN" | "UNKNOWN";
+  health: "HEALTHY" | "EMPTY" | "STALE" | "UNAVAILABLE" | "ERROR";
+  observed: number; insertedPublications: number; lastPublishedAt?: string | null; lastErrorCode?: string | null;
+}>;
 
 function watermarkKey(batch: NewsBatch): string | null {
   const cursor = batch.checkpoint.cursor;
@@ -238,6 +247,40 @@ export class PostgresNewsStore {
        on conflict (source_id) do update set provider_key=excluded.provider_key`, [sourceId, providerKey, sourceType],
     );
   }
+  async ensureGlobalSource(source: GlobalNewsRegistryEntry): Promise<void> {
+    await this.pool.query(
+      `insert into news_core.sources(source_id,provider_key,source_type,publisher_id,category,geo_scope,endpoint,rights_policy_id,storage_policy,retention_days,source_status)
+       values ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9::jsonb,$10,$11)
+       on conflict (source_id) do update set provider_key=excluded.provider_key,source_type=excluded.source_type,publisher_id=excluded.publisher_id,category=excluded.category,geo_scope=excluded.geo_scope,endpoint=excluded.endpoint,rights_policy_id=excluded.rights_policy_id,storage_policy=excluded.storage_policy,retention_days=excluded.retention_days,source_status=excluded.source_status`,
+      [source.sourceId, `global-${source.sourceType.toLowerCase()}`, source.sourceType, source.publisherId, source.category, JSON.stringify(source.geoScope), source.endpoint, source.rightsPolicyId, JSON.stringify(source.storagePolicy), source.storagePolicy.retentionDays, source.status],
+    );
+  }
+  async ingestGlobalBatch(source: GlobalNewsRegistryEntry, items: readonly GlobalNewsItem[], options: IngestOptions = {}): Promise<{ insertedPublications: number; insertedObservations: number }> {
+    await this.ensureGlobalSource(source);
+    return this.ingestAdministrative(globalItemsToNewsBatch(source, items), options);
+  }
+  async recordGlobalOperationalState(state: GlobalOperationalState): Promise<void> {
+    const installed = (await this.pool.query<{ installed: boolean }>("select to_regclass('news_core.global_operational_state') is not null installed")).rows[0]?.installed;
+    if (!installed) return;
+    await this.pool.query(`
+      insert into news_core.global_operational_state(source_id,collection_scope_key,coverage,health,cycles,observed,inserted_publications,last_success_at,last_observed_at,last_published_at,last_error_code,updated_at)
+      values ($1,$2,$3,$4,1,$5,$6,case when $4 in ('HEALTHY','EMPTY') then clock_timestamp() else null end,clock_timestamp(),$7,$8,clock_timestamp())
+      on conflict (source_id,collection_scope_key) do update set
+        coverage=excluded.coverage, health=excluded.health,
+        cycles=news_core.global_operational_state.cycles+1,
+        observed=news_core.global_operational_state.observed+excluded.observed,
+        inserted_publications=news_core.global_operational_state.inserted_publications+excluded.inserted_publications,
+        last_success_at=case when excluded.health in ('HEALTHY','EMPTY') then excluded.last_success_at else news_core.global_operational_state.last_success_at end,
+        last_observed_at=excluded.last_observed_at,
+        last_published_at=coalesce(excluded.last_published_at,news_core.global_operational_state.last_published_at),
+        last_error_code=excluded.last_error_code, updated_at=clock_timestamp()` ,
+      [state.sourceId, state.collectionScopeKey, state.coverage, state.health, state.observed, state.insertedPublications, state.lastPublishedAt ?? null, state.lastErrorCode ?? null],
+    );
+  }
+  async readGlobalOperationalState(sourceId: string, collectionScopeKey: string): Promise<Record<string, unknown> | null> {
+    const result = await this.pool.query("select * from news_core.global_operational_state where source_id=$1 and collection_scope_key=$2", [sourceId, collectionScopeKey]);
+    return result.rows[0] ?? null;
+  }
   async upsertTarget(target: NewsTarget): Promise<void> {
     await this.pool.query(
       `insert into news_core.collection_targets(collection_scope_key,source_id,provider_key,entity_key,parameters,next_run_at)
@@ -252,6 +295,30 @@ export class PostgresNewsStore {
       `select cursor,updated_at from news_core.checkpoints where collection_scope_key=$1 and visibility_state='COMMITTED'`, [scope],
     );
     const row = result.rows[0]; return row ? { cursor: row.cursor, updatedAt: row.updated_at.toISOString() } : null;
+  }
+
+  async loadGlobalNewsConsumerCursor(consumerId: string): Promise<string | null> {
+    const result = await this.pool.query<{ cursor: string | null }>("select cursor from news_core.global_news_consumer_cursors where consumer_id=$1", [consumerId]);
+    return result.rows[0]?.cursor ?? null;
+  }
+
+  async saveGlobalNewsConsumerCursor(consumerId: string, cursor: string | null): Promise<void> {
+    await this.pool.query("insert into news_core.global_news_consumer_cursors(consumer_id,cursor) values ($1,$2) on conflict (consumer_id) do update set cursor=excluded.cursor,updated_at=clock_timestamp()", [consumerId, cursor]);
+  }
+
+  async claimGlobalNewsConsumer(consumerId: string, owner: string, leaseSeconds = 60): Promise<string | null> {
+    const result = await this.pool.query<{ cursor: string | null }>(`insert into news_core.global_news_consumer_cursors(consumer_id,cursor,lease_owner,lease_until) values ($1,null,$2,clock_timestamp()+make_interval(secs=>$3)) on conflict (consumer_id) do update set lease_owner=excluded.lease_owner,lease_until=excluded.lease_until,updated_at=clock_timestamp() where news_core.global_news_consumer_cursors.lease_until is null or news_core.global_news_consumer_cursors.lease_until<=clock_timestamp() returning cursor`, [consumerId, owner, leaseSeconds]);
+    if (result.rowCount !== 1) throw new Error("NEWS_GLOBAL_CONSUMER_BUSY");
+    return result.rows[0].cursor;
+  }
+
+  async acknowledgeGlobalNewsConsumer(consumerId: string, owner: string, expectedCursor: string | null, nextCursor: string | null): Promise<void> {
+    const result = await this.pool.query("update news_core.global_news_consumer_cursors set cursor=$4,lease_owner=null,lease_until=null,updated_at=clock_timestamp() where consumer_id=$1 and lease_owner=$2 and lease_until > clock_timestamp() and cursor is not distinct from $3", [consumerId, owner, expectedCursor, nextCursor]);
+    if (result.rowCount !== 1) throw new Error("NEWS_GLOBAL_CONSUMER_FENCE_LOST");
+  }
+
+  async releaseGlobalNewsConsumer(consumerId: string, owner: string): Promise<void> {
+    await this.pool.query("update news_core.global_news_consumer_cursors set lease_owner=null,lease_until=null,updated_at=clock_timestamp() where consumer_id=$1 and lease_owner=$2", [consumerId, owner]);
   }
 
   async enqueueFactualBacklog(publications: readonly NewsPublication[]): Promise<number> {
@@ -273,7 +340,8 @@ export class PostgresNewsStore {
        select p.publication_id, jsonb_build_object(
          'publicationId',p.publication_id,'sourceId',p.source_id,'originFingerprint',p.origin_fingerprint,
          'externalId',p.external_id,'originalUrl',p.original_url,'title',p.title,'publishedAt',p.published_at,
-         'firstSeenAt',p.first_seen_at,'ingestedAt',p.ingested_at,'asKnownAt',p.as_known_at,'form',p.form)
+         'firstSeenAt',p.first_seen_at,'ingestedAt',p.ingested_at,'asKnownAt',p.as_known_at,'form',p.form,
+         'contentExcerpt',p.content_excerpt)
          from news_core.publications p
          left join news_core.factual_pipeline_backlog b on b.publication_id=p.publication_id
         where p.visibility_state='COMMITTED' and p.as_known_at is not null and b.publication_id is null
@@ -364,10 +432,10 @@ export class PostgresNewsStore {
       for (const publication of batch.publications) {
         const result = await client.query(
           `insert into news_core.publications
-           (publication_id,source_id,origin_fingerprint,external_id,original_url,title,published_at,first_seen_at,ingested_at,as_known_at,form,visibility_state,pending_transaction_id)
-           values ($1,$2,$3,$4,$5,$6,$7::timestamptz,$8::timestamptz,null,null,$9,'PENDING',$10)
+           (publication_id,source_id,origin_fingerprint,external_id,original_url,title,published_at,first_seen_at,ingested_at,as_known_at,form,content_excerpt,visibility_state,pending_transaction_id)
+           values ($1,$2,$3,$4,$5,$6,$7::timestamptz,$8::timestamptz,null,null,$9,$10,'PENDING',$11)
            on conflict (publication_id) do nothing`,
-          [publication.publicationId, publication.sourceId, publication.originFingerprint, publication.externalId, publication.originalUrl, publication.title, publication.publishedAt, publication.firstSeenAt, publication.form, txid],
+          [publication.publicationId, publication.sourceId, publication.originFingerprint, publication.externalId, publication.originalUrl, publication.title, publication.publishedAt, publication.firstSeenAt, publication.form, publication.contentExcerpt ?? null, txid],
         );
         insertedPublications += result.rowCount ?? 0;
       }
@@ -440,10 +508,10 @@ export class PostgresNewsStore {
     const revisionId = `${publication.publicationId}:revision:1`;
     await client.query(
       `insert into news_core.publication_revisions
-        (publication_revision_id,publication_id,revision_no,title,published_at,form,content_fingerprint,source_document_ref,quality_flags,pending_transaction_id)
-       values ($1,$2,1,$3,$4::timestamptz,$5,null,$6,$7::jsonb,$8)
+        (publication_revision_id,publication_id,revision_no,title,published_at,form,content_fingerprint,content_excerpt,source_document_ref,quality_flags,pending_transaction_id)
+       values ($1,$2,1,$3,$4::timestamptz,$5,null,$6,$7,$8::jsonb,$9)
        on conflict (publication_revision_id) do nothing`,
-      [revisionId, publication.publicationId, publication.title, publication.publishedAt, publication.form, publication.originalUrl, JSON.stringify(qualityFlags), txid],
+      [revisionId, publication.publicationId, publication.title, publication.publishedAt, publication.form, publication.contentExcerpt ?? null, publication.originalUrl, JSON.stringify(qualityFlags), txid],
     );
     await client.query(
       `insert into news_core.publication_revision_provenance
@@ -493,10 +561,10 @@ export class PostgresNewsStore {
       }
       const inserted = await client.query(
         `insert into news_core.publication_revisions
-          (publication_revision_id,publication_id,revision_no,title,published_at,form,content_fingerprint,source_document_ref,quality_flags,supersedes_revision_id,pending_transaction_id)
-         values ($1,$2,$3,$4,$5::timestamptz,$6,$7,$8,$9::jsonb,$10,$11)
+          (publication_revision_id,publication_id,revision_no,title,published_at,form,content_fingerprint,content_excerpt,source_document_ref,quality_flags,supersedes_revision_id,pending_transaction_id)
+         values ($1,$2,$3,$4,$5::timestamptz,$6,$7,$8,$9,$10::jsonb,$11,$12)
          on conflict (publication_id,revision_no) do nothing`,
-        [revision.publicationRevisionId, revision.publicationId, revision.revisionNo, revision.title, revision.publishedAt, revision.form, revision.contentFingerprint, revision.sourceDocumentRef, JSON.stringify(revision.qualityFlags), revision.supersedesRevisionId, txid],
+        [revision.publicationRevisionId, revision.publicationId, revision.revisionNo, revision.title, revision.publishedAt, revision.form, revision.contentFingerprint, revision.contentExcerpt ?? null, revision.sourceDocumentRef, JSON.stringify(revision.qualityFlags), revision.supersedesRevisionId, txid],
       );
       if ((inserted.rowCount ?? 0) === 0) {
         const existing = await client.query(
@@ -674,6 +742,23 @@ export class PostgresNewsStore {
   async readPublicationRevisionsFilteredAsOf(asOf: string, query: string | null, sourceIds: readonly string[], forms: readonly string[]): Promise<NewsPublicationRevision[]> {
     const result = await this.pool.query<NewsPublicationRevision>("select * from news_core.read_publication_revisions_filtered_as_of($1::timestamptz,$2::text,$3::text[],$4::text[])", [asOf, query, sourceIds, forms]);
     return result.rows.map(row => ({ ...row, publishedAt: optionalIso(row.publishedAt), ingestedAt: optionalIso(row.ingestedAt), asKnownAt: optionalIso(row.asKnownAt), qualityFlags: flags(row.qualityFlags) }));
+  }
+
+  async readPublicationRevisionsPageAsOf(asOf: string, query: string | null, sourceIds: readonly string[], forms: readonly string[], entityIds: readonly string[], instrumentIds: readonly string[], offset: number, limit: number, sort: "STABLE" | "RECENT"): Promise<NewsPublicationRevision[]> {
+    try {
+      const result = await this.pool.query<NewsPublicationRevision>("select * from news_core.read_global_publication_revisions_page_as_of($1::timestamptz,$2::text,$3::text[],$4::text[],$5::text[],$6::text[],$7::integer,$8::integer,$9::text)", [asOf, query, sourceIds, forms, entityIds, instrumentIds, offset, limit, sort]);
+      return result.rows.map(row => ({ ...row, publishedAt: optionalIso(row.publishedAt), ingestedAt: optionalIso(row.ingestedAt), asKnownAt: optionalIso(row.asKnownAt), qualityFlags: flags(row.qualityFlags), contentExcerpt: row.rightsMode === "PERMITTED_TEXT" ? row.contentExcerpt ?? null : null }));
+    } catch (error) {
+      if ((error as { code?: string }).code !== "42883" || entityIds.length || instrumentIds.length) throw error;
+      const rows = await this.readPublicationRevisionsFilteredAsOf(asOf, query, sourceIds, forms);
+      const ordered = sort === "RECENT" ? [...rows].sort((a, b) => Date.parse(b.publishedAt ?? b.asKnownAt ?? "") - Date.parse(a.publishedAt ?? a.asKnownAt ?? "") || a.publicationId.localeCompare(b.publicationId)) : rows;
+      return ordered.slice(offset, offset + limit);
+    }
+  }
+
+  async readPublicationRevisionsIncrementalAsOf(asOf: string, query: string | null, sourceIds: readonly string[], forms: readonly string[], entityIds: readonly string[], instrumentIds: readonly string[], after: NewsIncrementalPositionV1 | null, limit: number): Promise<NewsPublicationRevision[]> {
+    const result = await this.pool.query<NewsPublicationRevision>("select * from news_core.read_global_publication_revisions_incremental_as_of($1::timestamptz,$2::text,$3::text[],$4::text[],$5::text[],$6::text[],$7::timestamptz,$8::text,$9::integer)", [asOf, query, sourceIds, forms, entityIds, instrumentIds, after?.asKnownAt ?? null, after?.publicationRevisionId ?? null, limit]);
+    return result.rows.map(row => ({ ...row, publishedAt: optionalIso(row.publishedAt), ingestedAt: optionalIso(row.ingestedAt), asKnownAt: optionalIso(row.asKnownAt), qualityFlags: flags(row.qualityFlags), contentExcerpt: row.rightsMode === "PERMITTED_TEXT" ? row.contentExcerpt ?? null : null }));
   }
 
   async readEntityLinksAsOf(asOf: string, publicationId?: string): Promise<readonly Record<string, unknown>[]> {

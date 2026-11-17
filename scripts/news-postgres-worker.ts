@@ -1,7 +1,8 @@
 import { Pool } from "pg";
 import { existsSync, unlinkSync } from "node:fs";
 import { PostgresNewsStore } from "../news-core/postgresStore";
-import { registerSecTarget, runNewsExecutorForever } from "../news-core/autonomousExecutor";
+import { registerGlobalTarget, registerSecTarget, runNewsExecutorForever } from "../news-core/autonomousExecutor";
+import type { GlobalNewsRegistryEntry } from "../news-core/globalNewsRegistry";
 import { NewsFactualPipelineV1 } from "../news-core/factualPipeline";
 
 const url = process.env.NEWS_DATABASE_URL;
@@ -29,6 +30,7 @@ console.log(`NEWS_WORKER_READY pid=${process.pid} workerId=${process.env.NEWS_WO
 const factualPipeline = executionMode === "FACTUAL"
   ? new NewsFactualPipelineV1({ news: store, verifierPool: new Pool({ connectionString: withSessionRole(factualVerifierUrl, "news_pipeline_verifier"), max: 2, application_name: "syntrake-news-verifier" }), attestorPool: new Pool({ connectionString: withSessionRole(factualAttestorUrl, "news_factual_attestor"), max: 2, application_name: "syntrake-news-attestor" }), writerPool: new Pool({ connectionString: withSessionRole(factualWriterUrl, "news_factual_writer"), max: 2, application_name: "syntrake-news-writer" }), userAgent, maxDocuments: Number(process.env.NEWS_FACTUAL_DOCUMENT_LIMIT ?? 20), processingHoldMs: process.env.NODE_ENV === "test" && process.env.NEWS_TEST_ALLOW_PROCESSING_HOLD === "1" ? Number(process.env.NEWS_FACTUAL_PROCESSING_HOLD_MS ?? 0) : 0 })
   : undefined;
+const globalSources = process.env.NEWS_GLOBAL_SOURCES_JSON ? JSON.parse(process.env.NEWS_GLOBAL_SOURCES_JSON) as GlobalNewsRegistryEntry[] : [];
 const abort = new AbortController();
 let executionFailed = false;
 const shutdownFile = process.env.NEWS_SHUTDOWN_FILE;
@@ -51,8 +53,8 @@ if (shutdownFile) {
     }
   }, 100);
 }
-registerSecTarget(store, process.env.SEC_CIK ?? "0000320193")
-  .then(() => runNewsExecutorForever({ store, factualPipeline, factualPublicationIds, workerId: process.env.NEWS_WORKER_ID ?? `worker-${process.pid}`, secUserAgent: userAgent, leaseSeconds: Number(process.env.NEWS_LEASE_SECONDS ?? 60), intervalMs: Number(process.env.NEWS_POLL_INTERVAL_MS ?? 30000), signal: abort.signal, onExecutionError: () => { executionFailed = true; } }))
+Promise.all([registerSecTarget(store, process.env.SEC_CIK ?? "0000320193"), ...globalSources.map(source => registerGlobalTarget(store, source))])
+  .then(() => runNewsExecutorForever({ store, globalSources, factualPipeline, factualPublicationIds, workerId: process.env.NEWS_WORKER_ID ?? `worker-${process.pid}`, secUserAgent: userAgent, leaseSeconds: Number(process.env.NEWS_LEASE_SECONDS ?? 60), intervalMs: Number(process.env.NEWS_POLL_INTERVAL_MS ?? 30000), signal: abort.signal, onExecutionError: () => { executionFailed = true; } }))
   .catch(error => { console.error(error instanceof Error ? error.message : "NEWS_WORKER_FAILED"); process.exitCode = 1; })
   .finally(async () => {
     if (shutdownPoll) clearInterval(shutdownPoll);

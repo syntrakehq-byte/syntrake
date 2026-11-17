@@ -14,8 +14,10 @@ test("N4 non-administrative runtime identity cannot reach the factual writer", {
   try {
     await admin.connect();
     const migration = (name: string) => new URL(`../../supabase/migrations/${name}`, import.meta.url);
+    await admin.query("drop function if exists news_core.read_publication_revisions_as_of(timestamptz,text)");
     await admin.query(await readFile(migration("20261111150000_news_core_postgres_n1.sql"), "utf8"));
     await admin.query(await readFile(migration("20261111170000_news_core_n2a_revisions.sql"), "utf8"));
+    await admin.query(await readFile(migration("20261116140000_news_core_ng4_context.sql"), "utf8"));
     await admin.query(await readFile(migration("20261112120000_news_core_n3c_factual_persistence.sql"), "utf8"));
     await admin.query(await readFile(migration("20261112170000_news_core_n3c_factual_writer_boundary.sql"), "utf8"));
     const createRole = await admin.query<{ ddl: string }>("select format('create role %I login password %L nosuperuser nocreatedb nocreaterole inherit', $1::text, $2::text) ddl", [runtimeRole, password]);
@@ -63,8 +65,10 @@ test("BL1-ACL-01 LOGIN identities cannot materialize factual PIT revisions", { s
   const migration = (name: string) => new URL(`../../supabase/migrations/${name}`, import.meta.url);
   try {
     await admin.connect();
+    await admin.query("drop function if exists news_core.read_publication_revisions_as_of(timestamptz,text)");
     await admin.query(await readFile(migration("20261111150000_news_core_postgres_n1.sql"), "utf8"));
     await admin.query(await readFile(migration("20261111170000_news_core_n2a_revisions.sql"), "utf8"));
+    await admin.query(await readFile(migration("20261116140000_news_core_ng4_context.sql"), "utf8"));
     await admin.query(await readFile(migration("20261112120000_news_core_n3c_factual_persistence.sql"), "utf8"));
     await admin.query(await readFile(migration("20261112170000_news_core_n3c_factual_writer_boundary.sql"), "utf8"));
     await admin.query(await readFile(migration("20261113185504_news_core_n3c_materializer_acl.sql"), "utf8"));

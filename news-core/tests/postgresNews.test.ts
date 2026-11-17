@@ -9,6 +9,7 @@ import { registerSecTarget, runNewsExecutorOnce } from "../autonomousExecutor";
 const DB_URL = process.env.NEWS_DATABASE_URL ?? process.env.TEST_DATABASE_URL;
 const migration = new URL("../../supabase/migrations/20261111150000_news_core_postgres_n1.sql", import.meta.url);
 const n2Migration = new URL("../../supabase/migrations/20261111170000_news_core_n2a_revisions.sql", import.meta.url);
+const ng4Migration = new URL("../../supabase/migrations/20261116140000_news_core_ng4_context.sql", import.meta.url);
 
 function batch(scope: string, suffix: string, watermark: string) {
   const now = new Date().toISOString();
@@ -45,8 +46,10 @@ test("News Core PostgreSQL N1 real PG17 atomic/idempotent/leased path", { skip: 
   try {
     const version = await admin.query<{ v: string }>("select current_setting('server_version') v");
     assert.match(version.rows[0].v, /^17\./);
+    await admin.query("drop function if exists news_core.read_publication_revisions_as_of(timestamptz,text)");
     await admin.query(await readFile(migration, "utf8"));
     await admin.query(await readFile(n2Migration, "utf8"));
+    await admin.query(await readFile(ng4Migration, "utf8"));
     const serviceConnection = await servicePool.connect();
     await serviceConnection.query("set role news_service"); serviceConnection.release();
     await storeA.ensureSource("sec-edgar", "sec");

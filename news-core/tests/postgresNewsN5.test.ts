@@ -19,14 +19,25 @@ test("N5 PostgreSQL 17 read API is PIT, role-scoped, paginated and append-only c
     const suffix = randomUUID().replaceAll("-", ""); const sourceId = `n5-source-${suffix}`; const publicationId = `n5-publication-${suffix}`; const revisionId = `${publicationId}:revision:1`; const eventId = `claim:n5-event-${suffix}`; const factRevisionId = `${eventId}:revision:1`; const document = `https://www.sec.gov/Archives/edgar/data/1/n5-${suffix}.htm`; const known = new Date(Date.now() - 2000).toISOString();
   try {
     await admin.connect(); assert.match((await admin.query<{ v: string }>("select current_setting('server_version') v")).rows[0].v, /^17\./);
+    await admin.query("drop function if exists news_core.read_publication_revisions_as_of(timestamptz,text)");
     await admin.query(await readFile(migration("20261111150000_news_core_postgres_n1.sql"), "utf8"));
     await admin.query("insert into news_core.sources(source_id,provider_key,source_type) values ($1,'n5-fixture','SEC_EDGAR')", [sourceId]);
     const frontier = await admin.query<{ frontier_id: string }>("insert into news_core.visibility_frontiers(published_at) values ($1) returning frontier_id", [known]);
     await admin.query("insert into news_core.publications(publication_id,source_id,origin_fingerprint,external_id,original_url,title,first_seen_at,ingested_at,as_known_at,form,visibility_state,visibility_frontier_id) values ($1,$2,$3,$4,$5,'N5 official fixture',$6,$6,$6,'8-K','COMMITTED',$7)", [publicationId, sourceId, `origin:${suffix}`, publicationId, document, known, frontier.rows[0].frontier_id]);
     await admin.query("insert into news_core.observations(observation_id,provider_key,provider_observation_key,publication_id,observed_at,retrieved_at,publisher_key,visibility_state,visibility_frontier_id) values ($1,'n5-fixture',$1,$2,$3,$3,'n5','COMMITTED',$4)", [`obs:${suffix}`, publicationId, known, frontier.rows[0].frontier_id]);
+    // N2-A changes the return type of the N1 read function. Drop the N1
+    // signature at the migration boundary so this isolated rehearsal models
+    // a clean upgrade instead of depending on leftover schema state.
+    await admin.query("drop function if exists news_core.read_publication_revisions_as_of(timestamptz,text)");
     await admin.query(await readFile(migration("20261111170000_news_core_n2a_revisions.sql"), "utf8"));
+    await admin.query(await readFile(migration("20261116140000_news_core_ng4_context.sql"), "utf8"));
     await admin.query(await readFile(migration("20261112120000_news_core_n3c_factual_persistence.sql"), "utf8"));
     await admin.query(await readFile(migration("20261112170000_news_core_n3c_factual_writer_boundary.sql"), "utf8"));
+    // The shared PG17 workflow may already have applied N-G6, whose version
+    // of this function has a different return shape. Reset that signature at
+    // the N5 migration boundary instead of allowing CREATE OR REPLACE to
+    // fail with 42P13.
+    await admin.query("drop function if exists news_core.read_publication_revisions_filtered_as_of(timestamptz,text,text[],text[])");
     await admin.query(await readFile(migration("20261112150000_news_core_n5_read_api.sql"), "utf8"));
     const persistFixture = async (statement: string, fingerprint: string, publicationRevisionId: string, evidenceId: string, evidenceKnown = known, evidenceDocument = statement.includes("corrected") ? `${document}:corrected` : document) => {
       const payload = { canonicalClaimId: eventId, taxonomyVersion: "news-fact-taxonomy-v1", category: "LEGAL_REGULATORY", logicalFingerprint: fingerprint, ruleSetVersion: "deterministic-rule-v1", claimType: statement.includes("corrected") ? "EVENT_CORRECTION" : "EVENT_OCCURRENCE", statement, subjectRef: null, objectRef: null, occurredAt: null, scheduledFor: null, confirmationStatus: "REPORTED", lifecycleStatus: "ACTIVE", polarity: "AFFIRMATIVE", focalClaimKey: `claim-key:${suffix}`, publicationRevisionId, qualityFlags: [], evidence: [{ evidenceId, evidenceKind: "N3A_PROPOSAL", claimKey: `claim-key:${suffix}`, publicationRevisionId, sourceDocumentRef: evidenceDocument, contentLocator: "body:p1", provenanceRef: `prov:${suffix}`, asKnownAt: evidenceKnown }], dependencies: [{ dependencyType: "N2_PUBLICATION_REVISION", dependencyRef: publicationRevisionId, asKnownAt: evidenceKnown }, { dependencyType: "N3A_PROPOSAL", dependencyRef: fingerprint, asKnownAt: evidenceKnown }, { dependencyType: "N3B_EVALUATION", dependencyRef: fingerprint, asKnownAt: evidenceKnown }], relation: null };

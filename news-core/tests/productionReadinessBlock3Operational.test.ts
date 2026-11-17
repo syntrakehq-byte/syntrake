@@ -32,16 +32,39 @@ test("BL3 operational executor runs SEC through N3 and N5 with positive and cons
   try {
     await admin.connect();
     assert.match((await admin.query<{ version: string }>("select current_setting('server_version') version")).rows[0].version, /^17\./);
-    for (const file of ["20261111150000_news_core_postgres_n1.sql", "20261111170000_news_core_n2a_revisions.sql", "20261112120000_news_core_n3c_factual_persistence.sql", "20261112170000_news_core_n3c_factual_writer_boundary.sql", "20261112150000_news_core_n5_read_api.sql", "20261113100000_news_core_bl3_factual_backlog.sql", "20261113110000_news_core_bl3_backlog_fencing.sql"]) await admin.query(await readFile(migration(file), "utf8"));
-    await admin.query(`create role ${verifierRole} login inherit password '${ROLE_PASSWORD}' nocreatedb nocreaterole`);
-    await admin.query(`create role ${attestorRole} login inherit password '${ROLE_PASSWORD}' nocreatedb nocreaterole`);
-    await admin.query(`create role ${writerRole} login inherit password '${ROLE_PASSWORD}' nocreatedb nocreaterole`);
+    await admin.query("drop function if exists news_core.read_publication_revisions_as_of(timestamptz,text)");
+    for (const file of ["20261111150000_news_core_postgres_n1.sql", "20261111170000_news_core_n2a_revisions.sql", "20261116140000_news_core_ng4_context.sql", "20261112120000_news_core_n3c_factual_persistence.sql", "20261112170000_news_core_n3c_factual_writer_boundary.sql", "20261112150000_news_core_n5_read_api.sql", "20261113100000_news_core_bl3_factual_backlog.sql", "20261113110000_news_core_bl3_backlog_fencing.sql"]) await admin.query(await readFile(migration(file), "utf8"));
+    // The News workflow runs this rehearsal after the broader News suite against
+    // the same isolated PostgreSQL service. Keep only these generated test roles
+    // idempotent; production capability roles and privileges remain unchanged.
+    for (const role of [verifierRole, attestorRole, writerRole]) {
+      const roleExists = (await admin.query<{ exists: boolean }>("select exists (select 1 from pg_roles where rolname=$1) exists", [role])).rows[0].exists;
+      if (!roleExists) await admin.query(`create role ${role} login inherit nocreatedb nocreaterole`);
+      await admin.query(`alter role ${role} login inherit password '${ROLE_PASSWORD}' nocreatedb nocreaterole`);
+    }
     await admin.query(`grant news_pipeline_verifier to ${verifierRole}`);
     await admin.query(`grant news_factual_attestor to ${attestorRole}`);
     await admin.query(`grant news_factual_writer to ${writerRole}`);
     const scope = `bl3-operational-sec-${suffix}`;
     await news.ensureSource("sec-edgar", "sec");
     await news.upsertTarget({ collectionScopeKey: scope, sourceId: "sec-edgar", providerKey: "sec", entityKey: "0000320193", parameters: { forms: ["10-K", "10-Q", "8-K", "20-F", "6-K"], overlapDays: 7 } });
+    // Use a genuine, stable SEC filing for the positive operational assertion.
+    // The document is fetched through the normal factual transport below; only
+    // its already verified N1 metadata is replayed to avoid depending on which
+    // live filing happens to be first in a 20-document SEC window.
+    const knownPublicationId = `bl3-known-sec-${suffix}`;
+    const knownNow = new Date().toISOString();
+    await news.ingestAdministrative({
+      publications: [{ publicationId: knownPublicationId, sourceId: "sec-edgar", originFingerprint: "0001193125-21-054710", externalId: "0001193125-21-054710", originalUrl: "https://www.sec.gov/Archives/edgar/data/320193/000119312521054710/d101693d8k.htm", title: "Apple Inc. 8-K 2021-02-24", publishedAt: "2021-02-24T00:00:00.000Z", firstSeenAt: knownNow, ingestedAt: null, asKnownAt: null, form: "8-K" }],
+      observations: [{ observationId: `${knownPublicationId}:observation`, providerKey: "sec", providerObservationKey: "0001193125-21-054710", publicationId: knownPublicationId, observedAt: knownNow, retrievedAt: knownNow, publisherKey: "sec-edgar" }],
+      checkpoint: { sourceId: "sec-edgar", collectionScopeKey: `bl3-known-${suffix}`, cursor: "0001193125-21-054710", updatedAt: knownNow },
+    });
+    await news.reconcileFactualBacklog();
+    const knownPersisted = (await admin.query<{ first_seen_at: string; ingested_at: string | null; as_known_at: string | null }>("select first_seen_at::text, ingested_at::text, as_known_at::text from news_core.publications where publication_id=$1", [knownPublicationId])).rows[0];
+    assert.ok(knownPersisted?.as_known_at, "known SEC publication must have a durable PIT frontier");
+    await news.enqueueFactualBacklog([{
+      publicationId: knownPublicationId, sourceId: "sec-edgar", originFingerprint: "0001193125-21-054710", externalId: "0001193125-21-054710", originalUrl: "https://www.sec.gov/Archives/edgar/data/320193/000119312521054710/d101693d8k.htm", title: "Apple Inc. 8-K 2021-02-24", publishedAt: "2021-02-24T00:00:00.000Z", firstSeenAt: knownPersisted.first_seen_at, ingestedAt: knownPersisted.ingested_at, asKnownAt: knownPersisted.as_known_at, form: "8-K",
+    }]);
     const atomicScope = `bl3-atomic-${suffix}`;
     const atomicPublicationId = `bl3-atomic-publication-${suffix}`;
     const atomicNow = new Date().toISOString();
@@ -55,12 +78,28 @@ test("BL3 operational executor runs SEC through N3 and N5 with positive and cons
     await admin.query("delete from news_core.factual_pipeline_backlog where publication_id=$1", [atomicPublicationId]);
     assert.ok((await news.reconcileFactualBacklog()) >= 1, "backfill must restore committed publications missing from the factual queue");
     assert.equal(Number((await admin.query("select count(*)::int n from news_core.factual_pipeline_backlog where publication_id=$1", [atomicPublicationId])).rows[0].n), 1, "backfill must restore the committed publication target");
-    const first = await runNewsExecutorOnce({ store: news, factualPipeline: pipeline, workerId: `bl3-operational-${suffix}`, secUserAgent: process.env.SEC_USER_AGENT ?? "SYNTRAKE BL3 operational CI/1.0 security@syntrake.com", collectionScopeKey: scope, fetchTimeoutMs: 120_000 });
+    const executorOptions = { store: news, factualPipeline: pipeline, secUserAgent: process.env.SEC_USER_AGENT ?? "SYNTRAKE BL3 operational CI/1.0 security@syntrake.com", collectionScopeKey: scope, fetchTimeoutMs: 120_000 };
+    const knownQueue = await admin.query<{ position: number; state: string; claim_owner: string | null; next_attempt_at: string; completed_status: string | null }>(`select position, state, claim_owner, next_attempt_at::text, completed_status from (select b.*, row_number() over (order by b.next_attempt_at, b.created_at, b.publication_id)::int position from news_core.factual_pipeline_backlog b) q where publication_id=$1`, [knownPublicationId]);
+    assert.equal(knownQueue.rowCount, 1, "known SEC publication must be present in factual backlog");
+    const knownRevision = await admin.query("select publication_revision_id, visibility_state, ingested_at::text, as_known_at::text, pending_transaction_id from news_core.publication_revisions where publication_id=$1 order by revision_no", [knownPublicationId]);
+    console.log(`BL3_KNOWN_REVISION ${JSON.stringify(knownRevision.rows)}`);
+    console.log(`BL3_KNOWN_QUEUE_BEFORE ${JSON.stringify(knownQueue.rows[0])}`);
+    // Targeted selection is only for this positive proof. It uses the same
+    // claim transaction, lease and fencing path; fairness remains tested below
+    // with the unfiltered FIFO queue.
+    const first = await runNewsExecutorOnce({ ...executorOptions, factualPublicationIds: [knownPublicationId], workerId: `bl3-operational-${suffix}-1` });
     assert.equal(first.claimed, true);
-    assert.ok(first.factualOutcomes.some(outcome => outcome.status === "PERSISTED"), "operational executor must persist one supported SEC document");
-    assert.ok(first.factualOutcomes.some(outcome => outcome.status === "REFUSED"), "operational executor must record a separate conservative refusal");
-    const persisted = first.factualOutcomes.find(outcome => outcome.status === "PERSISTED");
-    const refused = first.factualOutcomes.find(outcome => outcome.status === "REFUSED");
+    const factualOutcomes = [...first.factualOutcomes];
+    console.log(`BL3_KNOWN_OUTCOME ${JSON.stringify(factualOutcomes.find(outcome => outcome.publicationId === knownPublicationId))}`);
+    const knownQueueAfter = await admin.query<{ position: number; state: string; claim_owner: string | null; next_attempt_at: string; completed_status: string | null }>(`select position, state, claim_owner, next_attempt_at::text, completed_status from (select b.*, row_number() over (order by b.next_attempt_at, b.created_at, b.publication_id)::int position from news_core.factual_pipeline_backlog b) q where publication_id=$1`, [knownPublicationId]);
+    console.log(`BL3_KNOWN_QUEUE_AFTER ${JSON.stringify(knownQueueAfter.rows[0])}`);
+    await admin.query("update news_core.collection_targets set next_run_at=clock_timestamp(), lease_until=null where collection_scope_key=$1", [scope]);
+    const general = await runNewsExecutorOnce({ ...executorOptions, workerId: `bl3-operational-${suffix}-general` });
+    factualOutcomes.push(...general.factualOutcomes);
+    assert.ok(factualOutcomes.some(outcome => outcome.status === "PERSISTED"), "operational executor must persist one supported SEC document");
+    assert.ok(factualOutcomes.some(outcome => outcome.status === "REFUSED"), "operational executor must record a separate conservative refusal");
+    const persisted = factualOutcomes.find(outcome => outcome.status === "PERSISTED");
+    const refused = factualOutcomes.find(outcome => outcome.status === "REFUSED");
     const queued = Number((await admin.query("select count(*)::int n from news_core.factual_pipeline_backlog where state <> 'DONE' or completed_status is not null")).rows[0].n);
     assert.ok(queued > 20, "the durable factual backlog must retain a batch larger than the N1 document limit");
     const preparedFairness = await admin.query<{ publication_id: string }>(`with chosen as (

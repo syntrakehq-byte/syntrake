@@ -60,9 +60,24 @@ jobs:
           for i in $(seq 1 30); do docker exec "$cid" pg_isready -U postgres -d syntrake_news_ci >/dev/null 2>&1 && break; sleep 1; done
           docker exec "$cid" psql -U postgres -d syntrake_news_ci -Atc "show track_commit_timestamp" | grep -qx on
       - run: npm run test:news
+      - name: Global News adapters and source isolation
+        run: npx tsx --test news-core/tests/globalNewsAdapter.test.ts news-core/tests/globalNewsPoller.test.ts news-core/tests/globalNewsRegistry.test.ts news-core/tests/globalNewsXml.test.ts news-core/tests/globalNewsCollector.test.ts news-core/tests/globalNewsFactualN4.test.ts news-core/tests/globalNewsPitSelectionN4.test.ts
+      - name: Global News official RSS rehearsal
+        env:
+          RUN_GLOBAL_NEWS_LIVE: "1"
+          SEC_USER_AGENT: "SYNTRAKE Global News CI/1.0 security@syntrake.com"
+        run: npx tsx --test --test-timeout=120000 news-core/tests/globalNewsLive.test.ts
       - run: npm run test:news:n3a
       - run: npm run test:news:n3b
       - run: npm run test:news:pg17
+      - name: Global News PostgreSQL N-G3 persistence and PIT
+        env:
+          NEWS_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/syntrake_news_ci
+        run: npx tsx --test --test-timeout=180000 news-core/tests/postgresNewsGlobalN3.test.ts
+      - name: Global News PostgreSQL N-G5 identity and editorial PIT
+        env:
+          NEWS_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/syntrake_news_ci
+        run: npx tsx --test --test-timeout=180000 news-core/tests/postgresNewsGlobalN5.test.ts
       - run: npm run test:news:n3d
       - run: npm run test:news:bl3
         env:
@@ -83,6 +98,17 @@ jobs:
           N4_REAL_SOURCE: "1"
           SEC_USER_AGENT: "SYNTRAKE N4 CI/1.0 security@syntrake.com"
       - run: npm run test:news:n5
+      - name: Global News N-G6 versioned read API and rights boundary
+        run: npm run test:news:ng6
+      - name: Global News N-G6 PostgreSQL 17 PIT, rights and consumer recovery
+        run: npm run test:news:ng6:pg17
+      - name: Global News N-G7 observability and source health
+        run: npm run test:news:ng7
+      - name: Global News N-G8 real PostgreSQL operational rehearsal
+        env:
+          RUN_GLOBAL_NEWS_NG8: "1"
+          SEC_USER_AGENT: "SYNTRAKE N-G8 CI/1.0 security@syntrake.com"
+        run: npm run test:news:ng8:pg17
       - run: npm run test:news:n5:pg17
       - run: npm run test:news:n5:live
         env:

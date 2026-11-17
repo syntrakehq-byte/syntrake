@@ -150,3 +150,34 @@ export async function fetchSafeExternal(input: string, init?: RequestInit, fetch
     externalSignal?.removeEventListener("abort", forwardAbort);
   }
 }
+
+/**
+ * Fetch a JSON news feed from an explicitly registered HTTPS source.
+ * Uses the same pinned-IP TLS transport as SEC ingestion. Redirects are not
+ * followed; the entire source must remain on an approved hostname.
+ * This deliberately does not fetch full article text.
+ */
+export async function fetchSafeRegisteredNewsFeed(
+  feedUrl: string,
+  approvedHost: string,
+  init?: RequestInit,
+  lookupImpl: AddressLookup = lookup as AddressLookup,
+): Promise<Response> {
+  const parsed = new URL(feedUrl);
+  if (parsed.hostname !== approvedHost || !/^[a-z0-9.-]+$/.test(approvedHost)) {
+    throw new Error("NEWS_FEED_SOURCE_HOST_MISMATCH");
+  }
+  const allowedHosts = new Set([approvedHost]);
+  let current = await resolveSafeExternalUrl(feedUrl, allowedHosts, lookupImpl);
+  for (let redirects = 0; redirects <= 5; redirects += 1) {
+    const response = await fetchPinnedHttps(current, { ...init, redirect: "manual" }, DEFAULT_TIMEOUT_MS);
+    if (response.status < 300 || response.status >= 400) return response;
+    const location = response.headers.get("location");
+    await response.body?.cancel();
+    if (!location || redirects === 5) throw new Error("NEWS_FEED_REDIRECT_NOT_ALLOWED");
+    const next = new URL(location, current.url);
+    if (next.hostname !== approvedHost) throw new Error("NEWS_FEED_REDIRECT_NOT_ALLOWED");
+    current = await resolveSafeExternalUrl(next.toString(), allowedHosts, lookupImpl);
+  }
+  throw new Error("NEWS_FEED_REDIRECT_NOT_ALLOWED");
+}

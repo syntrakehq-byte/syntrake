@@ -5,7 +5,7 @@ import { DeterministicFactClassifierV1, excerptHashV1, type ClassificationInputV
 import { claimKeyV1, DeterministicEvidenceCorroboratorV1, type CorroborationInputV1 } from "./evidenceCorroboration";
 import { factualLogicalFingerprintV1, PostgresFactualStore, type PersistFactualInputV1 } from "./factualPersistence";
 import { PostgresNewsStore } from "./postgresStore";
-import type { NewsPublication } from "./contracts";
+import type { NewsPublication, NewsPublicationRevision } from "./contracts";
 
 export type FactualPipelineOutcomeV1 = Readonly<{
   publicationId: string;
@@ -26,6 +26,17 @@ export type FactualPipelineOptionsV1 = Readonly<{
   maxDocuments?: number;
   processingHoldMs?: number;
 }>;
+
+/** Selects only committed revisions known at the publication's own frontier. */
+export function selectGlobalRevisionAtKnownAtV1(revisions: readonly NewsPublicationRevision[], asKnownAt: string | null): NewsPublicationRevision | null {
+  if (!asKnownAt || !Number.isFinite(Date.parse(asKnownAt))) return null;
+  const cutoff = Date.parse(asKnownAt);
+  return revisions
+    .filter(revision => revision.ingestedAt !== null && revision.asKnownAt !== null && Date.parse(revision.asKnownAt) <= cutoff)
+    .slice()
+    .sort((left, right) => (left.revisionNo - right.revisionNo) || left.publicationRevisionId.localeCompare(right.publicationRevisionId))
+    .at(-1) ?? null;
+}
 
 const sha256 = (value: string): string => createHash("sha256").update(value, "utf8").digest("hex");
 const stripDocument = (html: string): string => html.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/\s+/g, " ").trim();
@@ -57,8 +68,51 @@ export class NewsFactualPipelineV1 {
     return attestationId;
   }
 
+  /** Process content already obtained by an approved non-SEC adapter. The
+   * adapter's excerpt is the only factual document input; title/URL alone are
+   * deliberately insufficient. This uses the same N3-A -> N3-B -> N3-C path
+   * as SEC and never upgrades a global publication beyond REPORTED. */
+  private async processGlobalOne(publication: NewsPublication, signal?: AbortSignal, assertActive?: () => void): Promise<FactualPipelineOutcomeV1> {
+    const canonicalClaimId = `global:${publication.sourceId}:${publication.externalId}`;
+    const excerpt = publication.contentExcerpt?.trim();
+    if (!publication.asKnownAt) return { publicationId: publication.publicationId, canonicalClaimId, status: "REFUSED", reason: "N2_PUBLICATION_AS_KNOWN_AT_UNAVAILABLE" };
+    if (!excerpt) return { publicationId: publication.publicationId, canonicalClaimId, status: "REFUSED", reason: "N3A_FACTUAL_EXCERPT_UNAVAILABLE" };
+    const revisions = await this.options.news.readPublicationRevisionsAsOf(publication.asKnownAt, publication.publicationId);
+    const revision = selectGlobalRevisionAtKnownAtV1(revisions, publication.asKnownAt);
+    if (!revision?.asKnownAt || !revision.ingestedAt) return { publicationId: publication.publicationId, canonicalClaimId, status: "REFUSED", reason: "N2_PUBLICATION_REVISION_UNAVAILABLE" };
+    const revisionExcerpt = revision.contentExcerpt?.trim();
+    if (!revisionExcerpt) return { publicationId: publication.publicationId, canonicalClaimId, status: "REFUSED", reason: "N3A_FACTUAL_EXCERPT_UNAVAILABLE" };
+    const evidenceId = `global-document-excerpt-${publication.sourceId}-${publication.externalId}`;
+    const provenanceRef = `${publication.publicationId}:provenance:${revision.revisionNo}`;
+    const classificationInput: ClassificationInputV1 = {
+      contractVersion: "news-fact-classification-v1", taxonomyVersion: "news-fact-taxonomy-v1", ruleSetVersion: "deterministic-rule-v1",
+      publicationRevision: { ...revision, contentFingerprint: revision.contentFingerprint, visibilityState: "COMMITTED" },
+      evidence: [{ evidenceId, publicationRevisionId: revision.publicationRevisionId, kind: "DOCUMENT_EXCERPT", sourceDocumentRef: revision.sourceDocumentRef, contentLocator: "publication:contentExcerpt", excerpt: revisionExcerpt, excerptHash: excerptHashV1(revisionExcerpt), hashSemantics: "LOCAL_CONTENT_HASH_ONLY", structuredField: null, structuredValue: null, structuredAuthority: null, observedAt: revision.asKnownAt, retrievedAt: revision.asKnownAt, asKnownAt: revision.asKnownAt, provenanceRef }],
+      proposedAt: revision.asKnownAt,
+    };
+    const classification = this.verifier.classify(classificationInput);
+    if (classification.proposals.length === 0) return { publicationId: publication.publicationId, canonicalClaimId, status: "REFUSED", reason: classification.refusalReasons[0] ?? "N3A_REFUSED" };
+    const proposal = classification.proposals[0];
+    assertActive?.();
+    const claimKey = claimKeyV1(proposal);
+    const corroborationInput: CorroborationInputV1 = { contractVersion: "news-evidence-corroboration-v1", ruleSetVersion: "evidence-corroboration-rule-v1", proposal, claimKey,
+      claimIdentities: [{ claimKey, canonicalClaimId, publicationRevisionId: revision.publicationRevisionId, statementFingerprint: sha256(proposal.statement), asKnownAt: proposal.proposedAt }], claimEquivalences: [], cutoffAsKnownAt: proposal.proposedAt, evaluatedAt: revision.asKnownAt,
+      evidence: [{ evidenceId: `n3b-${evidenceId}`, claimKey, originId: `${publication.sourceId}-origin`, sourceDocumentRef: revision.sourceDocumentRef, publicationRevisionId: revision.publicationRevisionId, provenanceRef, contentLocator: "publication:contentExcerpt", statementHash: sha256(proposal.statement), support: "SUPPORTS", asKnownAt: revision.asKnownAt, availableAsKnownAt: revision.asKnownAt, proposalEvidenceId: evidenceId }], verificationProofs: [],
+      origins: [{ originId: `${publication.sourceId}-origin`, sourceDocumentRef: revision.sourceDocumentRef, publicationRevisionId: revision.publicationRevisionId, publisherRef: publication.sourceId, editorialGroupRef: null, sourceKind: "SECONDARY", provenanceRef, availableAsKnownAt: revision.asKnownAt, competence: [{ claimKey, status: "UNKNOWN", basis: "IDENTIFIED_REPORT", evidenceRefs: [] }] }], independence: [] };
+    const corroboration = this.corroborator.evaluate(corroborationInput);
+    const persistInput: PersistFactualInputV1 = { attestationId: "pending", canonicalClaimId, proposal, corroborationInput, corroboration,
+      evidence: [{ evidenceId, evidenceKind: "N3A_PROPOSAL", claimKey, publicationRevisionId: revision.publicationRevisionId, sourceDocumentRef: revision.sourceDocumentRef, contentLocator: "publication:contentExcerpt", provenanceRef, asKnownAt: revision.asKnownAt }],
+      dependencies: [{ dependencyType: "N2_PUBLICATION_REVISION", dependencyRef: revision.publicationRevisionId, asKnownAt: revision.asKnownAt }, { dependencyType: "N3A_PROPOSAL", dependencyRef: proposal.inputFingerprint, asKnownAt: proposal.proposedAt }, { dependencyType: "N3B_EVALUATION", dependencyRef: corroboration.fingerprint, asKnownAt: corroborationInput.evaluatedAt }] };
+    const payload: Record<string, unknown> = { canonicalClaimId, taxonomyVersion: proposal.taxonomyVersion, category: proposal.category, logicalFingerprint: factualLogicalFingerprintV1(persistInput), ruleSetVersion: proposal.ruleSetVersion, claimType: proposal.claimType, statement: proposal.statement, subjectRef: proposal.subjectRef, objectRef: proposal.objectRef, occurredAt: proposal.occurredAt, scheduledFor: proposal.scheduledFor, confirmationStatus: corroboration.confirmationStatus, lifecycleStatus: corroboration.lifecycleStatus, polarity: corroboration.polarity, focalClaimKey: claimKey, publicationRevisionId: revision.publicationRevisionId, qualityFlags: proposal.qualityFlags, evidence: persistInput.evidence, dependencies: persistInput.dependencies, relation: null };
+    const attestationId = await this.attest(payload);
+    assertActive?.();
+    const persisted = await this.factual.persist({ ...persistInput, attestationId });
+    return { publicationId: publication.publicationId, canonicalClaimId, status: "PERSISTED", reason: "FACTUAL_PIPELINE_COMPLETED", factEventId: persisted.factEventId, confirmationStatus: corroboration.confirmationStatus };
+  }
+
   private async processOne(publication: NewsPublication, signal?: AbortSignal, assertActive?: () => void): Promise<FactualPipelineOutcomeV1> {
     assertActive?.();
+    if (publication.sourceId !== "sec-edgar") return await this.processGlobalOne(publication, signal, assertActive);
     if (publication.form !== "8-K") return { publicationId: publication.publicationId, canonicalClaimId: `sec:${publication.externalId}`, status: "REFUSED", reason: "FACTUAL_DOCUMENT_FORM_UNSUPPORTED" };
     try {
       const response = await fetchSafeExternal(publication.originalUrl, { headers: { "User-Agent": this.options.userAgent, Accept: "text/html" }, signal: signal ?? AbortSignal.timeout(20_000) });
@@ -76,19 +130,32 @@ export class NewsFactualPipelineV1 {
       const excerpt = controlledExcerpt(stripDocument(body));
       if (!excerpt) return { publicationId: publication.publicationId, canonicalClaimId: `sec:${publication.externalId}`, status: "REFUSED", reason: "N3A_NO_CONTROLLED_RULE_MATCH", documentSha256: sha256(body) };
       const retrievedAt = new Date().toISOString();
-      const asOf = new Date(Date.now() + 3_000).toISOString();
-      const revisions = await this.options.news.readPublicationRevisionsAsOf(asOf, publication.publicationId);
+      // The document must be evaluated against a real PIT frontier. Never
+      // look into the future to make a just-fetched revision selectable.
+      // The publication frontier may precede the N2 revision frontier created
+      // during the same durable ingest. Use the actual retrieval instant,
+      // never a synthetic future cutoff, to select that committed revision.
+      const asOf = retrievedAt;
+      let revisions = await this.options.news.readPublicationRevisionsAsOf(asOf, publication.publicationId);
+      // N1/N2 finalization can assign a durable frontier just after the
+      // executor starts. Poll only with the current wall-clock cutoff; never
+      // manufacture a future PIT value and never turn this race into REFUSED.
+      const revisionDeadline = Date.now() + 3_000;
+      while (revisions.length === 0 && Date.now() < revisionDeadline) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        revisions = await this.options.news.readPublicationRevisionsAsOf(new Date().toISOString(), publication.publicationId);
+      }
       const prior = revisions[0];
-      if (!prior) return { publicationId: publication.publicationId, canonicalClaimId: `sec:${publication.externalId}`, status: "REFUSED", reason: "N2_PUBLICATION_REVISION_UNAVAILABLE", documentSha256: sha256(body) };
+      if (!prior) throw new Error("NEWS_FACTUAL_N2_AVAILABILITY_RETRYABLE");
       const documentFingerprint = sha256(body);
       const matchingRevision = revisions.find(item => item.contentFingerprint === documentFingerprint && item.sourceDocumentRef === publication.originalUrl);
       const revisionId = matchingRevision?.publicationRevisionId ?? `${publication.publicationId}:revision:${prior.revisionNo + 1}`;
       if (!matchingRevision) await this.options.news.ingestPublicationRevision({ revision: { publicationRevisionId: revisionId, publicationId: publication.publicationId, revisionNo: prior.revisionNo + 1, title: publication.title, publishedAt: publication.publishedAt, form: publication.form, contentFingerprint: documentFingerprint, sourceDocumentRef: publication.originalUrl, qualityFlags: [], supersedesRevisionId: prior.publicationRevisionId }, provenance: { provenanceId: `${publication.publicationId}:provenance:${prior.revisionNo + 1}`, publicationRevisionId: revisionId, sourceId: publication.sourceId, providerKey: "sec", providerObservationKey: `${publication.externalId}:document`, originalUrl: publication.originalUrl, sourceDocumentRef: publication.originalUrl, retrievedAt, qualityFlags: [] } });
-      const firstRevision = (await this.options.news.readPublicationRevisionsAsOf(new Date(Date.now() + 3_000).toISOString(), publication.publicationId)).find(item => item.publicationRevisionId === revisionId);
+      const firstRevision = (await this.options.news.readPublicationRevisionsAsOf(new Date().toISOString(), publication.publicationId)).find(item => item.publicationRevisionId === revisionId);
       const availabilityDelay = firstRevision?.asKnownAt ? Date.parse(firstRevision.asKnownAt) - Date.now() + 100 : 1_500;
       if (availabilityDelay > 0 && availabilityDelay <= 5_000) await new Promise(resolve => setTimeout(resolve, availabilityDelay));
       if (availabilityDelay > 5_000) throw new Error("NEWS_FACTUAL_N2_AVAILABILITY_RETRYABLE");
-      const revision = (await this.options.news.readPublicationRevisionsAsOf(new Date(Date.now() + 3_000).toISOString(), publication.publicationId)).find(item => item.publicationRevisionId === revisionId);
+      const revision = (await this.options.news.readPublicationRevisionsAsOf(new Date().toISOString(), publication.publicationId)).find(item => item.publicationRevisionId === revisionId);
       if (!revision?.asKnownAt || !revision.ingestedAt) throw new Error("NEWS_FACTUAL_N2_COMMIT_RETRYABLE");
       const provenanceRef = `${publication.publicationId}:provenance:${revision.revisionNo}`;
       const evidenceId = `sec-document-excerpt-${publication.externalId}`;
