@@ -132,7 +132,10 @@ export class NewsFactualPipelineV1 {
       const retrievedAt = new Date().toISOString();
       // The document must be evaluated against a real PIT frontier. Never
       // look into the future to make a just-fetched revision selectable.
-      const asOf = publication.asKnownAt ?? retrievedAt;
+      // The publication frontier may precede the N2 revision frontier created
+      // during the same durable ingest. Use the actual retrieval instant,
+      // never a synthetic future cutoff, to select that committed revision.
+      const asOf = retrievedAt;
       const revisions = await this.options.news.readPublicationRevisionsAsOf(asOf, publication.publicationId);
       const prior = revisions[0];
       if (!prior) return { publicationId: publication.publicationId, canonicalClaimId: `sec:${publication.externalId}`, status: "REFUSED", reason: "N2_PUBLICATION_REVISION_UNAVAILABLE", documentSha256: sha256(body) };
