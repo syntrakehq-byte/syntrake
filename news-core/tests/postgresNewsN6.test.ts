@@ -46,7 +46,7 @@ test("N-G6 PostgreSQL 17 global reads enforce rights, PIT, SQL pagination and du
     const first = await api.search(auth, { asOf, filters: ng6Filters, limit: 1, sort: "RECENT" }); assert.equal(first.news.data.length, 1); assert.ok(first.news.nextCursor); assert.equal(first.news.data[0].publishedAt, "2026-11-17T11:00:00.000Z");
     const next = await api.search(auth, { cursor: first.news.nextCursor, filters: ng6Filters, limit: 1, sort: "RECENT" }); assert.equal(next.news.data.length, 1); assert.ok(next.news.nextCursor);
     const permittedPage = await api.search(auth, { asOf, filters: { sourceIds: [ecb.sourceId] }, limit: 10 });
-    const permitted = permittedPage.news.data.find(row => row.sourceDocumentRef.includes(`${ecb.sourceId}/release/1`)); assert.equal(permitted?.contentExcerpt, "permitted text");
+    const permitted = permittedPage.news.data.find(row => row.title === `${ecb.sourceId} economic release 1`); assert.equal(permitted?.contentExcerpt, "permitted text");
     const fedPage = await api.search(auth, { asOf, filters: { sourceIds: [fed.sourceId] }, limit: 10 }); assert.equal(fedPage.news.data[0]?.contentExcerpt, null);
     const consumerId = `ng6-consumer-${suffix}`; let failed = true;
     await assert.rejects(api.consumeIncremental(auth, consumerId, { asOf, filters: ng6Filters, limit: 2 }, async page => { assert.equal(page.news.data.length, 2); if (failed) { failed = false; throw new Error("simulated consumer interruption"); } }));
