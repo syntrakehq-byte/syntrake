@@ -88,7 +88,7 @@ export class GlobalNewsApiV1 {
     const unsupported = [...(filters.sectors ?? []), ...(filters.countries ?? []), ...(filters.categories ?? [])];
     if (unsupported.length > 0) throw new Error("NEWS_GLOBAL_FILTER_NOT_PROVEN");
     const result = await this.n5.discoverNews(auth, { ...input, sort: input.sort ?? "STABLE", filters: { sourceIds: filters.sourceIds, forms: filters.forms, entityIds: filters.entityIds, instrumentIds: filters.instrumentIds } });
-    let rows = result.data.map(publication);
+    const rows = result.data.map(publication);
     let coverage: "FULL" | "PARTIAL" | "NONE" = "FULL";
     if (result.status !== "AVAILABLE") coverage = "NONE";
     else if (result.qualityFlags.length > 0) coverage = "PARTIAL";
