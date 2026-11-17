@@ -42,6 +42,16 @@ test("N-G6 PostgreSQL 17 global reads enforce rights, PIT, SQL pagination and du
       }
       throw new Error("NG6_COMMITTED_FRONTIER_NOT_VISIBLE");
     };
+    const waitForRevisionFrontier = async (revisionId: string): Promise<string> => {
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const row = (await admin.query<{ published_at: Date | null }>(`select f.published_at
+          from news_core.publication_revisions r join news_core.visibility_frontiers f on f.frontier_id=r.visibility_frontier_id
+          where r.publication_revision_id=$1 and r.visibility_state='COMMITTED' and f.published_at<=clock_timestamp()`, [revisionId])).rows[0];
+        if (row?.published_at) return row.published_at.toISOString();
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      throw new Error("NG6_REVISION_FRONTIER_NOT_VISIBLE");
+    };
     const asOf = await waitForCommittedFrontier(ng6Filters.sourceIds, 3);
     const first = await api.search(auth, { asOf, filters: ng6Filters, limit: 1, sort: "RECENT" }); assert.equal(first.news.data.length, 1); assert.ok(first.news.nextCursor); assert.equal(first.news.data[0].publishedAt, "2026-11-17T11:00:00.000Z");
     const next = await api.search(auth, { cursor: first.news.nextCursor, filters: ng6Filters, limit: 1, sort: "RECENT" }); assert.equal(next.news.data.length, 1); assert.ok(next.news.nextCursor);
@@ -54,7 +64,7 @@ test("N-G6 PostgreSQL 17 global reads enforce rights, PIT, SQL pagination and du
     await api.consumeIncremental(auth, consumerId, { asOf: await dbNow(), filters: ng6Filters, limit: 2 }, async page => assert.equal(page.news.data.length, 2));
     assert.ok(await store.loadGlobalNewsConsumerCursor(consumerId));
     await store.ingestPublicationRevision({ revision: { publicationRevisionId: `${fed.sourceId}-publication-1:revision:2`, publicationId: `${fed.sourceId}-publication-1`, revisionNo: 2, title: "fed corrected release", publishedAt: "2026-11-17T10:00:00.000Z", form: "GLOBAL_RSS_2", contentFingerprint: "fed-correction", contentExcerpt: null, sourceDocumentRef: `https://${fed.sourceId}.example.test/release/1`, qualityFlags: [], supersedesRevisionId: `${fed.sourceId}-publication-1:revision:1` }, provenance: { provenanceId: `${fed.sourceId}-publication-1:provenance:2`, publicationRevisionId: `${fed.sourceId}-publication-1:revision:2`, sourceId: fed.sourceId, providerKey: "global-rss-2", providerObservationKey: `${fed.sourceId}:${fed.sourceId}-1`, originalUrl: `https://${fed.sourceId}.example.test/release/1`, sourceDocumentRef: `https://${fed.sourceId}.example.test/release/1`, retrievedAt: await dbNow(), qualityFlags: [] } });
-    const recovered = await api.consumeIncremental(auth, consumerId, { asOf: await waitForCommittedFrontier(ng6Filters.sourceIds, 3), filters: ng6Filters, limit: 2 }, async page => { assert.equal(page.news.data.length, 2); assert.ok(page.news.data.some(row => row.title === "fed corrected release")); });
+    const recovered = await api.consumeIncremental(auth, consumerId, { asOf: await waitForRevisionFrontier(`${fed.sourceId}-publication-1:revision:2`), filters: ng6Filters, limit: 2 }, async page => { assert.equal(page.news.data.length, 2); assert.ok(page.news.data.some(row => row.title === "fed corrected release")); });
     assert.equal(recovered.news.data.length, 2); assert.notEqual(await store.loadGlobalNewsConsumerCursor(consumerId), null);
     const empty = await api.consumeIncremental(auth, consumerId, { asOf: await dbNow(), filters: ng6Filters, limit: 2 }, async page => assert.equal(page.news.data.length, 0));
     assert.equal(empty.news.data.length, 0); const preservedCursor = await store.loadGlobalNewsConsumerCursor(consumerId); assert.notEqual(preservedCursor, null);
@@ -80,11 +90,11 @@ test("N-G6 PostgreSQL 17 global reads enforce rights, PIT, SQL pagination and du
     await store.ingestPublicationRevision(chainRevision(3, "revision three", "chain-hash-3"));
     const chainApi = new GlobalNewsApiV1(n5, undefined, cursorStore);
     const chainConsumerId = `ng6-chain-consumer-${suffix}`;
-    const chainPage = await chainApi.consumeIncremental(auth, chainConsumerId, { asOf: await waitForCommittedFrontier([chain.sourceId], 1), filters: { sourceIds: [chain.sourceId] }, limit: 50 }, async page => assert.equal(page.news.data.filter(row => row.publicationId === chainItem.publicationId).length, 3));
+    const chainPage = await chainApi.consumeIncremental(auth, chainConsumerId, { asOf: await waitForRevisionFrontier(`${chainItem.publicationId}:revision:3`), filters: { sourceIds: [chain.sourceId] }, limit: 50 }, async page => assert.equal(page.news.data.filter(row => row.publicationId === chainItem.publicationId).length, 3));
     assert.deepEqual(chainPage.news.data.filter(row => row.publicationId === chainItem.publicationId).map(row => row.revisionNo), [1, 2, 3]);
     const chainCursor = await store.loadGlobalNewsConsumerCursor(chainConsumerId);
     assert.notEqual(chainCursor, null);
-    const chainEmpty = await chainApi.consumeIncremental(auth, chainConsumerId, { asOf: await waitForCommittedFrontier([chain.sourceId], 1), filters: { sourceIds: [chain.sourceId] }, limit: 50 }, async page => assert.equal(page.news.data.length, 0));
+    const chainEmpty = await chainApi.consumeIncremental(auth, chainConsumerId, { asOf: await waitForRevisionFrontier(`${chainItem.publicationId}:revision:3`), filters: { sourceIds: [chain.sourceId] }, limit: 50 }, async page => assert.equal(page.news.data.length, 0));
     assert.equal(chainEmpty.news.data.length, 0);
     assert.equal(await store.loadGlobalNewsConsumerCursor(chainConsumerId), chainCursor);
   } finally { await Promise.all([store.close(), admin.end()]); }
