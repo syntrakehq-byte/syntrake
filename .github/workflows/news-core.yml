@@ -98,6 +98,8 @@ jobs:
           N4_REAL_SOURCE: "1"
           SEC_USER_AGENT: "SYNTRAKE N4 CI/1.0 security@syntrake.com"
       - run: npm run test:news:n5
+      - name: Global News N-G6 versioned read API and rights boundary
+        run: npm run test:news:ng6
       - run: npm run test:news:n5:pg17
       - run: npm run test:news:n5:live
         env:
