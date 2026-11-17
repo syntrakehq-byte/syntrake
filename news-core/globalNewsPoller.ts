@@ -7,6 +7,7 @@ export type NewsSourceCycle = Readonly<{
   status: "INGESTED" | "NOT_MODIFIED" | "ERROR";
   observed: number;
   errorCode: string | null;
+  latestPublishedAt?: string | null;
 }>;
 
 /**
@@ -62,13 +63,14 @@ export async function pollRegisteredGlobalNewsSources(options: Readonly<{
       if (signal?.aborted) break;
       // If persistence rejects the batch, it is an error. No cursor is advanced.
       await sink.persistBatch(source, items);
-      const cycle = { sourceId: source.sourceId, status: items.length === 0 ? "NOT_MODIFIED" as const : "INGESTED" as const, observed: items.length, errorCode: null };
+      const latestPublishedAt = items.reduce<string | null>((latest, item) => item.publishedAt && (!latest || Date.parse(item.publishedAt) > Date.parse(latest)) ? item.publishedAt : latest, null);
+      const cycle = { sourceId: source.sourceId, status: items.length === 0 ? "NOT_MODIFIED" as const : "INGESTED" as const, observed: items.length, errorCode: null, latestPublishedAt };
       cycles.push(cycle); options.observability?.recordCycle(source.sourceId, cycle, startedAt, Date.now());
     } catch (error) {
       // Avoid embedding arbitrary remote errors or body text in operator telemetry.
       const message = error instanceof Error ? error.message : "";
       const safe = /^GLOBAL_NEWS_[A-Z0-9_]+$/.test(message) ? message : "GLOBAL_NEWS_SOURCE_FAILED";
-      const cycle = { sourceId: source.sourceId, status: "ERROR" as const, observed: 0, errorCode: safe };
+      const cycle = { sourceId: source.sourceId, status: "ERROR" as const, observed: 0, errorCode: safe, latestPublishedAt: null };
       cycles.push(cycle); options.observability?.recordCycle(source.sourceId, cycle, startedAt, Date.now());
     }
   }
