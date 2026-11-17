@@ -86,6 +86,7 @@ test("BL3 operational executor runs SEC through N3 and N5 with positive and cons
     const first = await runNewsExecutorOnce({ ...executorOptions, factualPublicationIds: [knownPublicationId], workerId: `bl3-operational-${suffix}-1` });
     assert.equal(first.claimed, true);
     const factualOutcomes = [...first.factualOutcomes];
+    console.log(`BL3_KNOWN_OUTCOME ${JSON.stringify(factualOutcomes.find(outcome => outcome.publicationId === knownPublicationId))}`);
     const knownQueueAfter = await admin.query<{ position: number; state: string; claim_owner: string | null; next_attempt_at: string; completed_status: string | null }>(`select position, state, claim_owner, next_attempt_at::text, completed_status from (select b.*, row_number() over (order by b.next_attempt_at, b.created_at, b.publication_id)::int position from news_core.factual_pipeline_backlog b) q where publication_id=$1`, [knownPublicationId]);
     console.log(`BL3_KNOWN_QUEUE_AFTER ${JSON.stringify(knownQueueAfter.rows[0])}`);
     assert.ok(factualOutcomes.some(outcome => outcome.status === "PERSISTED"), "operational executor must persist one supported SEC document");
