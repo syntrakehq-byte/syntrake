@@ -33,6 +33,11 @@ test("N5 PostgreSQL 17 read API is PIT, role-scoped, paginated and append-only c
     await admin.query(await readFile(migration("20261116140000_news_core_ng4_context.sql"), "utf8"));
     await admin.query(await readFile(migration("20261112120000_news_core_n3c_factual_persistence.sql"), "utf8"));
     await admin.query(await readFile(migration("20261112170000_news_core_n3c_factual_writer_boundary.sql"), "utf8"));
+    // The shared PG17 workflow may already have applied N-G6, whose version
+    // of this function has a different return shape. Reset that signature at
+    // the N5 migration boundary instead of allowing CREATE OR REPLACE to
+    // fail with 42P13.
+    await admin.query("drop function if exists news_core.read_publication_revisions_filtered_as_of(timestamptz,text,text[],text[])");
     await admin.query(await readFile(migration("20261112150000_news_core_n5_read_api.sql"), "utf8"));
     const persistFixture = async (statement: string, fingerprint: string, publicationRevisionId: string, evidenceId: string, evidenceKnown = known, evidenceDocument = statement.includes("corrected") ? `${document}:corrected` : document) => {
       const payload = { canonicalClaimId: eventId, taxonomyVersion: "news-fact-taxonomy-v1", category: "LEGAL_REGULATORY", logicalFingerprint: fingerprint, ruleSetVersion: "deterministic-rule-v1", claimType: statement.includes("corrected") ? "EVENT_CORRECTION" : "EVENT_OCCURRENCE", statement, subjectRef: null, objectRef: null, occurredAt: null, scheduledFor: null, confirmationStatus: "REPORTED", lifecycleStatus: "ACTIVE", polarity: "AFFIRMATIVE", focalClaimKey: `claim-key:${suffix}`, publicationRevisionId, qualityFlags: [], evidence: [{ evidenceId, evidenceKind: "N3A_PROPOSAL", claimKey: `claim-key:${suffix}`, publicationRevisionId, sourceDocumentRef: evidenceDocument, contentLocator: "body:p1", provenanceRef: `prov:${suffix}`, asKnownAt: evidenceKnown }], dependencies: [{ dependencyType: "N2_PUBLICATION_REVISION", dependencyRef: publicationRevisionId, asKnownAt: evidenceKnown }, { dependencyType: "N3A_PROPOSAL", dependencyRef: fingerprint, asKnownAt: evidenceKnown }, { dependencyType: "N3B_EVALUATION", dependencyRef: fingerprint, asKnownAt: evidenceKnown }], relation: null };
