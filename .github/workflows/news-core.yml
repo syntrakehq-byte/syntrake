@@ -102,6 +102,8 @@ jobs:
         run: npm run test:news:ng6
       - name: Global News N-G6 PostgreSQL 17 PIT, rights and consumer recovery
         run: npm run test:news:ng6:pg17
+      - name: Global News N-G7 observability and source health
+        run: npm run test:news:ng7
       - run: npm run test:news:n5:pg17
       - run: npm run test:news:n5:live
         env:

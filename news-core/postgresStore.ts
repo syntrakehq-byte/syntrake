@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import type { NewsBatch, NewsPublication, NewsPublicationRevision, NewsRevisionProvenance } from "./contracts";
+import type { NewsIncrementalPositionV1 } from "./n5Api";
 import type { GlobalNewsItem } from "./globalNewsAdapter";
 import type { GlobalNewsRegistryEntry } from "./globalNewsRegistry";
 import { globalItemsToNewsBatch } from "./globalNewsPersistence";
@@ -276,6 +277,21 @@ export class PostgresNewsStore {
 
   async saveGlobalNewsConsumerCursor(consumerId: string, cursor: string | null): Promise<void> {
     await this.pool.query("insert into news_core.global_news_consumer_cursors(consumer_id,cursor) values ($1,$2) on conflict (consumer_id) do update set cursor=excluded.cursor,updated_at=clock_timestamp()", [consumerId, cursor]);
+  }
+
+  async claimGlobalNewsConsumer(consumerId: string, owner: string, leaseSeconds = 60): Promise<string | null> {
+    const result = await this.pool.query<{ cursor: string | null }>(`insert into news_core.global_news_consumer_cursors(consumer_id,cursor,lease_owner,lease_until) values ($1,null,$2,clock_timestamp()+make_interval(secs=>$3)) on conflict (consumer_id) do update set lease_owner=excluded.lease_owner,lease_until=excluded.lease_until,updated_at=clock_timestamp() where news_core.global_news_consumer_cursors.lease_until is null or news_core.global_news_consumer_cursors.lease_until<=clock_timestamp() returning cursor`, [consumerId, owner, leaseSeconds]);
+    if (result.rowCount !== 1) throw new Error("NEWS_GLOBAL_CONSUMER_BUSY");
+    return result.rows[0].cursor;
+  }
+
+  async acknowledgeGlobalNewsConsumer(consumerId: string, owner: string, expectedCursor: string | null, nextCursor: string | null): Promise<void> {
+    const result = await this.pool.query("update news_core.global_news_consumer_cursors set cursor=$4,lease_owner=null,lease_until=null,updated_at=clock_timestamp() where consumer_id=$1 and lease_owner=$2 and cursor is not distinct from $3", [consumerId, owner, expectedCursor, nextCursor]);
+    if (result.rowCount !== 1) throw new Error("NEWS_GLOBAL_CONSUMER_FENCE_LOST");
+  }
+
+  async releaseGlobalNewsConsumer(consumerId: string, owner: string): Promise<void> {
+    await this.pool.query("update news_core.global_news_consumer_cursors set lease_owner=null,lease_until=null,updated_at=clock_timestamp() where consumer_id=$1 and lease_owner=$2", [consumerId, owner]);
   }
 
   async enqueueFactualBacklog(publications: readonly NewsPublication[]): Promise<number> {
@@ -711,6 +727,11 @@ export class PostgresNewsStore {
       const ordered = sort === "RECENT" ? [...rows].sort((a, b) => Date.parse(b.publishedAt ?? b.asKnownAt ?? "") - Date.parse(a.publishedAt ?? a.asKnownAt ?? "") || a.publicationId.localeCompare(b.publicationId)) : rows;
       return ordered.slice(offset, offset + limit);
     }
+  }
+
+  async readPublicationRevisionsIncrementalAsOf(asOf: string, query: string | null, sourceIds: readonly string[], forms: readonly string[], entityIds: readonly string[], instrumentIds: readonly string[], after: NewsIncrementalPositionV1 | null, limit: number): Promise<NewsPublicationRevision[]> {
+    const result = await this.pool.query<NewsPublicationRevision>("select * from news_core.read_global_publication_revisions_incremental_as_of($1::timestamptz,$2::text,$3::text[],$4::text[],$5::text[],$6::text[],$7::timestamptz,$8::text,$9::integer)", [asOf, query, sourceIds, forms, entityIds, instrumentIds, after?.asKnownAt ?? null, after?.publicationRevisionId ?? null, limit]);
+    return result.rows.map(row => ({ ...row, publishedAt: optionalIso(row.publishedAt), ingestedAt: optionalIso(row.ingestedAt), asKnownAt: optionalIso(row.asKnownAt), qualityFlags: flags(row.qualityFlags), contentExcerpt: row.rightsMode === "PERMITTED_TEXT" ? row.contentExcerpt ?? null : null }));
   }
 
   async readEntityLinksAsOf(asOf: string, publicationId?: string): Promise<readonly Record<string, unknown>[]> {

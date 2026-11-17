@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { NewsPublicationRevision } from "./contracts";
 import type {
   DiscoverNewsInput,
@@ -6,6 +7,7 @@ import type {
   NewsEnvelope,
   NewsEventsInput,
   NewsHistoryInput,
+  NewsIncrementalPositionV1,
   NewsServiceAuthV1,
 } from "./n5Api";
 
@@ -48,6 +50,9 @@ export type GlobalNewsEnvelopeV1<T> = Readonly<{
 export type GlobalNewsConsumerCursorStoreV1 = Readonly<{
   load(consumerId: string): Promise<string | null>;
   save(consumerId: string, cursor: string | null): Promise<void>;
+  claim?(consumerId: string, owner: string, leaseSeconds: number): Promise<string | null>;
+  acknowledge?(consumerId: string, owner: string, expectedCursor: string | null, nextCursor: string | null): Promise<void>;
+  release?(consumerId: string, owner: string): Promise<void>;
 }>;
 
 type RelationReader = (asOf: string, publicationId?: string) => Promise<readonly Record<string, unknown>[]>;
@@ -77,6 +82,8 @@ function publication(row: NewsPublicationRevision): GlobalNewsPublicationV1 {
  * and conservative rights/entity presentation.
  */
 export class GlobalNewsApiV1 {
+  private readonly owner = `consumer-${process.pid}-${randomUUID()}`;
+  private readonly activeConsumers = new Set<string>();
   constructor(private readonly n5: NewsConsumptionApiV1, _relations?: RelationReader, private readonly cursorStore?: GlobalNewsConsumerCursorStoreV1) {}
 
   private wrap<T>(news: NewsEnvelope<T>, coverage: "FULL" | "PARTIAL" | "NONE" = "FULL"): GlobalNewsEnvelopeV1<T> {
@@ -118,11 +125,24 @@ export class GlobalNewsApiV1 {
 
   /** Cursor advances only after the consumer acknowledges the complete page. */
   async consumeIncremental(auth: NewsServiceAuthV1, consumerId: string, input: GlobalNewsSearchInputV1, acknowledge: (page: GlobalNewsEnvelopeV1<GlobalNewsPublicationV1>) => Promise<void>): Promise<GlobalNewsEnvelopeV1<GlobalNewsPublicationV1>> {
-    if (!/^[A-Za-z0-9._:-]{1,128}$/.test(consumerId) || !this.cursorStore) throw new Error("NEWS_GLOBAL_CURSOR_STORE_REQUIRED");
-    const stored = await this.cursorStore.load(consumerId);
-    const page = await this.search(auth, { ...input, cursor: input.cursor ?? stored });
-    await acknowledge(page);
-    await this.cursorStore.save(consumerId, page.news.nextCursor);
-    return page;
+    if (!/^[A-Za-z0-9._:-]{1,128}$/.test(consumerId) || !this.cursorStore?.claim || !this.cursorStore.acknowledge || !this.cursorStore.release) throw new Error("NEWS_GLOBAL_CURSOR_LEASE_REQUIRED");
+    if (this.activeConsumers.has(consumerId)) throw new Error("NEWS_GLOBAL_CONSUMER_BUSY");
+    this.activeConsumers.add(consumerId);
+    let expected: string | null = null;
+    try {
+      expected = await this.cursorStore.claim(consumerId, this.owner, 60);
+      const position = expected ? JSON.parse(expected) as NewsIncrementalPositionV1 : null;
+      if (position && (!position.asKnownAt || !position.publicationRevisionId || !Number.isFinite(Date.parse(position.asKnownAt)))) throw new Error("NEWS_GLOBAL_CURSOR_INVALID");
+      const news = await this.n5.discoverNewsIncremental(auth, { ...input, cursor: null }, position);
+      const page = this.wrap({ ...news, data: news.data.map(publication) } as NewsEnvelope<GlobalNewsPublicationV1>, news.status === "AVAILABLE" ? "FULL" : "NONE");
+      await acknowledge(page);
+      const last = page.news.data.at(-1);
+      const next = last?.asKnownAt ? JSON.stringify({ version: 1, asKnownAt: last.asKnownAt, publicationRevisionId: last.publicationRevisionId }) : expected;
+      await this.cursorStore.acknowledge(consumerId, this.owner, expected, next);
+      return page;
+    } catch (error) {
+      await this.cursorStore.release(consumerId, this.owner).catch(() => undefined);
+      throw error;
+    } finally { this.activeConsumers.delete(consumerId); }
   }
 }

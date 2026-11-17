@@ -1,5 +1,6 @@
 import { parseJsonNewsFeed, validateGlobalNewsSource, type GlobalNewsItem, type GlobalNewsSource } from "./globalNewsAdapter";
 import { fetchSafeRegisteredNewsFeed } from "./sourceSecurity";
+import { GlobalNewsObservabilityV1 } from "./globalNewsObservability";
 
 export type NewsSourceCycle = Readonly<{
   sourceId: string;
@@ -38,6 +39,7 @@ export async function pollRegisteredGlobalNewsSources(options: Readonly<{
   retrieve?: RegisteredFeedFetcher;
   now?: () => Date;
   signal?: AbortSignal;
+  observability?: GlobalNewsObservabilityV1;
 }>): Promise<readonly NewsSourceCycle[]> {
   const { sources, sink, signal } = options;
   if (!Array.isArray(sources) || sources.length > 100 || !sink || typeof sink.persistBatch !== "function") throw new Error("GLOBAL_NEWS_POLL_CONFIG_INVALID");
@@ -50,6 +52,7 @@ export async function pollRegisteredGlobalNewsSources(options: Readonly<{
   const cycles: NewsSourceCycle[] = [];
   for (const source of sources) {
     if (signal?.aborted) break;
+    const startedAt = Date.now();
     try {
       const feed = await (options.retrieve ?? fetchRegisteredJsonFeed)(source, signal);
       if (signal?.aborted) break;
@@ -59,12 +62,14 @@ export async function pollRegisteredGlobalNewsSources(options: Readonly<{
       if (signal?.aborted) break;
       // If persistence rejects the batch, it is an error. No cursor is advanced.
       await sink.persistBatch(source, items);
-      cycles.push({ sourceId: source.sourceId, status: "INGESTED", observed: items.length, errorCode: null });
+      const cycle = { sourceId: source.sourceId, status: items.length === 0 ? "NOT_MODIFIED" as const : "INGESTED" as const, observed: items.length, errorCode: null };
+      cycles.push(cycle); options.observability?.recordCycle(source.sourceId, cycle, startedAt, Date.now());
     } catch (error) {
       // Avoid embedding arbitrary remote errors or body text in operator telemetry.
       const message = error instanceof Error ? error.message : "";
       const safe = /^GLOBAL_NEWS_[A-Z0-9_]+$/.test(message) ? message : "GLOBAL_NEWS_SOURCE_FAILED";
-      cycles.push({ sourceId: source.sourceId, status: "ERROR", observed: 0, errorCode: safe });
+      const cycle = { sourceId: source.sourceId, status: "ERROR" as const, observed: 0, errorCode: safe };
+      cycles.push(cycle); options.observability?.recordCycle(source.sourceId, cycle, startedAt, Date.now());
     }
   }
   return cycles;
