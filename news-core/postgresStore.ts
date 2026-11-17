@@ -286,7 +286,7 @@ export class PostgresNewsStore {
   }
 
   async acknowledgeGlobalNewsConsumer(consumerId: string, owner: string, expectedCursor: string | null, nextCursor: string | null): Promise<void> {
-    const result = await this.pool.query("update news_core.global_news_consumer_cursors set cursor=$4,lease_owner=null,lease_until=null,updated_at=clock_timestamp() where consumer_id=$1 and lease_owner=$2 and cursor is not distinct from $3", [consumerId, owner, expectedCursor, nextCursor]);
+    const result = await this.pool.query("update news_core.global_news_consumer_cursors set cursor=$4,lease_owner=null,lease_until=null,updated_at=clock_timestamp() where consumer_id=$1 and lease_owner=$2 and lease_until > clock_timestamp() and cursor is not distinct from $3", [consumerId, owner, expectedCursor, nextCursor]);
     if (result.rowCount !== 1) throw new Error("NEWS_GLOBAL_CONSUMER_FENCE_LOST");
   }
 

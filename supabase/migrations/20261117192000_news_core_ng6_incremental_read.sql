@@ -14,13 +14,12 @@ returns table(
 language sql stable security definer set search_path=pg_catalog,news_core as $$
   with visible as materialized (
     select r.*,p.source_id,
-      case when coalesce(s.storage_policy->>'content','METADATA_ONLY')='PERMITTED_TEXT' and coalesce(s.storage_policy->>'presentation','PUBLIC') <> 'NONE' then 'PERMITTED_TEXT' else 'METADATA_ONLY' end as rights_mode,
-      row_number() over(partition by r.publication_id order by r.revision_no desc,r.as_known_at desc,r.ingested_at desc) as n
+      case when coalesce(s.storage_policy->>'content','METADATA_ONLY')='PERMITTED_TEXT' and coalesce(s.storage_policy->>'presentation','PUBLIC') <> 'NONE' then 'PERMITTED_TEXT' else 'METADATA_ONLY' end as rights_mode
       from news_core.publication_revisions r join news_core.publications p using (publication_id) join news_core.sources s using (source_id) join news_core.visibility_frontiers f on f.frontier_id=r.visibility_frontier_id
      where r.visibility_state='COMMITTED' and p.visibility_state='COMMITTED' and r.as_known_at<=p_as_of and f.published_at<=p_as_of
   ), latest as (
     select v.* from visible v
-    where v.n=1 and (nullif(p_query,'') is null or v.title ilike '%'||p_query||'%' or v.source_document_ref ilike '%'||p_query||'%')
+    where (nullif(p_query,'') is null or v.title ilike '%'||p_query||'%' or v.source_document_ref ilike '%'||p_query||'%')
       and (coalesce(cardinality(p_source_ids),0)=0 or v.source_id=any(p_source_ids))
       and (coalesce(cardinality(p_forms),0)=0 or v.form=any(p_forms))
       and (coalesce(cardinality(p_entity_ids),0)=0 or exists(select 1 from news_core.entity_link_revisions l where l.publication_revision_id=v.publication_revision_id and l.visibility_state='COMMITTED' and l.identity_status='EXACT' and l.as_known_at<=p_as_of and (l.issuer_id=any(p_entity_ids) or l.instrument_id=any(p_entity_ids) or l.listing_id=any(p_entity_ids))))

@@ -48,9 +48,31 @@ test("N-G6 PostgreSQL 17 global reads enforce rights, PIT, SQL pagination and du
     await store.ingestGlobalBatch(ecb, [item(ecb.sourceId, 3, "2026-11-17T12:00:00.000Z", "new after exhaustion")]);
     const discovered = await api.consumeIncremental(auth, consumerId, { asOf: await dbNow(), limit: 2 }, async page => assert.equal(page.news.data.length, 1));
     assert.equal(discovered.news.data[0].title, `${ecb.sourceId} economic release 3`); assert.notEqual(await store.loadGlobalNewsConsumerCursor(consumerId), preservedCursor);
-    const expiredOwner = await store.claimGlobalNewsConsumer(consumerId, "expired-owner", 0);
+    const expiredConsumerId = `ng6-expired-${suffix}`;
+    const expiredOwner = await store.claimGlobalNewsConsumer(expiredConsumerId, "expired-owner", 0);
+    await assert.rejects(store.acknowledgeGlobalNewsConsumer(expiredConsumerId, "expired-owner", expiredOwner, "forged"), /FENCE_LOST/);
+    assert.equal(await store.loadGlobalNewsConsumerCursor(expiredConsumerId), null);
     const activeOwner = await store.claimGlobalNewsConsumer(consumerId, "active-owner", 60);
     await assert.rejects(store.acknowledgeGlobalNewsConsumer(consumerId, "expired-owner", expiredOwner, "forged"), /FENCE_LOST/);
-    await store.releaseGlobalNewsConsumer(consumerId, "active-owner");
+    await store.releaseGlobalNewsConsumer(consumerId, activeOwner);
+
+    const chain = source(`ng6-chain-${suffix}`, "PERMITTED_TEXT");
+    const chainItem = item(chain.sourceId, 1, "2026-11-17T13:00:00.000Z", "revision one");
+    await store.ingestGlobalBatch(chain, [chainItem]);
+    const chainRevision = (revisionNo: number, title: string, fingerprint: string) => ({
+      revision: { publicationRevisionId: `${chainItem.publicationId}:revision:${revisionNo}`, publicationId: chainItem.publicationId, revisionNo, title, publishedAt: chainItem.publishedAt, form: "GLOBAL_RSS_2", contentFingerprint: fingerprint, contentExcerpt: title, sourceDocumentRef: chainItem.originalUrl, qualityFlags: [], supersedesRevisionId: `${chainItem.publicationId}:revision:${revisionNo - 1}` },
+      provenance: { provenanceId: `${chainItem.publicationId}:provenance:${revisionNo}`, publicationRevisionId: `${chainItem.publicationId}:revision:${revisionNo}`, sourceId: chain.sourceId, providerKey: "global-rss-2", providerObservationKey: `${chain.sourceId}:${chainItem.externalId}:${revisionNo}`, originalUrl: chainItem.originalUrl, sourceDocumentRef: chainItem.originalUrl, retrievedAt: new Date().toISOString(), qualityFlags: [] },
+    });
+    await store.ingestPublicationRevision(chainRevision(2, "revision two", "chain-hash-2"));
+    await store.ingestPublicationRevision(chainRevision(3, "revision three", "chain-hash-3"));
+    const chainApi = new GlobalNewsApiV1(n5, undefined, cursorStore);
+    const chainConsumerId = `ng6-chain-consumer-${suffix}`;
+    const chainPage = await chainApi.consumeIncremental(auth, chainConsumerId, { asOf: await dbNow(), filters: { sourceIds: [chain.sourceId] }, limit: 50 }, async page => assert.equal(page.news.data.filter(row => row.publicationId === chainItem.publicationId).length, 3));
+    assert.deepEqual(chainPage.news.data.filter(row => row.publicationId === chainItem.publicationId).map(row => row.revisionNo), [1, 2, 3]);
+    const chainCursor = await store.loadGlobalNewsConsumerCursor(chainConsumerId);
+    assert.notEqual(chainCursor, null);
+    const chainEmpty = await chainApi.consumeIncremental(auth, chainConsumerId, { asOf: await dbNow(), filters: { sourceIds: [chain.sourceId] }, limit: 50 }, async page => assert.equal(page.news.data.length, 0));
+    assert.equal(chainEmpty.news.data.length, 0);
+    assert.equal(await store.loadGlobalNewsConsumerCursor(chainConsumerId), chainCursor);
   } finally { await Promise.all([store.close(), admin.end()]); }
 });
