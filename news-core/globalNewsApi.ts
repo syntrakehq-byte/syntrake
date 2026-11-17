@@ -89,6 +89,11 @@ export class GlobalNewsApiV1 {
   private wrap<T>(news: NewsEnvelope<T>, coverage: "FULL" | "PARTIAL" | "NONE" = "FULL"): GlobalNewsEnvelopeV1<T> {
     return { contractVersion: GLOBAL_NEWS_API_CONTRACT_VERSION, news, coverage };
   }
+  private incrementalFilterKey(input: GlobalNewsSearchInputV1): string {
+    const filters = input.filters ?? {};
+    const sorted = (values: readonly string[] | undefined): readonly string[] => [...new Set(values ?? [])].sort();
+    return JSON.stringify({ query: input.query?.trim() || null, sort: "INCREMENTAL", sourceIds: sorted(filters.sourceIds), forms: sorted(filters.forms), entityIds: sorted(filters.entityIds), instrumentIds: sorted(filters.instrumentIds) });
+  }
 
   async search(auth: NewsServiceAuthV1, input: GlobalNewsSearchInputV1 = {}): Promise<GlobalNewsEnvelopeV1<GlobalNewsPublicationV1>> {
     const filters = input.filters ?? {};
@@ -132,12 +137,13 @@ export class GlobalNewsApiV1 {
     try {
       expected = await this.cursorStore.claim(consumerId, this.owner, 60);
       const position = expected ? JSON.parse(expected) as NewsIncrementalPositionV1 : null;
-      if (position && (!position.asKnownAt || !position.publicationRevisionId || !Number.isFinite(Date.parse(position.asKnownAt)))) throw new Error("NEWS_GLOBAL_CURSOR_INVALID");
+      if (position && (position.version !== 1 || !position.asKnownAt || !position.publicationRevisionId || position.filterKey !== this.incrementalFilterKey(input) || !Number.isFinite(Date.parse(position.asKnownAt)))) throw new Error("NEWS_GLOBAL_CURSOR_INVALID");
       const news = await this.n5.discoverNewsIncremental(auth, { ...input, cursor: null }, position);
+      if (news.status !== "AVAILABLE") throw new Error("NEWS_GLOBAL_CONSUMER_READ_UNAVAILABLE");
       const page = this.wrap({ ...news, data: news.data.map(publication) } as NewsEnvelope<GlobalNewsPublicationV1>, news.status === "AVAILABLE" ? "FULL" : "NONE");
       await acknowledge(page);
       const last = page.news.data.at(-1);
-      const next = last?.asKnownAt ? JSON.stringify({ version: 1, asKnownAt: last.asKnownAt, publicationRevisionId: last.publicationRevisionId }) : expected;
+      const next = last?.asKnownAt ? JSON.stringify({ version: 1, asKnownAt: last.asKnownAt, publicationRevisionId: last.publicationRevisionId, filterKey: this.incrementalFilterKey(input) }) : expected;
       await this.cursorStore.acknowledge(consumerId, this.owner, expected, next);
       return page;
     } catch (error) {

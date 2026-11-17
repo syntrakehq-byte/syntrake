@@ -53,6 +53,7 @@ export async function pollRegisteredGlobalNewsSources(options: Readonly<{
   const cycles: NewsSourceCycle[] = [];
   for (const source of sources) {
     if (signal?.aborted) break;
+    options.observability?.observeSource(source.sourceId);
     const startedAt = Date.now();
     try {
       const feed = await (options.retrieve ?? fetchRegisteredJsonFeed)(source, signal);

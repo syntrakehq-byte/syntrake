@@ -19,6 +19,7 @@ test("N-G6 PostgreSQL 17 global reads enforce rights, PIT, SQL pagination and du
   const ecb = source(`ng6-ecb-${suffix}`, "PERMITTED_TEXT"); const fed = source(`ng6-fed-${suffix}`, "METADATA_ONLY");
   try {
     await admin.connect(); assert.match((await admin.query<{ v: string }>("select current_setting('server_version') v")).rows[0].v, /^17\./);
+    await admin.query("drop function if exists news_core.read_publication_revisions_as_of(timestamptz,text)");
     for (const name of ["20261111150000_news_core_postgres_n1.sql", "20261111170000_news_core_n2a_revisions.sql", "20261111180000_news_core_n2b_entity_links.sql", "20261116130000_news_core_global_persistence.sql", "20261116140000_news_core_ng4_context.sql", "20261117190000_news_core_ng6_global_read_api.sql", "20261117191000_news_core_ng6_consumer_cursors.sql", "20261117192000_news_core_ng6_incremental_read.sql"]) await admin.query(await readFile(migration(name), "utf8"));
     const before = new Date().toISOString();
     await store.ingestGlobalBatch(ecb, [item(ecb.sourceId, 1, "2026-11-17T09:00:00.000Z", "permitted text")]);
@@ -28,7 +29,8 @@ test("N-G6 PostgreSQL 17 global reads enforce rights, PIT, SQL pagination and du
     const cursorStore = { claim: (id: string, owner: string, leaseSeconds: number) => store.claimGlobalNewsConsumer(id, owner, leaseSeconds), acknowledge: (id: string, owner: string, expected: string | null, next: string | null) => store.acknowledgeGlobalNewsConsumer(id, owner, expected, next), release: (id: string, owner: string) => store.releaseGlobalNewsConsumer(id, owner), load: (id: string) => store.loadGlobalNewsConsumerCursor(id), save: (id: string, cursor: string | null) => store.saveGlobalNewsConsumerCursor(id, cursor) };
     const api = new GlobalNewsApiV1(n5, undefined, cursorStore); const auth = { serviceId: "news_reader" as const, credential: "ng6-test-credential" };
     const beforeRows = await api.search(auth, { asOf: before }); assert.equal(beforeRows.news.data.length, 0);
-    const asOf = (await admin.query<{ now: Date }>("select clock_timestamp() now")).rows[0].now.toISOString();
+    const dbNow = async () => (await admin.query<{ now: Date }>("select clock_timestamp() now")).rows[0].now.toISOString();
+    const asOf = await dbNow();
     const first = await api.search(auth, { asOf, limit: 2, sort: "RECENT" }); assert.equal(first.news.data.length, 2); assert.ok(first.news.nextCursor); assert.equal(first.news.data[0].publishedAt, "2026-11-17T11:00:00.000Z");
     assert.equal(first.news.data.find(row => row.sourceDocumentRef.includes(fed.sourceId))?.contentExcerpt, null);
     const permitted = first.news.data.find(row => row.sourceDocumentRef.includes(ecb.sourceId)); assert.equal(permitted?.contentExcerpt, "permitted text");
@@ -36,9 +38,19 @@ test("N-G6 PostgreSQL 17 global reads enforce rights, PIT, SQL pagination and du
     const consumerId = `ng6-consumer-${suffix}`; let failed = true;
     await assert.rejects(api.consumeIncremental(auth, consumerId, { asOf, limit: 2 }, async page => { assert.equal(page.news.data.length, 2); if (failed) { failed = false; throw new Error("simulated consumer interruption"); } }));
     assert.equal(await store.loadGlobalNewsConsumerCursor(consumerId), null);
-    await api.consumeIncremental(auth, consumerId, { asOf, limit: 2 }, async page => assert.equal(page.news.data.length, 2));
+    await api.consumeIncremental(auth, consumerId, { asOf: await dbNow(), limit: 2 }, async page => assert.equal(page.news.data.length, 2));
     assert.ok(await store.loadGlobalNewsConsumerCursor(consumerId));
-    const recovered = await api.consumeIncremental(auth, consumerId, { asOf, limit: 2 }, async page => assert.equal(page.news.data.length, 1));
-    assert.equal(recovered.news.data.length, 1); assert.equal(await store.loadGlobalNewsConsumerCursor(consumerId), null);
+    await store.ingestPublicationRevision({ revision: { publicationRevisionId: `${fed.sourceId}-publication-1:revision:2`, publicationId: `${fed.sourceId}-publication-1`, revisionNo: 2, title: "fed corrected release", publishedAt: "2026-11-17T10:00:00.000Z", form: "GLOBAL_RSS_2", contentFingerprint: "fed-correction", contentExcerpt: null, sourceDocumentRef: `https://${fed.sourceId}.example.test/release/1`, qualityFlags: [], supersedesRevisionId: `${fed.sourceId}-publication-1:revision:1` }, provenance: { provenanceId: `${fed.sourceId}-publication-1:provenance:2`, publicationRevisionId: `${fed.sourceId}-publication-1:revision:2`, sourceId: fed.sourceId, providerKey: "global-rss-2", providerObservationKey: `${fed.sourceId}:${fed.sourceId}-1`, originalUrl: `https://${fed.sourceId}.example.test/release/1`, sourceDocumentRef: `https://${fed.sourceId}.example.test/release/1`, retrievedAt: await dbNow(), qualityFlags: [] } });
+    const recovered = await api.consumeIncremental(auth, consumerId, { asOf: await dbNow(), limit: 2 }, async page => { assert.equal(page.news.data.length, 2); assert.ok(page.news.data.some(row => row.title === "fed corrected release")); });
+    assert.equal(recovered.news.data.length, 2); assert.notEqual(await store.loadGlobalNewsConsumerCursor(consumerId), null);
+    const empty = await api.consumeIncremental(auth, consumerId, { asOf: await dbNow(), limit: 2 }, async page => assert.equal(page.news.data.length, 0));
+    assert.equal(empty.news.data.length, 0); const preservedCursor = await store.loadGlobalNewsConsumerCursor(consumerId); assert.notEqual(preservedCursor, null);
+    await store.ingestGlobalBatch(ecb, [item(ecb.sourceId, 3, "2026-11-17T12:00:00.000Z", "new after exhaustion")]);
+    const discovered = await api.consumeIncremental(auth, consumerId, { asOf: await dbNow(), limit: 2 }, async page => assert.equal(page.news.data.length, 1));
+    assert.equal(discovered.news.data[0].title, `${ecb.sourceId} economic release 3`); assert.notEqual(await store.loadGlobalNewsConsumerCursor(consumerId), preservedCursor);
+    const expiredOwner = await store.claimGlobalNewsConsumer(consumerId, "expired-owner", 0);
+    const activeOwner = await store.claimGlobalNewsConsumer(consumerId, "active-owner", 60);
+    await assert.rejects(store.acknowledgeGlobalNewsConsumer(consumerId, "expired-owner", expiredOwner, "forged"), /FENCE_LOST/);
+    await store.releaseGlobalNewsConsumer(consumerId, "active-owner");
   } finally { await Promise.all([store.close(), admin.end()]); }
 });
