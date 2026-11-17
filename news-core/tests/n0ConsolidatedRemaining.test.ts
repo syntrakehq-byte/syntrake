@@ -90,14 +90,15 @@ test("N0 consolidated local rehearsal: T15, T27 partial recovery and T28 clock/P
     assert.ok((await store.getCheckpoint(scopeA))?.cursor);
     assert.ok((await store.getCheckpoint(scopeB))?.cursor);
     assert.equal((await admin.query("select count(*)::int n from news_core.checkpoints where collection_scope_key=any($1::text[])", [[scopeA, scopeB]])).rows[0].n, 2, "T15 must keep two CIK checkpoints independent");
-    assert.equal((await admin.query("select count(*)::int n from news_core.publications where external_id=any($1::text[])", [[...liveA.externalIds, ...liveB.externalIds]])).rows[0].n, liveA.externalIds.length + liveB.externalIds.length);
+    const distinctExternalIds = new Set([...liveA.externalIds, ...liveB.externalIds]);
+    assert.equal((await admin.query("select count(*)::int n from news_core.publications where external_id=any($1::text[])", [[...distinctExternalIds]])).rows[0].n, distinctExternalIds.size);
 
     await admin.query("update news_core.collection_targets set next_run_at=clock_timestamp(), lease_owner=null, lease_until=null, active_execution_id=null where collection_scope_key=any($1::text[])", [[scopeA, scopeB]]);
     await Promise.all([
       runNewsExecutorOnce({ store, workerId: `n0-consolidated-replay-a-${suffix}`, collectionScopeKey: scopeA, secUserAgent: "SYNTRAKE N0 rehearsal security@syntrake.com", fetchImpl: liveA.fetchImpl }),
       runNewsExecutorOnce({ store, workerId: `n0-consolidated-replay-b-${suffix}`, collectionScopeKey: scopeB, secUserAgent: "SYNTRAKE N0 rehearsal security@syntrake.com", fetchImpl: liveB.fetchImpl }),
     ]);
-    assert.equal((await admin.query("select count(*)::int n from news_core.publications where external_id=any($1::text[])", [[...liveA.externalIds, ...liveB.externalIds]])).rows[0].n, liveA.externalIds.length + liveB.externalIds.length, "T15/T27 concurrent replay must remain idempotent");
+    assert.equal((await admin.query("select count(*)::int n from news_core.publications where external_id=any($1::text[])", [[...distinctExternalIds]])).rows[0].n, distinctExternalIds.size, "T15/T27 concurrent replay must remain idempotent");
 
     await store.ingestAdministrative(administrativeBatch(clockScope, clockFuture, "2099-01-01T00:00:00.000Z"));
     await store.ingestAdministrative(administrativeBatch(clockScope, clockPast, "2020-01-01T00:00:00.000Z"));
