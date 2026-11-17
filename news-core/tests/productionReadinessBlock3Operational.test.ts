@@ -77,18 +77,17 @@ test("BL3 operational executor runs SEC through N3 and N5 with positive and cons
     assert.ok((await news.reconcileFactualBacklog()) >= 1, "backfill must restore committed publications missing from the factual queue");
     assert.equal(Number((await admin.query("select count(*)::int n from news_core.factual_pipeline_backlog where publication_id=$1", [atomicPublicationId])).rows[0].n), 1, "backfill must restore the committed publication target");
     const executorOptions = { store: news, factualPipeline: pipeline, secUserAgent: process.env.SEC_USER_AGENT ?? "SYNTRAKE BL3 operational CI/1.0 security@syntrake.com", collectionScopeKey: scope, fetchTimeoutMs: 120_000 };
-    const first = await runNewsExecutorOnce({ ...executorOptions, workerId: `bl3-operational-${suffix}-1` });
+    const knownQueue = await admin.query<{ position: number; state: string; claim_owner: string | null; next_attempt_at: string; completed_status: string | null }>(`select position, state, claim_owner, next_attempt_at::text, completed_status from (select b.*, row_number() over (order by b.next_attempt_at, b.created_at, b.publication_id)::int position from news_core.factual_pipeline_backlog b) q where publication_id=$1`, [knownPublicationId]);
+    assert.equal(knownQueue.rowCount, 1, "known SEC publication must be present in factual backlog");
+    console.log(`BL3_KNOWN_QUEUE_BEFORE ${JSON.stringify(knownQueue.rows[0])}`);
+    // Targeted selection is only for this positive proof. It uses the same
+    // claim transaction, lease and fencing path; fairness remains tested below
+    // with the unfiltered FIFO queue.
+    const first = await runNewsExecutorOnce({ ...executorOptions, factualPublicationIds: [knownPublicationId], workerId: `bl3-operational-${suffix}-1` });
     assert.equal(first.claimed, true);
     const factualOutcomes = [...first.factualOutcomes];
-    // A live SEC window can legitimately contain only unsupported or
-    // non-matching filings. Drain a bounded number of already persisted
-    // backlog windows before declaring the positive path absent; never
-    // re-download or reinterpret a refusal as a fact.
-    for (let cycle = 2; cycle <= 4 && !factualOutcomes.some(outcome => outcome.status === "PERSISTED"); cycle += 1) {
-      await admin.query("update news_core.collection_targets set next_run_at=clock_timestamp(), lease_until=null where collection_scope_key=$1", [scope]);
-      const next = await runNewsExecutorOnce({ ...executorOptions, workerId: `bl3-operational-${suffix}-${cycle}` });
-      factualOutcomes.push(...next.factualOutcomes);
-    }
+    const knownQueueAfter = await admin.query<{ position: number; state: string; claim_owner: string | null; next_attempt_at: string; completed_status: string | null }>(`select position, state, claim_owner, next_attempt_at::text, completed_status from (select b.*, row_number() over (order by b.next_attempt_at, b.created_at, b.publication_id)::int position from news_core.factual_pipeline_backlog b) q where publication_id=$1`, [knownPublicationId]);
+    console.log(`BL3_KNOWN_QUEUE_AFTER ${JSON.stringify(knownQueueAfter.rows[0])}`);
     assert.ok(factualOutcomes.some(outcome => outcome.status === "PERSISTED"), "operational executor must persist one supported SEC document");
     assert.ok(factualOutcomes.some(outcome => outcome.status === "REFUSED"), "operational executor must record a separate conservative refusal");
     const persisted = factualOutcomes.find(outcome => outcome.status === "PERSISTED");
