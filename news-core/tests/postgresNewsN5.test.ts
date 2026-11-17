@@ -25,6 +25,10 @@ test("N5 PostgreSQL 17 read API is PIT, role-scoped, paginated and append-only c
     const frontier = await admin.query<{ frontier_id: string }>("insert into news_core.visibility_frontiers(published_at) values ($1) returning frontier_id", [known]);
     await admin.query("insert into news_core.publications(publication_id,source_id,origin_fingerprint,external_id,original_url,title,first_seen_at,ingested_at,as_known_at,form,visibility_state,visibility_frontier_id) values ($1,$2,$3,$4,$5,'N5 official fixture',$6,$6,$6,'8-K','COMMITTED',$7)", [publicationId, sourceId, `origin:${suffix}`, publicationId, document, known, frontier.rows[0].frontier_id]);
     await admin.query("insert into news_core.observations(observation_id,provider_key,provider_observation_key,publication_id,observed_at,retrieved_at,publisher_key,visibility_state,visibility_frontier_id) values ($1,'n5-fixture',$1,$2,$3,$3,'n5','COMMITTED',$4)", [`obs:${suffix}`, publicationId, known, frontier.rows[0].frontier_id]);
+    // N2-A changes the return type of the N1 read function. Drop the N1
+    // signature at the migration boundary so this isolated rehearsal models
+    // a clean upgrade instead of depending on leftover schema state.
+    await admin.query("drop function if exists news_core.read_publication_revisions_as_of(timestamptz,text)");
     await admin.query(await readFile(migration("20261111170000_news_core_n2a_revisions.sql"), "utf8"));
     await admin.query(await readFile(migration("20261116140000_news_core_ng4_context.sql"), "utf8"));
     await admin.query(await readFile(migration("20261112120000_news_core_n3c_factual_persistence.sql"), "utf8"));
