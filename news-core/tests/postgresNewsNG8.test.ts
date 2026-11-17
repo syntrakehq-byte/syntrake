@@ -16,7 +16,7 @@ const source = (sourceId: string, publisher: string, endpoint: string): GlobalNe
   registryVersion: "1.0", sourceId, publisherId: sourceId, publisher, category: publisher === "SEC" ? "REGULATOR" : "CENTRAL_BANK",
   geoScope: [publisher === "ECB" ? "EU" : publisher === "BoE" ? "UK" : "US"], sourceType: "RSS_2", endpoint,
   allowedArticleHosts: [new URL(endpoint).hostname], rightsPolicyId: `${sourceId}-metadata-v1`,
-  updatePolicy: { minIntervalSeconds: 1, maxItemsPerCycle: 50 }, storagePolicy: { content: "METADATA_ONLY", retentionDays: 30, presentation: "PUBLIC" },
+  updatePolicy: { minIntervalSeconds: 15, maxItemsPerCycle: 50 }, storagePolicy: { content: "METADATA_ONLY", retentionDays: 30, presentation: "PUBLIC" },
   status: "ACTIVE", checkpointScope: `${sourceId}:ng8:${randomUUID()}`,
 });
 
