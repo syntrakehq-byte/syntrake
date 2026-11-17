@@ -19,9 +19,17 @@ async function runTarget(store: PostgresNewsStore, target: ClaimedTarget, option
   if (target.providerKey !== "sec") {
     const source = options.globalSources?.find(candidate => candidate.sourceId === target.sourceId && globalProviderKey(candidate.sourceType) === target.providerKey);
     if (!source) throw new Error("UNSUPPORTED_NEWS_PROVIDER");
-    const items = await (options.globalRetrieve ?? fetchAndParseRegisteredSource)(source, signal);
+    let items: readonly import("./globalNewsAdapter").GlobalNewsItem[];
+    try {
+      items = await (options.globalRetrieve ?? fetchAndParseRegisteredSource)(source, signal);
+    } catch (error) {
+      await store.recordGlobalOperationalState({ sourceId: source.sourceId, collectionScopeKey: target.collectionScopeKey, coverage: "UNKNOWN", health: "ERROR", observed: 0, insertedPublications: 0, lastErrorCode: error instanceof Error && /^GLOBAL_NEWS_[A-Z0-9_]+$/.test(error.message) ? error.message : "GLOBAL_NEWS_SOURCE_FAILED" });
+      throw error;
+    }
     if (signal.aborted) throw new Error("NEWS_EXECUTION_CANCELLED");
     const committed = await store.ingestGlobalBatch(source, items, {});
+    const latestPublishedAt = items.reduce<string | null>((latest, item) => item.publishedAt && (!latest || Date.parse(item.publishedAt) > Date.parse(latest)) ? item.publishedAt : latest, null);
+    await store.recordGlobalOperationalState({ sourceId: source.sourceId, collectionScopeKey: target.collectionScopeKey, coverage: "KNOWN", health: items.length ? "HEALTHY" : "EMPTY", observed: items.length, insertedPublications: committed.insertedPublications, lastPublishedAt: latestPublishedAt });
     const factualOutcomes = options.factualPipeline ? await drainFactualBacklog(store, options.factualPipeline, options, signal, lease) : [];
     return { ingested: committed.insertedPublications, factualOutcomes };
   }

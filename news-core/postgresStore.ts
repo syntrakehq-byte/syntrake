@@ -29,6 +29,11 @@ export type NewsRevisionInput = Readonly<{
 }>;
 export type NewsRevisionIngestResult = Readonly<{ inserted: boolean; publicationRevisionId: string }>;
 export type FactualBacklogClaim = Readonly<{ publication: NewsPublication; claimToken: string }>;
+export type GlobalOperationalState = Readonly<{
+  sourceId: string; collectionScopeKey: string; coverage: "KNOWN" | "UNKNOWN";
+  health: "HEALTHY" | "EMPTY" | "STALE" | "UNAVAILABLE" | "ERROR";
+  observed: number; insertedPublications: number; lastPublishedAt?: string | null; lastErrorCode?: string | null;
+}>;
 
 function watermarkKey(batch: NewsBatch): string | null {
   const cursor = batch.checkpoint.cursor;
@@ -253,6 +258,28 @@ export class PostgresNewsStore {
   async ingestGlobalBatch(source: GlobalNewsRegistryEntry, items: readonly GlobalNewsItem[], options: IngestOptions = {}): Promise<{ insertedPublications: number; insertedObservations: number }> {
     await this.ensureGlobalSource(source);
     return this.ingestAdministrative(globalItemsToNewsBatch(source, items), options);
+  }
+  async recordGlobalOperationalState(state: GlobalOperationalState): Promise<void> {
+    const installed = (await this.pool.query<{ installed: boolean }>("select to_regclass('news_core.global_operational_state') is not null installed")).rows[0]?.installed;
+    if (!installed) return;
+    await this.pool.query(`
+      insert into news_core.global_operational_state(source_id,collection_scope_key,coverage,health,cycles,observed,inserted_publications,last_success_at,last_observed_at,last_published_at,last_error_code,updated_at)
+      values ($1,$2,$3,$4,1,$5,$6,case when $4 in ('HEALTHY','EMPTY') then clock_timestamp() else null end,clock_timestamp(),$7,$8,clock_timestamp())
+      on conflict (source_id,collection_scope_key) do update set
+        coverage=excluded.coverage, health=excluded.health,
+        cycles=news_core.global_operational_state.cycles+1,
+        observed=news_core.global_operational_state.observed+excluded.observed,
+        inserted_publications=news_core.global_operational_state.inserted_publications+excluded.inserted_publications,
+        last_success_at=case when excluded.health in ('HEALTHY','EMPTY') then excluded.last_success_at else news_core.global_operational_state.last_success_at end,
+        last_observed_at=excluded.last_observed_at,
+        last_published_at=coalesce(excluded.last_published_at,news_core.global_operational_state.last_published_at),
+        last_error_code=excluded.last_error_code, updated_at=clock_timestamp()` ,
+      [state.sourceId, state.collectionScopeKey, state.coverage, state.health, state.observed, state.insertedPublications, state.lastPublishedAt ?? null, state.lastErrorCode ?? null],
+    );
+  }
+  async readGlobalOperationalState(sourceId: string, collectionScopeKey: string): Promise<Record<string, unknown> | null> {
+    const result = await this.pool.query("select * from news_core.global_operational_state where source_id=$1 and collection_scope_key=$2", [sourceId, collectionScopeKey]);
+    return result.rows[0] ?? null;
   }
   async upsertTarget(target: NewsTarget): Promise<void> {
     await this.pool.query(

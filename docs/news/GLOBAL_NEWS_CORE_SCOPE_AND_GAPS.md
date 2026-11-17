@@ -8,7 +8,7 @@ News Core is a **global financial/economic news ingestion and factual evidence s
 
 - Existing News N0–N5 on parent PR #102: SEC ingestion, PostgreSQL state, autonomous supervision, factual classification, PIT and source security.
 - The local AUT-001 experiment collected 147 SEC publications for one CIK; 12 factual revisions, 90 rule-nonmatches, 45 unsupported factual form entries. These numbers do not measure total SEC coverage or world news coverage.
-- No autonomous global providers, publisher entitlements or end-to-end editorial ingestion are proven.
+- N-G3 through N-G7 now provide durable multisource ingestion, PIT reads, incremental consumer cursors, rights filtering and source observability.
 - Do not erase the prior audit/tests because the product scope expands.
 
 ## First increment in this branch
@@ -23,9 +23,15 @@ News Core is a **global financial/economic news ingestion and factual evidence s
 - RSS 2.0 and Atom normalizers now share the existing `GlobalNewsItem` identity, provenance and rights contract; JSON Feed continues to use the existing adapter.
 - The registry collector uses the pinned HTTPS transport, validates redirects against the registered host, rejects unsafe XML constructs and article URLs, bounds batches through the registry policy, and isolates source failures.
 - Official API integrations have a common adapter interface, but no paid or unverified API provider is activated. A feed with zero new items is reported as `EMPTY`, not as a source failure.
-- Live rehearsal on 2026-11-16 successfully normalized publications from the official ECB, Federal Reserve and SEC RSS endpoints. This proves the tested endpoints only; it does not establish global coverage or production readiness.
+- Live rehearsal normalizes publications from the official ECB, Bank of England and SEC RSS endpoints. The earlier Federal Reserve endpoint returned 404/406 in CI and is not treated as active evidence. This proves only the tested endpoints, not global coverage or production readiness.
 - No network calls, persisted data, checkpoints, licensing assumptions, production toggles or external costs. Security against DNS rebinding and SSRF remains the responsibility of an explicitly designed future source-specific fetch path; never pass unverified remote URLs to generic fetch.
-- This is NOT an operational global news collector.
+- N-G8 now exercises the operational collector path through the existing `news-postgres-worker.ts` executor functions. This is not a claim of 24/7 production availability.
+
+## N-G8 status
+
+- **Implemented:** real source registration, safe fetch, normalization, transactional PostgreSQL persistence, independent targets/checkpoints, N5 readback, durable source-scoped operational state, replay idempotency and lease fencing.
+- **Verified in CI:** PostgreSQL 17 rehearsal with three live sources, two cycles, no duplicate publications, N5 visibility, isolated source failure and stale-owner rejection; existing supervisor tests cover restart and cooperative shutdown.
+- **Not demonstrated:** a 24–48 hour run, destination-infrastructure restart, production credentials/permissions, alert delivery, global coverage, or `NEWS_CORE_PRODUCTION_READY`.
 
 ## Required implementation sequence
 
@@ -48,4 +54,4 @@ News Core is a **global financial/economic news ingestion and factual evidence s
 
 ## Current state
 
-This branch only implements the **first pure adapter**, not the above runtime, nor global source activation. Remain Draft. No merge, no deploy, no remote migrations and no runtime changes until independent review and explicit authorization.
+The global runtime path is implemented and remains Draft pending independent review. No merge, no deploy, no remote migrations and no production activation.

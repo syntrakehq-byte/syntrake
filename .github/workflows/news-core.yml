@@ -104,6 +104,11 @@ jobs:
         run: npm run test:news:ng6:pg17
       - name: Global News N-G7 observability and source health
         run: npm run test:news:ng7
+      - name: Global News N-G8 real PostgreSQL operational rehearsal
+        env:
+          RUN_GLOBAL_NEWS_NG8: "1"
+          SEC_USER_AGENT: "SYNTRAKE N-G8 CI/1.0 security@syntrake.com"
+        run: npm run test:news:ng8:pg17
       - run: npm run test:news:n5:pg17
       - run: npm run test:news:n5:live
         env:
