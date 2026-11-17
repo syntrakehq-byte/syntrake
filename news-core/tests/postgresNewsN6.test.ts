@@ -45,8 +45,8 @@ test("N-G6 PostgreSQL 17 global reads enforce rights, PIT, SQL pagination and du
     const asOf = await waitForCommittedFrontier(ng6Filters.sourceIds);
     const first = await api.search(auth, { asOf, filters: ng6Filters, limit: 2, sort: "RECENT" }); assert.equal(first.news.data.length, 2); assert.ok(first.news.nextCursor); assert.equal(first.news.data[0].publishedAt, "2026-11-17T11:00:00.000Z");
     assert.equal(first.news.data.find(row => row.sourceDocumentRef.includes(fed.sourceId))?.contentExcerpt, null);
-    const permitted = first.news.data.find(row => row.sourceDocumentRef.includes(ecb.sourceId)); assert.equal(permitted?.contentExcerpt, "permitted text");
     const next = await api.search(auth, { cursor: first.news.nextCursor, filters: ng6Filters, limit: 2 }); assert.equal(next.news.data.length, 1);
+    const permitted = next.news.data.find(row => row.sourceDocumentRef.includes(ecb.sourceId)); assert.equal(permitted?.contentExcerpt, "permitted text");
     const consumerId = `ng6-consumer-${suffix}`; let failed = true;
     await assert.rejects(api.consumeIncremental(auth, consumerId, { asOf, filters: ng6Filters, limit: 2 }, async page => { assert.equal(page.news.data.length, 2); if (failed) { failed = false; throw new Error("simulated consumer interruption"); } }));
     assert.equal(await store.loadGlobalNewsConsumerCursor(consumerId), null);
