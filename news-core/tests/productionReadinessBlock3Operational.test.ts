@@ -81,6 +81,8 @@ test("BL3 operational executor runs SEC through N3 and N5 with positive and cons
     const executorOptions = { store: news, factualPipeline: pipeline, secUserAgent: process.env.SEC_USER_AGENT ?? "SYNTRAKE BL3 operational CI/1.0 security@syntrake.com", collectionScopeKey: scope, fetchTimeoutMs: 120_000 };
     const knownQueue = await admin.query<{ position: number; state: string; claim_owner: string | null; next_attempt_at: string; completed_status: string | null }>(`select position, state, claim_owner, next_attempt_at::text, completed_status from (select b.*, row_number() over (order by b.next_attempt_at, b.created_at, b.publication_id)::int position from news_core.factual_pipeline_backlog b) q where publication_id=$1`, [knownPublicationId]);
     assert.equal(knownQueue.rowCount, 1, "known SEC publication must be present in factual backlog");
+    const knownRevision = await admin.query("select publication_revision_id, visibility_state, ingested_at::text, as_known_at::text, pending_transaction_id from news_core.publication_revisions where publication_id=$1 order by revision_no", [knownPublicationId]);
+    console.log(`BL3_KNOWN_REVISION ${JSON.stringify(knownRevision.rows)}`);
     console.log(`BL3_KNOWN_QUEUE_BEFORE ${JSON.stringify(knownQueue.rows[0])}`);
     // Targeted selection is only for this positive proof. It uses the same
     // claim transaction, lease and fencing path; fairness remains tested below
