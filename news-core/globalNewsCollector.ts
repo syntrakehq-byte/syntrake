@@ -14,7 +14,7 @@ export type GlobalNewsCollectionCycle = Readonly<{ sourceId: string; status: "IN
 export type GlobalNewsCollectionSink = Readonly<{ persistBatch(source: GlobalNewsRegistryEntry, items: readonly GlobalNewsItem[]): Promise<void> }>;
 
 export async function fetchAndParseRegisteredSource(source: GlobalNewsRegistryEntry, signal?: AbortSignal): Promise<readonly GlobalNewsItem[]> {
-  const response = await fetchSafeRegisteredNewsFeed(source.endpoint, new URL(source.endpoint).hostname, { headers: { Accept: "application/rss+xml, application/atom+xml, application/feed+json, application/json", "User-Agent": process.env.SEC_USER_AGENT ?? "SYNTRAKE Global News/1.0" }, signal });
+  const response = await fetchSafeRegisteredNewsFeed(source.endpoint, new URL(source.endpoint).hostname, { headers: { Accept: "application/rss+xml, application/atom+xml, application/feed+json, application/json, application/xml, text/xml, text/html;q=0.9", "User-Agent": process.env.SEC_USER_AGENT ?? "SYNTRAKE Global News/1.0" }, signal });
   if (!response.ok) throw new Error(`GLOBAL_NEWS_FETCH_HTTP_${response.status}`);
   const retrievedAt = new Date().toISOString();
   const body = await response.text();
