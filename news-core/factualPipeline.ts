@@ -136,9 +136,17 @@ export class NewsFactualPipelineV1 {
       // during the same durable ingest. Use the actual retrieval instant,
       // never a synthetic future cutoff, to select that committed revision.
       const asOf = retrievedAt;
-      const revisions = await this.options.news.readPublicationRevisionsAsOf(asOf, publication.publicationId);
+      let revisions = await this.options.news.readPublicationRevisionsAsOf(asOf, publication.publicationId);
+      // N1/N2 finalization can assign a durable frontier just after the
+      // executor starts. Poll only with the current wall-clock cutoff; never
+      // manufacture a future PIT value and never turn this race into REFUSED.
+      const revisionDeadline = Date.now() + 3_000;
+      while (revisions.length === 0 && Date.now() < revisionDeadline) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        revisions = await this.options.news.readPublicationRevisionsAsOf(new Date().toISOString(), publication.publicationId);
+      }
       const prior = revisions[0];
-      if (!prior) return { publicationId: publication.publicationId, canonicalClaimId: `sec:${publication.externalId}`, status: "REFUSED", reason: "N2_PUBLICATION_REVISION_UNAVAILABLE", documentSha256: sha256(body) };
+      if (!prior) throw new Error("NEWS_FACTUAL_N2_AVAILABILITY_RETRYABLE");
       const documentFingerprint = sha256(body);
       const matchingRevision = revisions.find(item => item.contentFingerprint === documentFingerprint && item.sourceDocumentRef === publication.originalUrl);
       const revisionId = matchingRevision?.publicationRevisionId ?? `${publication.publicationId}:revision:${prior.revisionNo + 1}`;
