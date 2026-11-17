@@ -15,6 +15,8 @@ export type NewsPublicationRevision = Readonly<{
   contentExcerpt?: string | null;
   sourceDocumentRef: string; qualityFlags: readonly string[]; supersedesRevisionId: string | null;
   ingestedAt: string | null; asKnownAt: string | null;
+  sourceId?: string;
+  rightsMode?: "METADATA_ONLY" | "PERMITTED_TEXT";
 }>;
 export type NewsRevisionProvenance = Readonly<{
   provenanceId: string; publicationRevisionId: string; sourceId: string; providerKey: string;

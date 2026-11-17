@@ -269,6 +269,15 @@ export class PostgresNewsStore {
     const row = result.rows[0]; return row ? { cursor: row.cursor, updatedAt: row.updated_at.toISOString() } : null;
   }
 
+  async loadGlobalNewsConsumerCursor(consumerId: string): Promise<string | null> {
+    const result = await this.pool.query<{ cursor: string | null }>("select cursor from news_core.global_news_consumer_cursors where consumer_id=$1", [consumerId]);
+    return result.rows[0]?.cursor ?? null;
+  }
+
+  async saveGlobalNewsConsumerCursor(consumerId: string, cursor: string | null): Promise<void> {
+    await this.pool.query("insert into news_core.global_news_consumer_cursors(consumer_id,cursor) values ($1,$2) on conflict (consumer_id) do update set cursor=excluded.cursor,updated_at=clock_timestamp()", [consumerId, cursor]);
+  }
+
   async enqueueFactualBacklog(publications: readonly NewsPublication[]): Promise<number> {
     let inserted = 0;
     for (const publication of publications) {
@@ -690,6 +699,11 @@ export class PostgresNewsStore {
   async readPublicationRevisionsFilteredAsOf(asOf: string, query: string | null, sourceIds: readonly string[], forms: readonly string[]): Promise<NewsPublicationRevision[]> {
     const result = await this.pool.query<NewsPublicationRevision>("select * from news_core.read_publication_revisions_filtered_as_of($1::timestamptz,$2::text,$3::text[],$4::text[])", [asOf, query, sourceIds, forms]);
     return result.rows.map(row => ({ ...row, publishedAt: optionalIso(row.publishedAt), ingestedAt: optionalIso(row.ingestedAt), asKnownAt: optionalIso(row.asKnownAt), qualityFlags: flags(row.qualityFlags) }));
+  }
+
+  async readPublicationRevisionsPageAsOf(asOf: string, query: string | null, sourceIds: readonly string[], forms: readonly string[], entityIds: readonly string[], instrumentIds: readonly string[], offset: number, limit: number, sort: "STABLE" | "RECENT"): Promise<NewsPublicationRevision[]> {
+    const result = await this.pool.query<NewsPublicationRevision>("select * from news_core.read_global_publication_revisions_page_as_of($1::timestamptz,$2::text,$3::text[],$4::text[],$5::text[],$6::text[],$7::integer,$8::integer,$9::text)", [asOf, query, sourceIds, forms, entityIds, instrumentIds, offset, limit, sort]);
+    return result.rows.map(row => ({ ...row, publishedAt: optionalIso(row.publishedAt), ingestedAt: optionalIso(row.ingestedAt), asKnownAt: optionalIso(row.asKnownAt), qualityFlags: flags(row.qualityFlags), contentExcerpt: row.rightsMode === "PERMITTED_TEXT" ? row.contentExcerpt ?? null : null }));
   }
 
   async readEntityLinksAsOf(asOf: string, publicationId?: string): Promise<readonly Record<string, unknown>[]> {

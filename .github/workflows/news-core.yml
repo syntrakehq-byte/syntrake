@@ -100,6 +100,8 @@ jobs:
       - run: npm run test:news:n5
       - name: Global News N-G6 versioned read API and rights boundary
         run: npm run test:news:ng6
+      - name: Global News N-G6 PostgreSQL 17 PIT, rights and consumer recovery
+        run: npm run test:news:ng6:pg17
       - run: npm run test:news:n5:pg17
       - run: npm run test:news:n5:live
         env:
