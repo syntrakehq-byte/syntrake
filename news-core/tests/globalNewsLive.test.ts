@@ -11,10 +11,9 @@ const source = (sourceId: string, publisher: string, endpoint: string): GlobalNe
 test("live official RSS sources return real normalized publications", { skip: !process.env.RUN_GLOBAL_NEWS_LIVE && "RUN_GLOBAL_NEWS_LIVE=1 required for external-source rehearsal" }, async () => {
   const sources = [
     source("ecb", "European Central Bank", "https://www.ecb.europa.eu/rss/press.html"),
-    // The Board's RSS index currently exposes the Data Download announcements
-    // feed as the stable public XML endpoint; the historical press_all.xml
-    // endpoint returns 404 in the CI runner.
-    source("fed", "Federal Reserve Board", "https://www.federalreserve.gov/feeds/datadownload.html"),
+    // The Board's RSS index exposes this active statistical-release XML feed;
+    // the historical press_all.xml endpoint returns 404 in the CI runner.
+    source("fed", "Federal Reserve Board", "https://www.federalreserve.gov/feeds/H10.html"),
     source("sec", "U.S. Securities and Exchange Commission", "https://www.sec.gov/rss/news/press.xml"),
   ];
   const persisted: Array<{ sourceId: string; count: number; firstId: string }> = [];
