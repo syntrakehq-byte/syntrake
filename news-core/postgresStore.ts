@@ -702,8 +702,15 @@ export class PostgresNewsStore {
   }
 
   async readPublicationRevisionsPageAsOf(asOf: string, query: string | null, sourceIds: readonly string[], forms: readonly string[], entityIds: readonly string[], instrumentIds: readonly string[], offset: number, limit: number, sort: "STABLE" | "RECENT"): Promise<NewsPublicationRevision[]> {
-    const result = await this.pool.query<NewsPublicationRevision>("select * from news_core.read_global_publication_revisions_page_as_of($1::timestamptz,$2::text,$3::text[],$4::text[],$5::text[],$6::text[],$7::integer,$8::integer,$9::text)", [asOf, query, sourceIds, forms, entityIds, instrumentIds, offset, limit, sort]);
-    return result.rows.map(row => ({ ...row, publishedAt: optionalIso(row.publishedAt), ingestedAt: optionalIso(row.ingestedAt), asKnownAt: optionalIso(row.asKnownAt), qualityFlags: flags(row.qualityFlags), contentExcerpt: row.rightsMode === "PERMITTED_TEXT" ? row.contentExcerpt ?? null : null }));
+    try {
+      const result = await this.pool.query<NewsPublicationRevision>("select * from news_core.read_global_publication_revisions_page_as_of($1::timestamptz,$2::text,$3::text[],$4::text[],$5::text[],$6::text[],$7::integer,$8::integer,$9::text)", [asOf, query, sourceIds, forms, entityIds, instrumentIds, offset, limit, sort]);
+      return result.rows.map(row => ({ ...row, publishedAt: optionalIso(row.publishedAt), ingestedAt: optionalIso(row.ingestedAt), asKnownAt: optionalIso(row.asKnownAt), qualityFlags: flags(row.qualityFlags), contentExcerpt: row.rightsMode === "PERMITTED_TEXT" ? row.contentExcerpt ?? null : null }));
+    } catch (error) {
+      if ((error as { code?: string }).code !== "42883" || entityIds.length || instrumentIds.length) throw error;
+      const rows = await this.readPublicationRevisionsFilteredAsOf(asOf, query, sourceIds, forms);
+      const ordered = sort === "RECENT" ? [...rows].sort((a, b) => Date.parse(b.publishedAt ?? b.asKnownAt ?? "") - Date.parse(a.publishedAt ?? a.asKnownAt ?? "") || a.publicationId.localeCompare(b.publicationId)) : rows;
+      return ordered.slice(offset, offset + limit);
+    }
   }
 
   async readEntityLinksAsOf(asOf: string, publicationId?: string): Promise<readonly Record<string, unknown>[]> {
