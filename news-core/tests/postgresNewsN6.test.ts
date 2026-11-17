@@ -35,7 +35,8 @@ test("N-G6 PostgreSQL 17 global reads enforce rights, PIT, SQL pagination and du
       for (let attempt = 0; attempt < 100; attempt += 1) {
         const row = (await admin.query<{ published_at: Date | null }>(`select max(f.published_at) published_at
           from news_core.publications p join news_core.visibility_frontiers f on f.frontier_id=p.visibility_frontier_id
-          where p.source_id=any($1::text[]) and p.visibility_state='COMMITTED' and f.published_at<=clock_timestamp()`, [sourceIds])).rows[0];
+          where p.source_id=any($1::text[]) and p.visibility_state='COMMITTED' and f.published_at<=clock_timestamp()
+          having count(distinct p.source_id)=$2`, [sourceIds, sourceIds.length])).rows[0];
         if (row?.published_at) return row.published_at.toISOString();
         await new Promise(resolve => setTimeout(resolve, 25));
       }
