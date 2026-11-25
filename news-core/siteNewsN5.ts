@@ -27,7 +27,7 @@ export function mapNewsN5ForSite(rows: readonly NewsPublicationRevision[], allow
     catch { continue; }
     if (link.protocol !== "https:" || !link.hostname || link.username || link.password || link.port || link.hash) continue;
     if (link.hostname === "localhost" || link.hostname.endsWith(".local") || link.hostname.includes(":") ||
-        /^\\d{1,3}(?:\\.\\d{1,3}){3}$/.test(link.hostname)) continue;
+        /^\d{1,3}(?:\.\d{1,3}){3}$/.test(link.hostname)) continue;
     result.push(Object.freeze({
       sourceId: row.sourceId,
       publicationId: row.publicationId,
