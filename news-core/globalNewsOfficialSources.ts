@@ -1,3 +1,4 @@
+import { NEWS_DAILY_EDITORIAL_CANDIDATES_V1 } from "./globalNewsEditorialSources";
 import { GDELT_WORLD_INDEX_V1 } from "./globalNewsAggregator";
 import { createGlobalNewsRegistry, type GlobalNewsRegistryEntry } from "./globalNewsRegistry";
 
@@ -58,6 +59,12 @@ export const NEWS_OFFICIAL_PLUS_WORLD_INDEX_V1 = createGlobalNewsRegistry([
   ...NEWS_OFFICIAL_EXPANDED_PROFILE_V1, GDELT_WORLD_INDEX_V1,
 ]).entries;
 
+/** Opt-in ten-source profile: verified direct institutional and editorial RSS. */
+export const NEWS_OFFICIAL_PLUS_DAILY_NEWS_V1 = createGlobalNewsRegistry([
+  ...NEWS_OFFICIAL_EXPANDED_PROFILE_V1,
+  ...NEWS_DAILY_EDITORIAL_CANDIDATES_V1,
+]).entries;
+
 /** Fail-closed runtime profile selection; the default remains unchanged. */
 export function resolveGlobalNewsWorkerSources(
   config: Readonly<{ profile?: string; json?: string }>,
@@ -66,6 +73,7 @@ export function resolveGlobalNewsWorkerSources(
   if (config.profile) {
     if (config.profile === "official-expanded-v1") return NEWS_OFFICIAL_EXPANDED_PROFILE_V1;
     if (config.profile === "official-plus-world-index-v1") return NEWS_OFFICIAL_PLUS_WORLD_INDEX_V1;
+    if (config.profile === "official-plus-daily-news-v1") return NEWS_OFFICIAL_PLUS_DAILY_NEWS_V1;
     throw new Error("NEWS_GLOBAL_SOURCES_PROFILE_INVALID");
   }
   if (!config.json) return [];
