@@ -68,8 +68,11 @@ test("N0 consolidated local rehearsal: T15, T27 partial recovery and T28 clock/P
     let sourceBAvailable = false;
     const failedA = runNewsExecutorOnce({ store, workerId: `n0-consolidated-a-${suffix}`, collectionScopeKey: scopeA, secUserAgent: "SYNTRAKE N0 rehearsal security@syntrake.com", fetchImpl: async () => { if (!sourceAvailable) throw new Error("SOURCE_TEMPORARILY_UNAVAILABLE_A"); return liveA.fetchImpl("https://data.sec.gov"); } });
     const failedB = runNewsExecutorOnce({ store, workerId: `n0-consolidated-b-${suffix}`, collectionScopeKey: scopeB, secUserAgent: "SYNTRAKE N0 rehearsal security@syntrake.com", fetchImpl: async () => { if (!sourceBAvailable) throw new Error("SOURCE_TEMPORARILY_UNAVAILABLE_B"); return liveB.fetchImpl("https://data.sec.gov"); } });
-    await assert.rejects(failedA, /SOURCE_TEMPORARILY_UNAVAILABLE_A/);
-    await assert.rejects(failedB, /SOURCE_TEMPORARILY_UNAVAILABLE_B/);
+    // Observe both concurrent failures immediately; either source can reject first.
+    await Promise.all([
+      assert.rejects(failedA, /SOURCE_TEMPORARILY_UNAVAILABLE_A/),
+      assert.rejects(failedB, /SOURCE_TEMPORARILY_UNAVAILABLE_B/),
+    ]);
     assert.equal(await store.getCheckpoint(scopeA), null, "T27 partial outage must not advance checkpoint");
     assert.equal(await store.getCheckpoint(scopeB), null, "T15 simultaneous outage must not advance checkpoint B");
     sourceAvailable = true;
