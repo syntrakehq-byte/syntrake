@@ -4,30 +4,30 @@ import Link from "next/link";
 import { UserButton } from "@clerk/nextjs";
 import {
   ArrowUpRight, BarChart3, Compass, FlaskConical, Home, Layers3,
-  ShieldCheck, TrendingUp, type LucideIcon,
+  ShieldCheck, TrendingUp, Newspaper, type LucideIcon,
 } from "lucide-react";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
 import { withLangQuery } from "@/lib/i18n/requestSiteLang";
 import type { SiteLang } from "@/lib/i18n/siteLanguage";
 
-export type WorkspaceArea = "home" | "investing" | "trading" | "research" | "markets";
+export type WorkspaceArea = "home" | "investing" | "trading" | "research" | "markets" | "news";
 
 const translations = {
   pt: {
     navigation: "Plataforma", home: "Accueil", investing: "Investing", trading: "Trading",
-    research: "Research Lab", markets: "Market Data", account: "A minha conta",
+    research: "Research Lab", markets: "Market Data", news: "Notícias", account: "A minha conta",
     private: "Área privada", banner: "Investing e Trading independentes",
     subtitle: "Uma conta, duas atividades financeiras separadas.",
   },
   en: {
     navigation: "Platform", home: "Home", investing: "Investing", trading: "Trading",
-    research: "Research Lab", markets: "Market Data", account: "My account",
+    research: "Research Lab", markets: "Market Data", news: "News", account: "My account",
     private: "Private workspace", banner: "Investing and Trading stay separate",
     subtitle: "One account, two independent financial activities.",
   },
   fr: {
     navigation: "Plateforme", home: "Accueil", investing: "Investing", trading: "Trading",
-    research: "Research Lab", markets: "Market Data", account: "Mon compte",
+    research: "Research Lab", markets: "Market Data", news: "Actualités", account: "Mon compte",
     private: "Espace privé", banner: "Investing et Trading restent séparés",
     subtitle: "Un compte, deux activités financières indépendantes.",
   },
@@ -39,6 +39,7 @@ const nav: readonly { key: WorkspaceArea; href: string; icon: LucideIcon }[] = [
   { key: "trading", href: "/trading", icon: TrendingUp },
   { key: "research", href: "/research", icon: FlaskConical },
   { key: "markets", href: "/markets", icon: BarChart3 },
+  { key: "news", href: "/news", icon: Newspaper },
 ];
 
 export function WorkspaceShell({
