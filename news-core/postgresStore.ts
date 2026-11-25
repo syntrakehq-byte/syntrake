@@ -864,7 +864,7 @@ export class PostgresNewsStore {
       if (failurePoint === "after-execution-update") throw new Error("INJECTED_FAILURE_DURING_FINISH");
       const target = await client.query(
         `update news_core.collection_targets set lease_owner=null,lease_until=null,active_execution_id=null,
-         next_run_at=clock_timestamp()+(case when $1 then interval '60 seconds' else least(interval '1 hour',interval '5 seconds' * greatest(consecutive_failures+1,1)) end),
+         next_run_at=clock_timestamp()+(case when $1 then make_interval(secs => greatest(60,least(86400,coalesce((parameters->>'minIntervalSeconds')::integer,60)))) else least(interval '1 hour',interval '5 seconds' * greatest(consecutive_failures+1,1)) end),
          consecutive_failures=case when $1 then 0 else consecutive_failures+1 end,
          last_success_at=case when $1 then clock_timestamp() else last_success_at end,last_error_at=case when $1 then last_error_at else clock_timestamp() end,
          last_error=case when $1 then null else $2 end,updated_at=clock_timestamp()
