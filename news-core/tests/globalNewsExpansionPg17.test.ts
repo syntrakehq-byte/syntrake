@@ -29,7 +29,7 @@ test("new official publishers: live RSS to PostgreSQL 17 to N5 with source-speci
   try {
     await admin.connect();
     const version = (await admin.query<{ version: string }>("select current_setting('server_version') version")).rows[0].version;
-    assert.match(version, /^17\\./);
+    assert.ok(version.startsWith("17."), "PostgreSQL 17 required");
     // This is a replay-safe CI schema, never a production migration.
     await admin.query(await readFile(new URL("../../supabase/migrations/20261117200000_news_core_ng8_operational_state.sql", import.meta.url), "utf8"));
     for (const base of NEWS_EXPANSION_OFFICIAL_CANDIDATES_V1) {
