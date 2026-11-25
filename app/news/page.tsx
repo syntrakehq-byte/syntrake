@@ -6,6 +6,8 @@ import { AlertTriangle, ArrowUpRight, Clock3, Globe2, Newspaper, RefreshCw, Shie
 import { WorkspaceShell } from "@/components/workspace/WorkspaceShell";
 import { NEWS_OFFICIAL_PLUS_DAILY_NEWS_V1 } from "@/news-core/globalNewsOfficialSources";
 import { readNewsN5ForSite } from "@/news-core/siteNewsN5";
+import { manualNewsRefreshAllowed } from "@/news-core/siteNewsManualRefresh";
+import { ManualNewsRefresh } from "./ManualNewsRefresh";
 import { fetchAndParseRegisteredSource } from "@/news-core/globalNewsCollector";
 import { resolveRequestSiteLang, withLangQuery } from "@/lib/i18n/requestSiteLang";
 import type { SiteLang } from "@/lib/i18n/siteLanguage";
@@ -13,6 +15,7 @@ import type { GlobalNewsItem } from "@/news-core/globalNewsAdapter";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 export const metadata: Metadata = {
   title: "Live news sources | Syntrake",
   description: "Current headlines collected from identified financial and world news RSS sources.",
@@ -55,6 +58,8 @@ const messages = {
     rights: "Apenas títulos, datas e links; os artigos pertencem aos respetivos publicadores. Informação noticiosa, não aconselhamento financeiro.",
     reload: "Atualizar consulta",
     durable: "Consulta ao histórico persistente N5. Mostra apenas revisões disponíveis no instante da leitura. O funcionamento contínuo depende do supervisor externo.",
+    manual: "Histórico persistente N5. A atualização manual consulta as fontes elegíveis e guarda novas publicações. Não existe recolha contínua neste modo.",
+    readHistory: "Atualizar histórico",
     stored: "Histórico guardado",
     available: "Disponível",
     unavailable: "Indisponível",
@@ -79,6 +84,8 @@ const messages = {
     rights: "Titles, dates and links only. Articles belong to their publishers. News content is not financial advice.",
     reload: "Refresh sources",
     durable: "Read-only N5 persistent history. Only revisions known at the request cutoff are shown. Continuous ingestion depends on the independent supervisor.",
+    manual: "Persistent N5 history. Manual refresh checks eligible sources and saves new publications. This mode does not provide continuous collection.",
+    readHistory: "Refresh history",
     stored: "Persisted history",
     available: "Available",
     unavailable: "Unavailable",
@@ -103,6 +110,8 @@ const messages = {
     rights: "Titres, dates et liens uniquement. Les articles appartiennent à leurs éditeurs. Ces actualités ne sont pas des conseils financiers.",
     reload: "Actualiser les sources",
     durable: "Historique persistant N5 en lecture seule. Seules les révisions connues au moment de la lecture sont affichées. La collecte continue dépend du superviseur externe.",
+    manual: "Historique persistant N5. L’actualisation manuelle consulte les sources éligibles et enregistre les nouvelles publications. Ce mode ne collecte pas en continu.",
+    readHistory: "Actualiser l’historique",
     stored: "Historique enregistré",
     available: "Disponible",
     unavailable: "Indisponible",
@@ -158,6 +167,7 @@ export default async function NewsPage({
   const params = await searchParams;
   const lang = await resolveRequestSiteLang(params);
   const tx = messages[lang];
+  const manualEnabled = manualNewsRefreshAllowed(session.userId);
   const streams = await getStreams();
   const selected = SOURCE_REGISTRY.some(x => x.sourceId === params?.source) ? params?.source : "all";
   const publications = streams
@@ -196,15 +206,16 @@ export default async function NewsPage({
 
     <div className="mt-6 flex items-start gap-3 rounded-2xl border border-[#826d48]/40 bg-[#3a2f20]/40 p-4 text-[#dfcaab]">
       <AlertTriangle size={18} className="mt-0.5 shrink-0" aria-hidden="true" />
-      <p className="text-sm leading-6">{SITE_N5_MODE ? tx.durable : tx.warning}</p>
+      <p className="text-sm leading-6">{manualEnabled ? tx.manual : SITE_N5_MODE ? tx.durable : tx.warning}</p>
     </div>
 
     <section className="mt-8" aria-label={tx.sources}>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-xl font-semibold text-white">{tx.sources}</h2>
-        <Link href={withLangQuery("/news", lang)} className="inline-flex items-center gap-2 rounded-full border border-[#364c63] px-4 py-2 text-sm text-[#c2d7e0] hover:bg-[#243750]">
-          <RefreshCw size={15} aria-hidden="true"/>{tx.reload}
-        </Link>
+        {manualEnabled ? <ManualNewsRefresh lang={lang} label={tx.reload} /> :
+          <Link href={withLangQuery("/news", lang)} className="inline-flex items-center gap-2 rounded-full border border-[#364c63] px-4 py-2 text-sm text-[#c2d7e0] hover:bg-[#243750]">
+            <RefreshCw size={15} aria-hidden="true"/>{SITE_N5_MODE ? tx.readHistory : tx.reload}
+          </Link>}
       </div>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {streams.map(source => <div key={source.sourceId} className="rounded-2xl border border-[#2b3a53] bg-[#121d31] p-5">
