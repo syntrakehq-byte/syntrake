@@ -142,6 +142,6 @@ export async function registerSecTarget(store: PostgresNewsStore, cik: string): 
 
 export async function registerGlobalTarget(store: PostgresNewsStore, source: GlobalNewsRegistryEntry): Promise<string> {
   await store.ensureGlobalSource(source);
-  await store.upsertTarget({ collectionScopeKey: source.checkpointScope, sourceId: source.sourceId, providerKey: globalProviderKey(source.sourceType), entityKey: source.publisherId, parameters: { endpoint: source.endpoint, sourceType: source.sourceType, rightsPolicyId: source.rightsPolicyId } });
+  await store.upsertTarget({ collectionScopeKey: source.checkpointScope, sourceId: source.sourceId, providerKey: globalProviderKey(source.sourceType), entityKey: source.publisherId, parameters: { endpoint: source.endpoint, sourceType: source.sourceType, rightsPolicyId: source.rightsPolicyId, minIntervalSeconds: source.updatePolicy.minIntervalSeconds } });
   return source.checkpointScope;
 }
