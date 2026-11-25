@@ -37,7 +37,8 @@ test("GDELT configuration is fixed, opt-in and keeps direct official sources sep
   assert.equal(combined.length, 8);
   assert.deepEqual(combined, NEWS_OFFICIAL_PLUS_WORLD_INDEX_V1);
   assert.equal(new Set(combined.map(x => x.checkpointScope)).size, 8);
-  assert.ok(combined.every(x => x.storagePolicy.content === "METADATA_ONLY"));
+  assert.ok(combined.filter(x => x.sourceId === GDELT_WORLD_INDEX_V1.sourceId).every(x => x.storagePolicy.content === "METADATA_ONLY"));
+  assert.ok(combined.filter(x => x.sourceId !== GDELT_WORLD_INDEX_V1.sourceId).every(x => x.storagePolicy.content === "PERMITTED_TEXT"));
   assert.equal(combined.find(x => x.sourceId === GDELT_WORLD_INDEX_V1.sourceId)?.category, "EDITORIAL");
   assert.throws(() => resolveGlobalNewsWorkerSources({ profile: "official-plus-world-index-v1", json: "[]" }), /CONFIG_CONFLICT/);
 });
