@@ -27,7 +27,7 @@ export async function readNewsForAnalysisV1(
     api.events(auth, { ...input.events, asOf }),
   ]);
   for (const envelope of [publications.news, events.news]) {
-    if (Date.parse(envelope.asOf) !== time || Date.parse(envelope.servedAt) < time) {
+    if (Date.parse(envelope.asOf) !== time || !Number.isFinite(Date.parse(envelope.servedAt)) || Date.parse(envelope.servedAt) < time) {
       throw new Error("NEWS_ANALYSIS_TEMPORAL_MISMATCH");
     }
   }
@@ -36,12 +36,22 @@ export async function readNewsForAnalysisV1(
       throw new Error("NEWS_ANALYSIS_PUBLICATION_LOOKAHEAD");
     }
   }
-  for (const row of events.news.data) {
-    if (!row || typeof row !== "object" || !("asKnownAt" in row) || typeof row.asKnownAt !== "string" ||
-        !Number.isFinite(Date.parse(row.asKnownAt)) || Date.parse(row.asKnownAt) > time) {
-      throw new Error("NEWS_ANALYSIS_EVENT_LOOKAHEAD");
+  // PostgreSQL returns timestamptz as Date objects by default. Normalize
+  // real factual rows before applying the identical temporal guard.
+  const normalizedEvents = events.news.data.map(row => {
+    if (!row || typeof row !== "object" || !("asKnownAt" in row)) throw new Error("NEWS_ANALYSIS_EVENT_LOOKAHEAD");
+    const known = row.asKnownAt instanceof Date ? row.asKnownAt.getTime() :
+      typeof row.asKnownAt === "string" ? Date.parse(row.asKnownAt) : NaN;
+    if (!Number.isFinite(known) || known > time) throw new Error("NEWS_ANALYSIS_EVENT_LOOKAHEAD");
+    const record = row as Record<string, unknown>;
+    const normalized = Object.fromEntries(Object.entries(record).map(([key, value]) =>
+      [key, value instanceof Date ? value.toISOString() : value]));
+    if ("committedAt" in normalized) {
+      const committed = typeof normalized.committedAt === "string" ? Date.parse(normalized.committedAt) : NaN;
+      if (!Number.isFinite(committed) || committed > time) throw new Error("NEWS_ANALYSIS_EVENT_LOOKAHEAD");
     }
-  }
+    return { ...normalized, asKnownAt: new Date(known).toISOString() };
+  });
   const status = publications.news.status === "UNAVAILABLE" && events.news.status === "UNAVAILABLE" ? "UNAVAILABLE" :
     publications.news.status !== "AVAILABLE" || events.news.status !== "AVAILABLE" ||
     publications.coverage !== "FULL" || events.coverage !== "FULL" ? "PARTIAL" : "AVAILABLE";
@@ -50,6 +60,6 @@ export async function readNewsForAnalysisV1(
     status,
     paginationComplete: publications.news.nextCursor === null && events.news.nextCursor === null,
     publications: adaptNewsForConsumerV1(consumer, publications.news),
-    events: adaptNewsForConsumerV1(consumer, events.news),
+    events: adaptNewsForConsumerV1(consumer, { ...events.news, data: normalizedEvents }),
   } as const;
 }
