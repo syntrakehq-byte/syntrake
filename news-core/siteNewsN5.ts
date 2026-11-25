@@ -43,6 +43,29 @@ export function mapNewsN5ForSite(rows: readonly NewsPublicationRevision[], allow
   return Object.freeze(result);
 }
 
+
+export type NewsSiteReaderIdentityV1 = Readonly<{
+  role_name: string;
+  login_name: string;
+  rolsuper: boolean;
+  rolbypassrls: boolean;
+  rolcreaterole: boolean;
+  rolcreatedb: boolean;
+  has_writer_membership: boolean;
+}>;
+
+/** Reject admin and writer logins even if they temporarily assume news_reader. */
+export function assertNewsSiteReadRole(identity: NewsSiteReaderIdentityV1 | undefined): void {
+  if (!identity ||
+      identity.role_name !== "news_reader" ||
+      !identity.login_name ||
+      identity.login_name === "news_reader" ||
+      identity.rolsuper || identity.rolbypassrls || identity.rolcreaterole ||
+      identity.rolcreatedb || identity.has_writer_membership) {
+    throw new Error("NEWS_SITE_N5_READER_ROLE_REQUIRED");
+  }
+}
+
 export type SiteNewsN5Config = Readonly<{
   connectionString: string;
   tlsCaPem: string;
@@ -74,8 +97,13 @@ export async function readNewsN5ForSite(config: SiteNewsN5Config): Promise<reado
     statement_timeout: 9000, application_name: "syntrake-news-site-reader",
   });
   try {
-    const role = await pool.query<{ role_name: string }>("select current_user as role_name");
-    if (role.rows[0]?.role_name !== "news_reader") throw new Error("NEWS_SITE_N5_READER_ROLE_REQUIRED");
+    const identity = await pool.query<NewsSiteReaderIdentityV1>(
+      "select current_user as role_name, session_user as login_name, r.rolsuper, r.rolbypassrls, r.rolcreaterole, r.rolcreatedb, " +
+      "coalesce((select bool_or(pg_has_role(r.rolname, p.rolname, 'MEMBER')) from pg_roles p " +
+      "where p.rolname in ('news_service', 'news_pipeline_verifier', 'news_factual_attestor', 'news_factual_writer')),false) as has_writer_membership " +
+      "from pg_roles r where r.rolname=session_user",
+    );
+    assertNewsSiteReadRole(identity.rows[0]);
     const secret = randomBytes(24).toString("hex");
     const n5 = new NewsConsumptionApiV1(
       { news: new PostgresNewsStore(pool), factual: {} as never },
