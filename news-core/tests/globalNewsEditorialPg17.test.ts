@@ -107,8 +107,8 @@ test("daily world and business publishers: live RSS to PostgreSQL17 to N5", {
       }
     }
     for (const row of results) console.log("DAILY_EDITORIAL_RECEIPT " + JSON.stringify(row));
-    assert.ok(results.filter(row => row.status === "PASS").length >= 2,
-      "Fewer than two daily publisher feeds delivered real news to PostgreSQL and N5: " + JSON.stringify(results));
+    assert.ok(results.every(row => row.status === "PASS"),
+      "Every registered daily publisher feed must deliver real news to PostgreSQL and N5: " + JSON.stringify(results));
   } finally {
     await store.close();
     await factual.close();

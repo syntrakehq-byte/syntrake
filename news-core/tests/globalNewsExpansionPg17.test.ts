@@ -107,8 +107,8 @@ test("new official publishers: live RSS to PostgreSQL 17 to N5 with source-speci
       }
     }
     for (const row of results) console.log("OFFICIAL_SOURCE_RECEIPT " + JSON.stringify(row));
-    assert.ok(results.filter(row => row.status === "PASS").length >= 2,
-      "Fewer than two new official sources delivered real news to PostgreSQL and N5: " + JSON.stringify(results));
+    assert.ok(results.every(row => row.status === "PASS"),
+      "Every registered official source must deliver real news to PostgreSQL and N5: " + JSON.stringify(results));
   } finally {
     await store.close();
     await factual.close();
