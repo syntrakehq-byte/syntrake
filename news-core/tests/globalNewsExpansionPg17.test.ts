@@ -25,7 +25,7 @@ test("new official publishers: live RSS to PostgreSQL 17 to N5 with source-speci
   const store = new PostgresNewsStore(pool);
   const factual = new PostgresFactualStore(readerPool, "news_reader");
   const api = new NewsConsumptionApiV1({ news: store, factual }, "0123456789abcdef", "expansion-test-credential");
-  const results: Array<{ sourceId: string; status: "PASS" | "FAIL"; items: number; persisted: number; n5: number; error: string | null }> = [];
+  const results: Array<{ sourceId: string; status: "PASS" | "FAIL"; stage: string; items: number; persisted: number; n5: number; error: string | null; pgCode: string | null }> = [];
   try {
     await admin.connect();
     const version = (await admin.query<{ version: string }>("select current_setting('server_version') version")).rows[0].version;
@@ -41,11 +41,14 @@ test("new official publishers: live RSS to PostgreSQL 17 to N5 with source-speci
         checkpointScope: base.checkpointScope + "-" + suffix,
       };
       let items: readonly GlobalNewsItem[] = [];
+      let stage = "FETCH";
       try {
         items = await fetchAndParseRegisteredSource(source);
         assert.ok(items.length > 0, "feed returned zero valid items");
         assert.ok(items.every(item => item.sourceId === source.sourceId));
+        stage = "REGISTER";
         await registerGlobalTarget(store, source);
+        stage = "EXECUTOR";
         const result = await runNewsExecutorOnce({
           store, workerId: "expansion-" + source.sourceId,
           secUserAgent: process.env.SEC_USER_AGENT ?? "SYNTRAKE expansion CI/1.0 security@syntrake.com",
@@ -53,10 +56,12 @@ test("new official publishers: live RSS to PostgreSQL 17 to N5 with source-speci
           collectionScopeKey: source.checkpointScope, leaseSeconds: 60,
         });
         assert.equal(result.claimed, true);
+        stage = "COUNT";
         const count = (await admin.query<{ count: number }>(
           "select count(*)::int count from news_core.publications where source_id=$1", [source.sourceId],
         )).rows[0].count;
         assert.ok(count > 0, "no publication persisted");
+        stage = "N5";
         const cutoff = (await admin.query<{ cutoff: string }>(
           "select clock_timestamp()::timestamptz::text cutoff",
         )).rows[0].cutoff;
@@ -67,12 +72,13 @@ test("new official publishers: live RSS to PostgreSQL 17 to N5 with source-speci
         assert.equal(page.status, "AVAILABLE");
         assert.ok(page.data.length > 0, "real feed was not available in N5");
         assert.ok(page.data.every(row => row.sourceId === source.sourceId));
-        results.push({ sourceId: base.sourceId, status: "PASS", items: items.length, persisted: count, n5: page.data.length, error: null });
+        results.push({ sourceId: base.sourceId, status: "PASS", stage: "COMPLETE", items: items.length, persisted: count, n5: page.data.length, error: null, pgCode: null });
       } catch (error) {
         const raw = error instanceof Error ? error.message : "UNKNOWN";
         // Do not log URLs, downloaded content, stack traces or credentials.
         const sanitized = /^[A-Z][A-Z0-9_]{4,90}$/.test(raw) ? raw : "SOURCE_INTEGRATION_FAILED";
-        results.push({ sourceId: base.sourceId, status: "FAIL", items: items.length, persisted: 0, n5: 0, error: sanitized });
+        const pgCode = error && typeof error === "object" && "code" in error && typeof error.code === "string" && /^[0-9A-Z]{5}$/.test(error.code) ? error.code : null;
+        results.push({ sourceId: base.sourceId, status: "FAIL", stage, items: items.length, persisted: 0, n5: 0, error: sanitized, pgCode });
       }
     }
     for (const row of results) console.log("OFFICIAL_SOURCE_RECEIPT " + JSON.stringify(row));
