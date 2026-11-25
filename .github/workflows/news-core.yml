@@ -109,6 +109,11 @@ jobs:
           RUN_GLOBAL_NEWS_NG8: "1"
           SEC_USER_AGENT: "SYNTRAKE N-G8 CI/1.0 security@syntrake.com"
         run: npm run test:news:ng8:pg17
+      - name: Additional official RSS sources — real PostgreSQL receipt and N5 readback
+        env:
+          RUN_GLOBAL_NEWS_EXPANSION: "1"
+          SEC_USER_AGENT: "SYNTRAKE official-source expansion CI/1.0 security@syntrake.com"
+        run: npx tsx --test --test-timeout=180000 news-core/tests/globalNewsExpansionPg17.test.ts
       - run: npm run test:news:n5:pg17
       - run: npm run test:news:n5:live
         env:
