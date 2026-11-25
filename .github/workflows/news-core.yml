@@ -104,6 +104,21 @@ jobs:
         run: npm run test:news:ng6:pg17
       - name: Global News N-G7 observability and source health
         run: npm run test:news:ng7
+      - name: Worldwide index adapter and opt-in profile
+        run: npx tsx --test news-core/tests/globalNewsAggregator.test.ts
+      - name: Worldwide GDELT LIVE receipt — provider may rate-limit (not a production gate)
+        continue-on-error: true
+        env:
+          RUN_GDELT_WORLD_LIVE: "1"
+          SEC_USER_AGENT: "SYNTRAKE GDELT news discovery CI/1.0 security@syntrake.com"
+        run: npx tsx --test --test-timeout=180000 news-core/tests/globalNewsAggregatorPg17.test.ts
+      - name: Daily publisher RSS catalog and profile tests
+        run: npx tsx --test news-core/tests/globalNewsEditorial.test.ts
+      - name: Daily world/business RSS LIVE PostgreSQL and N5 receipt
+        env:
+          RUN_DAILY_EDITORIAL_LIVE: "1"
+          SEC_USER_AGENT: "SYNTRAKE editorial source CI/1.0 security@syntrake.com"
+        run: npx tsx --test --test-timeout=180000 news-core/tests/globalNewsEditorialPg17.test.ts
       - name: Global News N-G8 real PostgreSQL operational rehearsal
         env:
           RUN_GLOBAL_NEWS_NG8: "1"
