@@ -47,6 +47,8 @@ async function withReader<T>(consumer: NewsConsumerKindV1, operation: (api: News
       "from pg_roles r where r.rolname=session_user",
     );
     assertNewsSiteReadRole(identity.rows[0]);
+    const durability = await pool.query<{ enabled: string }>("select current_setting('track_commit_timestamp') enabled");
+    if (durability.rows[0]?.enabled !== "on") throw new Error("NEWS_ENGINE_FACTUAL_DURABILITY_NOT_CONFIGURED");
     const api = new NewsConsumptionApiV1({ news: new PostgresNewsStore(pool), factual: new PostgresFactualStore(pool, "news_reader") }, config.cursorSecret, config.credential);
     return await operation(api, { serviceId: "news_reader", credential: config.credential }, pool);
   } finally { await pool.end(); }
