@@ -41,6 +41,7 @@ test("new official publishers: live RSS to PostgreSQL 17 to N5 with source-speci
         checkpointScope: base.checkpointScope + "-" + suffix,
       };
       let items: readonly GlobalNewsItem[] = [];
+      let persisted = 0;
       let stage = "FETCH";
       try {
         items = await fetchAndParseRegisteredSource(source);
@@ -61,24 +62,35 @@ test("new official publishers: live RSS to PostgreSQL 17 to N5 with source-speci
           "select count(*)::int count from news_core.publications where source_id=$1", [source.sourceId],
         )).rows[0].count;
         assert.ok(count > 0, "no publication persisted");
+        persisted = count;
         stage = "N5";
-        const cutoff = (await admin.query<{ cutoff: string }>(
-          "select clock_timestamp()::timestamptz::text cutoff",
-        )).rows[0].cutoff;
-        const page = await api.discoverNews(
-          { serviceId: "news_reader", credential: "expansion-test-credential" },
-          { asOf: cutoff, filters: { sourceIds: [source.sourceId] }, limit: 10 },
-        );
-        assert.equal(page.status, "AVAILABLE");
-        assert.ok(page.data.length > 0, "real feed was not available in N5");
-        assert.ok(page.data.every(row => row.sourceId === source.sourceId));
-        results.push({ sourceId: base.sourceId, status: "PASS", stage: "COMPLETE", items: items.length, persisted: count, n5: page.data.length, error: null, pgCode: null });
+        // Query only at real database clock time. N1's PIT visibility frontier
+        // may intentionally lag behind commit; never use future cutoffs.
+        let n5Count = 0;
+        for (let attempt = 0; attempt < 50; attempt += 1) {
+          const cutoff = (await admin.query<{ cutoff: string }>(
+            "select clock_timestamp()::timestamptz::text cutoff",
+          )).rows[0].cutoff;
+          const page = await api.discoverNews(
+            { serviceId: "news_reader", credential: "expansion-test-credential" },
+            { asOf: cutoff, filters: { sourceIds: [source.sourceId] }, limit: 10 },
+          );
+          if (page.status !== "AVAILABLE") throw new Error("NEWS_EXPANSION_N5_UNAVAILABLE");
+          n5Count = page.data.length;
+          if (n5Count > 0) {
+            assert.ok(page.data.every(row => row.sourceId === source.sourceId));
+            break;
+          }
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        if (n5Count === 0) throw new Error("NEWS_EXPANSION_N5_PIT_NOT_VISIBLE");
+        results.push({ sourceId: base.sourceId, status: "PASS", stage: "COMPLETE", items: items.length, persisted, n5: n5Count, error: null, pgCode: null });
       } catch (error) {
         const raw = error instanceof Error ? error.message : "UNKNOWN";
         // Do not log URLs, downloaded content, stack traces or credentials.
         const sanitized = /^[A-Z][A-Z0-9_]{4,90}$/.test(raw) ? raw : "SOURCE_INTEGRATION_FAILED";
         const pgCode = error && typeof error === "object" && "code" in error && typeof error.code === "string" && /^[0-9A-Z]{5}$/.test(error.code) ? error.code : null;
-        results.push({ sourceId: base.sourceId, status: "FAIL", stage, items: items.length, persisted: 0, n5: 0, error: sanitized, pgCode });
+        results.push({ sourceId: base.sourceId, status: "FAIL", stage, items: items.length, persisted, n5: 0, error: sanitized, pgCode });
       }
     }
     for (const row of results) console.log("OFFICIAL_SOURCE_RECEIPT " + JSON.stringify(row));
