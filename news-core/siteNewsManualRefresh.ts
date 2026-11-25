@@ -16,7 +16,7 @@ export type ManualNewsRefreshResult = Readonly<{
 }>;
 
 /** Feature is off by default. Explicit operator allowlist, not every signed-in account. */
-export function manualNewsRefreshAllowed(userId: string | null | undefined, env: NodeJS.ProcessEnv = process.env): boolean {
+export function manualNewsRefreshAllowed(userId: string | null | undefined, env: Readonly<Record<string, string | undefined>> = process.env): boolean {
   return Boolean(userId && env.NEWS_SITE_READ_MODE === "N5" &&
     env.NEWS_MANUAL_REFRESH_ENABLED === "1" &&
     (env.NEWS_MANUAL_REFRESH_USER_IDS ?? "").split(",").map(id => id.trim()).filter(Boolean).includes(userId));
