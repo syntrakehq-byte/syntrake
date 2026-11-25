@@ -2,7 +2,7 @@ import { Pool } from "pg";
 import { existsSync, unlinkSync } from "node:fs";
 import { PostgresNewsStore } from "../news-core/postgresStore";
 import { registerGlobalTarget, registerSecTarget, runNewsExecutorForever } from "../news-core/autonomousExecutor";
-import type { GlobalNewsRegistryEntry } from "../news-core/globalNewsRegistry";
+import { resolveGlobalNewsWorkerSources } from "../news-core/globalNewsOfficialSources";
 import { NewsFactualPipelineV1 } from "../news-core/factualPipeline";
 
 const url = process.env.NEWS_DATABASE_URL;
@@ -30,7 +30,11 @@ console.log(`NEWS_WORKER_READY pid=${process.pid} workerId=${process.env.NEWS_WO
 const factualPipeline = executionMode === "FACTUAL"
   ? new NewsFactualPipelineV1({ news: store, verifierPool: new Pool({ connectionString: withSessionRole(factualVerifierUrl, "news_pipeline_verifier"), max: 2, application_name: "syntrake-news-verifier" }), attestorPool: new Pool({ connectionString: withSessionRole(factualAttestorUrl, "news_factual_attestor"), max: 2, application_name: "syntrake-news-attestor" }), writerPool: new Pool({ connectionString: withSessionRole(factualWriterUrl, "news_factual_writer"), max: 2, application_name: "syntrake-news-writer" }), userAgent, maxDocuments: Number(process.env.NEWS_FACTUAL_DOCUMENT_LIMIT ?? 20), processingHoldMs: process.env.NODE_ENV === "test" && process.env.NEWS_TEST_ALLOW_PROCESSING_HOLD === "1" ? Number(process.env.NEWS_FACTUAL_PROCESSING_HOLD_MS ?? 0) : 0 })
   : undefined;
-const globalSources = process.env.NEWS_GLOBAL_SOURCES_JSON ? JSON.parse(process.env.NEWS_GLOBAL_SOURCES_JSON) as GlobalNewsRegistryEntry[] : [];
+const globalSources = resolveGlobalNewsWorkerSources({
+  profile: process.env.NEWS_GLOBAL_SOURCES_PROFILE,
+  json: process.env.NEWS_GLOBAL_SOURCES_JSON,
+});
+console.log(`NEWS_GLOBAL_SOURCE_COUNT=${globalSources.length} profile=${process.env.NEWS_GLOBAL_SOURCES_PROFILE ? "named" : "custom-or-none"}`);
 const abort = new AbortController();
 let executionFailed = false;
 const shutdownFile = process.env.NEWS_SHUTDOWN_FILE;
