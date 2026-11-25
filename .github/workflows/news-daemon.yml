@@ -6,6 +6,7 @@ on:
       - "Dockerfile.news-daemon"
       - "Dockerfile.news-daemon.dockerignore"
       - "vercel.daemons.example.toml"
+      - "ops/news-live/**"
       - "scripts/news-supervisor.ts"
       - "scripts/news-postgres-worker.ts"
       - "news-core/**"
@@ -85,6 +86,15 @@ jobs:
           test "$status" -ne 0
           rm -f Dockerfile.news-daemon-canary-legit Dockerfile.news-daemon-canary-legit.dockerignore Dockerfile.news-daemon-canary-audit Dockerfile.news-daemon-canary-audit.dockerignore
           rm -rf news-core/.docker-canary scripts/.docker-canary
+      - name: Validate isolated 24/7 daemon Compose candidate (no deployment)
+        env:
+          NEWS_DATABASE_URL: "postgresql://news_service:dummy@db.invalid:5432/news"
+          SEC_USER_AGENT: "SYNTRAKE compose CI/1.0 security@syntrake.com"
+          NEWS_EXECUTION_MODE: N1_ONLY
+        run: |
+          docker compose -f ops/news-live/docker-compose.yml config --quiet
+          test "$(docker compose -f ops/news-live/docker-compose.yml config --format json | jq -r '.services["news-core"].read_only')" = "true"
+          test "$(docker compose -f ops/news-live/docker-compose.yml config --format json | jq -r '(.services["news-core"].ports // []) | length')" = "0"
       - name: Build News Core daemon image
         run: docker build --file Dockerfile.news-daemon --tag syntrake-news-daemon:${{ github.sha }} .
       - name: Verify runtime and worker modules

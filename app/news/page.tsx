@@ -5,6 +5,9 @@ import Link from "next/link";
 import { AlertTriangle, ArrowUpRight, Clock3, Globe2, Newspaper, RefreshCw, ShieldCheck } from "lucide-react";
 import { WorkspaceShell } from "@/components/workspace/WorkspaceShell";
 import { NEWS_OFFICIAL_PLUS_DAILY_NEWS_V1 } from "@/news-core/globalNewsOfficialSources";
+import { readNewsN5ForSite } from "@/news-core/siteNewsN5";
+import { manualNewsRefreshAllowed } from "@/news-core/siteNewsManualRefresh";
+import { ManualNewsRefresh } from "./ManualNewsRefresh";
 import { fetchAndParseRegisteredSource } from "@/news-core/globalNewsCollector";
 import { resolveRequestSiteLang, withLangQuery } from "@/lib/i18n/requestSiteLang";
 import type { SiteLang } from "@/lib/i18n/siteLanguage";
@@ -12,6 +15,7 @@ import type { GlobalNewsItem } from "@/news-core/globalNewsAdapter";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 export const metadata: Metadata = {
   title: "Live news sources | Syntrake",
   description: "Current headlines collected from identified financial and world news RSS sources.",
@@ -20,14 +24,15 @@ export const metadata: Metadata = {
 
 // This is a read-only live feed view using the existing News Core adapters.
 // It is NOT the durable N-G8 scheduler or a substitute for N5/PIT in production.
-const SOURCE_IDS = [
+const RSS_SOURCE_IDS = [
   "world-un-news",
   "world-france24",
   "us-cnbc-business",
   "eu-ecb-press",
   "us-fed-press",
 ] as const;
-const SOURCE_REGISTRY = SOURCE_IDS.map(id => {
+const SITE_N5_MODE = process.env.NEWS_SITE_READ_MODE === "N5";
+const SOURCE_REGISTRY = (SITE_N5_MODE ? NEWS_OFFICIAL_PLUS_DAILY_NEWS_V1.map(source => source.sourceId) : RSS_SOURCE_IDS).map(id => {
   const source = NEWS_OFFICIAL_PLUS_DAILY_NEWS_V1.find(entry => entry.sourceId === id);
   if (!source) throw new Error("NEWS_SITE_SOURCE_NOT_REGISTERED");
   return source;
@@ -52,6 +57,10 @@ const messages = {
     empty: "Não existem manchetes disponíveis nesta consulta.",
     rights: "Apenas títulos, datas e links; os artigos pertencem aos respetivos publicadores. Informação noticiosa, não aconselhamento financeiro.",
     reload: "Atualizar consulta",
+    durable: "Consulta ao histórico persistente N5. Mostra apenas revisões disponíveis no instante da leitura. O funcionamento contínuo depende do supervisor externo.",
+    manual: "Histórico persistente N5. A atualização manual consulta as fontes elegíveis e guarda novas publicações. Não existe recolha contínua neste modo.",
+    readHistory: "Atualizar histórico",
+    stored: "Histórico guardado",
     available: "Disponível",
     unavailable: "Indisponível",
   },
@@ -74,6 +83,10 @@ const messages = {
     empty: "No headlines are available in this request.",
     rights: "Titles, dates and links only. Articles belong to their publishers. News content is not financial advice.",
     reload: "Refresh sources",
+    durable: "Read-only N5 persistent history. Only revisions known at the request cutoff are shown. Continuous ingestion depends on the independent supervisor.",
+    manual: "Persistent N5 history. Manual refresh checks eligible sources and saves new publications. This mode does not provide continuous collection.",
+    readHistory: "Refresh history",
+    stored: "Persisted history",
     available: "Available",
     unavailable: "Unavailable",
   },
@@ -96,12 +109,38 @@ const messages = {
     empty: "Aucun titre disponible pour cette consultation.",
     rights: "Titres, dates et liens uniquement. Les articles appartiennent à leurs éditeurs. Ces actualités ne sont pas des conseils financiers.",
     reload: "Actualiser les sources",
+    durable: "Historique persistant N5 en lecture seule. Seules les révisions connues au moment de la lecture sont affichées. La collecte continue dépend du superviseur externe.",
+    manual: "Historique persistant N5. L’actualisation manuelle consulte les sources éligibles et enregistre les nouvelles publications. Ce mode ne collecte pas en continu.",
+    readHistory: "Actualiser l’historique",
+    stored: "Historique enregistré",
     available: "Disponible",
     unavailable: "Indisponible",
   },
 } as const;
 type Stream = { sourceId: string; publisher: string; count: number; ok: boolean; items: readonly GlobalNewsItem[] };
 async function getStreams(): Promise<Stream[]> {
+  if (SITE_N5_MODE) {
+    try {
+      const saved = await readNewsN5ForSite({
+        connectionString: process.env.NEWS_READER_DATABASE_URL ?? "",
+        tlsCaPem: process.env.NEWS_READER_CA_PEM ?? "",
+        sourceIds: SOURCE_REGISTRY.map(source => source.sourceId),
+      });
+      return SOURCE_REGISTRY.map(source => {
+        const items: GlobalNewsItem[] = saved.filter(record => record.sourceId === source.sourceId).map(record => ({
+          sourceId: record.sourceId, providerKey: "rss", externalId: record.publicationRevisionId,
+          publicationId: record.publicationId, originalUrl: record.originalUrl,
+          title: record.title, summary: null, publishedAt: record.publishedAt,
+          updatedAt: null, retrievedAt: record.ingestedAt ?? record.asKnownAt ?? new Date().toISOString(),
+          publisher: source.publisher, rightsPolicyId: source.rightsPolicyId,
+          contentFingerprint: record.publicationRevisionId, qualityFlags: record.qualityFlags,
+        }));
+        return { sourceId: source.sourceId, publisher: source.publisher, count: items.length, ok: true, items };
+      });
+    } catch {
+      return SOURCE_REGISTRY.map(source => ({ sourceId: source.sourceId, publisher: source.publisher, count: 0, ok: false, items: [] }));
+    }
+  }
   // Isolate provider failures so one unavailable feed cannot hide the rest.
   return Promise.all(SOURCE_REGISTRY.map(async source => {
     try {
@@ -128,6 +167,7 @@ export default async function NewsPage({
   const params = await searchParams;
   const lang = await resolveRequestSiteLang(params);
   const tx = messages[lang];
+  const manualEnabled = manualNewsRefreshAllowed(session.userId);
   const streams = await getStreams();
   const selected = SOURCE_REGISTRY.some(x => x.sourceId === params?.source) ? params?.source : "all";
   const publications = streams
@@ -154,7 +194,7 @@ export default async function NewsPage({
       </div>
       <div className="mt-8 grid gap-3 sm:grid-cols-3">
         {[
-          { label: tx.sources, value: String(online) + " / " + String(SOURCE_IDS.length) },
+          { label: SITE_N5_MODE ? tx.stored : tx.sources, value: String(online) + " / " + String(SOURCE_REGISTRY.length) },
           { label: tx.items, value: String(streams.reduce((sum, x) => sum + x.count, 0)) },
           { label: tx.checked, value: dateLabel(checkedAt, lang) },
         ].map(metric => <div key={metric.label} className="rounded-xl border border-white/10 bg-[#071623]/50 p-4">
@@ -166,15 +206,16 @@ export default async function NewsPage({
 
     <div className="mt-6 flex items-start gap-3 rounded-2xl border border-[#826d48]/40 bg-[#3a2f20]/40 p-4 text-[#dfcaab]">
       <AlertTriangle size={18} className="mt-0.5 shrink-0" aria-hidden="true" />
-      <p className="text-sm leading-6">{tx.warning}</p>
+      <p className="text-sm leading-6">{manualEnabled ? tx.manual : SITE_N5_MODE ? tx.durable : tx.warning}</p>
     </div>
 
     <section className="mt-8" aria-label={tx.sources}>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-xl font-semibold text-white">{tx.sources}</h2>
-        <Link href={withLangQuery("/news", lang)} className="inline-flex items-center gap-2 rounded-full border border-[#364c63] px-4 py-2 text-sm text-[#c2d7e0] hover:bg-[#243750]">
-          <RefreshCw size={15} aria-hidden="true"/>{tx.reload}
-        </Link>
+        {manualEnabled ? <ManualNewsRefresh lang={lang} label={tx.reload} /> :
+          <Link href={withLangQuery("/news", lang)} className="inline-flex items-center gap-2 rounded-full border border-[#364c63] px-4 py-2 text-sm text-[#c2d7e0] hover:bg-[#243750]">
+            <RefreshCw size={15} aria-hidden="true"/>{SITE_N5_MODE ? tx.readHistory : tx.reload}
+          </Link>}
       </div>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {streams.map(source => <div key={source.sourceId} className="rounded-2xl border border-[#2b3a53] bg-[#121d31] p-5">
@@ -182,7 +223,7 @@ export default async function NewsPage({
             <h3 className="text-sm font-semibold text-[#eaf0f7]">{source.publisher}</h3>
             <span className={"inline-flex rounded-full border px-2 py-0.5 text-xs " +
               (source.ok ? "border-[#2b665a] bg-[#16443e] text-[#9ce2c4]" : "border-[#76564e] bg-[#3d292d] text-[#f1bbb0]")}>
-              {source.ok ? tx.available : tx.unavailable}
+              {source.ok ? (SITE_N5_MODE ? tx.stored : tx.available) : tx.unavailable}
             </span>
           </div>
           <p className="mt-3 text-sm text-[#a3b2c5]">{source.ok ? source.count + " " + tx.items.toLowerCase() : tx.down}</p>

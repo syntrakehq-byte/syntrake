@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - "news-core/**"
+      - "app/news/**"
       - "scripts/news-poll.ts"
       - "scripts/news-postgres-worker.ts"
       - "scripts/news-supervisor.ts"
@@ -15,6 +16,7 @@ on:
   pull_request:
     paths:
       - "news-core/**"
+      - "app/news/**"
       - "scripts/news-poll.ts"
       - "scripts/news-postgres-worker.ts"
       - "scripts/news-supervisor.ts"
@@ -98,6 +100,10 @@ jobs:
           N4_REAL_SOURCE: "1"
           SEC_USER_AGENT: "SYNTRAKE N4 CI/1.0 security@syntrake.com"
       - run: npm run test:news:n5
+      - name: Authenticated site N5 PIT presentation and unsafe-link guard
+        run: npx tsx --test news-core/tests/siteNewsN5.test.ts
+      - name: Manual News Core refresh authorization and bounded collection
+        run: npx tsx --test news-core/tests/siteNewsManualRefresh.test.ts
       - name: Global News N-G6 versioned read API and rights boundary
         run: npm run test:news:ng6
       - name: Global News N-G6 PostgreSQL 17 PIT, rights and consumer recovery
@@ -146,6 +152,8 @@ jobs:
           SEC_USER_AGENT: "SYNTRAKE N0 T27 CI/1.0 security@syntrake.com"
       - run: npm run test:news:n0:t20
       - run: npm run test:news:n0:contracts
+      - name: Investing and Trading shared news analysis boundary
+        run: npx tsx --test news-core/tests/analysisNewsConsumer.test.ts
       - name: Checkout real Market Core branch for T33 PIT integration
         uses: actions/checkout@v4
         with:

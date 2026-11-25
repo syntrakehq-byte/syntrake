@@ -73,3 +73,38 @@ test("N-G8 real multisource executor persists, replays, fences and exposes state
     assert.equal((await store.finish({ executionId: leaseB!.executionId, collectionScopeKey: leaseB!.collectionScopeKey, workerId: `ng8-fence-b-${suffix}`, leaseSeconds: 60 }, false, new Error("N-G8 test cleanup"))).status, "FINISHED");
   } finally { await store.close(); await readerFactual.close(); await admin.end(); }
 });
+
+test("N-G8 scheduler enforces registered per-source minimum interval", {
+  skip: !DB_URL || process.env.RUN_GLOBAL_NEWS_NG8 !== "1" ? "requires isolated real PostgreSQL17" : false,
+}, async () => {
+  assert.ok(DB_URL);
+  const admin = new Client({ connectionString: DB_URL });
+  const pool = new Pool({ connectionString: DB_URL, max: 2 });
+  const store = new PostgresNewsStore(pool);
+  const suffix = randomUUID().replaceAll("-", "");
+  const base = source(`ng8-interval-${suffix}`, "ECB", "https://www.ecb.europa.eu/rss/press.html");
+  const entry: GlobalNewsRegistryEntry = {
+    ...base, updatePolicy: { ...base.updatePolicy, minIntervalSeconds: 300 },
+  };
+  try {
+    await admin.connect();
+    await registerGlobalTarget(store, entry);
+    const target = await store.claimNext(`ng8-interval-worker-${suffix}`, 60, entry.checkpointScope);
+    assert.ok(target, "target must become eligible for its first run");
+    const result = await store.finish({
+      executionId: target.executionId, collectionScopeKey: target.collectionScopeKey,
+      workerId: `ng8-interval-worker-${suffix}`, leaseSeconds: 60,
+    }, true);
+    assert.equal(result.status, "FINISHED");
+    const row = (await admin.query<{ seconds: number }>(
+      "select extract(epoch from(next_run_at-last_success_at))::double precision seconds " +
+      "from news_core.collection_targets where collection_scope_key=$1",
+      [entry.checkpointScope],
+    )).rows[0];
+    assert.ok(row.seconds >= 299 && row.seconds <= 301,
+      `expected a five-minute source interval, got ${row.seconds}`);
+  } finally {
+    await store.close();
+    await admin.end();
+  }
+});

@@ -27,7 +27,7 @@ async function runTarget(store: PostgresNewsStore, target: ClaimedTarget, option
       throw error;
     }
     if (signal.aborted) throw new Error("NEWS_EXECUTION_CANCELLED");
-    const committed = await store.ingestGlobalBatch(source, items, {});
+    const committed = await store.ingestGlobalBatch(source, items, { lease });
     const latestPublishedAt = items.reduce<string | null>((latest, item) => item.publishedAt && (!latest || Date.parse(item.publishedAt) > Date.parse(latest)) ? item.publishedAt : latest, null);
     await store.recordGlobalOperationalState({ sourceId: source.sourceId, collectionScopeKey: target.collectionScopeKey, coverage: "KNOWN", health: items.length ? "HEALTHY" : "EMPTY", observed: items.length, insertedPublications: committed.insertedPublications, lastPublishedAt: latestPublishedAt });
     const factualOutcomes = options.factualPipeline ? await drainFactualBacklog(store, options.factualPipeline, options, signal, lease) : [];
@@ -142,6 +142,6 @@ export async function registerSecTarget(store: PostgresNewsStore, cik: string): 
 
 export async function registerGlobalTarget(store: PostgresNewsStore, source: GlobalNewsRegistryEntry): Promise<string> {
   await store.ensureGlobalSource(source);
-  await store.upsertTarget({ collectionScopeKey: source.checkpointScope, sourceId: source.sourceId, providerKey: globalProviderKey(source.sourceType), entityKey: source.publisherId, parameters: { endpoint: source.endpoint, sourceType: source.sourceType, rightsPolicyId: source.rightsPolicyId } });
+  await store.upsertTarget({ collectionScopeKey: source.checkpointScope, sourceId: source.sourceId, providerKey: globalProviderKey(source.sourceType), entityKey: source.publisherId, parameters: { endpoint: source.endpoint, sourceType: source.sourceType, rightsPolicyId: source.rightsPolicyId, minIntervalSeconds: source.updatePolicy.minIntervalSeconds } });
   return source.checkpointScope;
 }
