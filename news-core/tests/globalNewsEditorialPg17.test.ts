@@ -63,6 +63,19 @@ test("daily world and business publishers: live RSS to PostgreSQL17 to N5", {
         )).rows[0].count;
         assert.ok(count > 0, "no publication persisted");
         persisted = count;
+        stage = "REPLAY";
+        await admin.query("update news_core.collection_targets set next_run_at=clock_timestamp(),lease_until=null where collection_scope_key=$1", [source.checkpointScope]);
+        const replay = await runNewsExecutorOnce({
+          store, workerId: "replay-" + source.sourceId,
+          secUserAgent: process.env.SEC_USER_AGENT ?? "SYNTRAKE expansion CI/1.0 security@syntrake.com",
+          globalSources: [source], globalRetrieve: async () => items,
+          collectionScopeKey: source.checkpointScope, leaseSeconds: 60,
+        });
+        assert.equal(replay.claimed, true);
+        const replayCount = (await admin.query<{ count: number }>(
+          "select count(*)::int count from news_core.publications where source_id=$1", [source.sourceId],
+        )).rows[0].count;
+        assert.equal(replayCount, count, "second collection must be idempotent");
         stage = "N5";
         // Query only at real database clock time. N1's PIT visibility frontier
         // may intentionally lag behind commit; never use future cutoffs.
