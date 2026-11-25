@@ -257,7 +257,8 @@ export class PostgresNewsStore {
   }
   async ingestGlobalBatch(source: GlobalNewsRegistryEntry, items: readonly GlobalNewsItem[], options: IngestOptions = {}): Promise<{ insertedPublications: number; insertedObservations: number }> {
     await this.ensureGlobalSource(source);
-    return this.ingestAdministrative(globalItemsToNewsBatch(source, items), options);
+    const batch = globalItemsToNewsBatch(source, items);
+    return options.lease ? this.ingest(batch, { ...options, lease: options.lease }) : this.ingestAdministrative(batch, options);
   }
   async recordGlobalOperationalState(state: GlobalOperationalState): Promise<void> {
     const installed = (await this.pool.query<{ installed: boolean }>("select to_regclass('news_core.global_operational_state') is not null installed")).rows[0]?.installed;
