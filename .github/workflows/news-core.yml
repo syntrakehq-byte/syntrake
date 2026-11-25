@@ -109,6 +109,14 @@ jobs:
           RUN_GLOBAL_NEWS_NG8: "1"
           SEC_USER_AGENT: "SYNTRAKE N-G8 CI/1.0 security@syntrake.com"
         run: npm run test:news:ng8:pg17
+      - name: Worldwide index adapter and opt-in profile
+        run: npx tsx --test news-core/tests/globalNewsAggregator.test.ts
+      - name: Worldwide GDELT LIVE receipt — provider may rate-limit (not a production gate)
+        continue-on-error: true
+        env:
+          RUN_GDELT_WORLD_LIVE: "1"
+          SEC_USER_AGENT: "SYNTRAKE GDELT news discovery CI/1.0 security@syntrake.com"
+        run: npx tsx --test --test-timeout=180000 news-core/tests/globalNewsAggregatorPg17.test.ts
       - name: Official source worker profile and fail-closed configuration
         run: npx tsx --test news-core/tests/globalNewsOfficialSources.test.ts
       - name: Additional official RSS sources — real PostgreSQL receipt and N5 readback
