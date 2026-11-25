@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Pool } from "pg";
-import { fetchSafeExternal } from "./sourceSecurity";
+import { fetchSafeExternal, fetchSafeExternalFromAllowedHosts } from "./sourceSecurity";
 import { DeterministicFactClassifierV1, excerptHashV1, type ClassificationInputV1 } from "./factualClassification";
 import { claimKeyV1, DeterministicEvidenceCorroboratorV1, type CorroborationInputV1 } from "./evidenceCorroboration";
 import { factualLogicalFingerprintV1, PostgresFactualStore, type PersistFactualInputV1 } from "./factualPersistence";
@@ -40,7 +40,17 @@ export function selectGlobalRevisionAtKnownAtV1(revisions: readonly NewsPublicat
 
 const sha256 = (value: string): string => createHash("sha256").update(value, "utf8").digest("hex");
 const stripDocument = (html: string): string => html.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/\s+/g, " ").trim();
-const controlledExcerpt = (text: string): string | undefined => text.split(/(?<=[.!?])\s+/).map(value => value.trim()).find(value => value.length >= 20 && value.length <= 1200 && /(?:\b(?:declares?|declared|announces?|announced)\b.{0,100}\bdividend\b|\b(?:reports?|reported|announces?|announced)\b.{0,100}\b(?:earnings|revenue|net income|profit|loss)\b|\b(?:was|were|is|are|has|have|had|received|fined|sanctioned|charged|sued|settled|convicted|approved|cleared|ordered)\b.{0,80}\b(?:fine|fined|sanction|sanctioned|charge|charged|lawsuit|sued|settlement|settled|convicted|approved|cleared|order|ordered)\b|\b(?:signed|declared|announced|imposed|lifted|entered|occurred|began|continued|reported)\b.{0,80}\b(?:ceasefire|sanctions?|invasion|military operation|armed conflict|treaty)\b)/i.test(value));
+const controlledExcerpt = (text: string): string | undefined => text.split(/(?<=[.!?])\s+/).map(value => value.trim()).find(value => value.length >= 20 && value.length <= 1200 && /(?:\b(?:declares?|declared|announces?|announced)\b.{0,100}\bdividend\b|\b(?:reports?|reported|announces?|announced)\b.{0,100}\b(?:earnings|revenue|net income|profit|loss)\b|\b(?:was|were|is|are|has|have|had|received|fined|sanctioned|charged|sued|settled|convicted|approved|cleared|ordered)\b.{0,80}\b(?:fine|fined|sanction|sanctioned|charge|charged|lawsuit|sued|settlement|settled|convicted|approved|cleared|order|ordered)\b|\b(?:signed|declared|announced|imposed|lifted|entered|occurred|began|continued|reported)\b.{0,80}\b(?:ceasefire|sanctions?|invasion|military operation|armed conflict|treaty)\b|\b(?:raised|lowered|held|maintained|set|increased|decreased)\b.{0,100}\b(?:interest|policy|funds?|rate|rates|threshold|inflation|unemployment|GDP|gross domestic product|CPI|consumer price)\b|\b(?:released?|published?)\b.{0,100}\b(?:economic|employment|inflation|unemployment|GDP|CPI|price)\b|\b(?:today\s+)?(?:announced|reported|released|published)\b.{0,200}\b(?:threshold|CPI|inflation|employment|unemployment|GDP|rate|rates|price index)\b|\b(?:increase|decrease|rise|fall|change)\b.{0,100}\b(?:threshold|CPI|inflation|employment|unemployment|GDP|rate|rates|price index)\b)/i.test(value));
+const OFFICIAL_PRIMARY_SOURCES = new Set(["eu-ecb-press", "uk-boe-news", "us-sec-press", "ca-boc-press", "au-rba-press", "us-bls-latest", "us-fed-press"]);
+const OFFICIAL_DOCUMENT_HOSTS: Readonly<Record<string, ReadonlySet<string>>> = {
+  "eu-ecb-press": new Set(["www.ecb.europa.eu", "ecb.europa.eu"]),
+  "uk-boe-news": new Set(["www.bankofengland.co.uk", "bankofengland.co.uk"]),
+  "us-sec-press": new Set(["www.sec.gov", "sec.gov"]),
+  "ca-boc-press": new Set(["www.bankofcanada.ca", "bankofcanada.ca"]),
+  "au-rba-press": new Set(["www.rba.gov.au", "rba.gov.au"]),
+  "us-bls-latest": new Set(["www.bls.gov", "bls.gov"]),
+  "us-fed-press": new Set(["www.federalreserve.gov", "federalreserve.gov"]),
+};
 
 export class NewsFactualPipelineV1 {
   readonly maxDocuments: number;
@@ -74,13 +84,40 @@ export class NewsFactualPipelineV1 {
    * as SEC and never upgrades a global publication beyond REPORTED. */
   private async processGlobalOne(publication: NewsPublication, signal?: AbortSignal, assertActive?: () => void): Promise<FactualPipelineOutcomeV1> {
     const canonicalClaimId = `global:${publication.sourceId}:${publication.externalId}`;
-    const excerpt = publication.contentExcerpt?.trim();
     if (!publication.asKnownAt) return { publicationId: publication.publicationId, canonicalClaimId, status: "REFUSED", reason: "N2_PUBLICATION_AS_KNOWN_AT_UNAVAILABLE" };
-    if (!excerpt) return { publicationId: publication.publicationId, canonicalClaimId, status: "REFUSED", reason: "N3A_FACTUAL_EXCERPT_UNAVAILABLE" };
-    const revisions = await this.options.news.readPublicationRevisionsAsOf(publication.asKnownAt, publication.publicationId);
-    const revision = selectGlobalRevisionAtKnownAtV1(revisions, publication.asKnownAt);
+    const documentCutoff = OFFICIAL_PRIMARY_SOURCES.has(publication.sourceId) ? new Date().toISOString() : publication.asKnownAt;
+    const revisions = await this.options.news.readPublicationRevisionsAsOf(documentCutoff, publication.publicationId);
+    let revision = selectGlobalRevisionAtKnownAtV1(revisions, documentCutoff);
     if (!revision?.asKnownAt || !revision.ingestedAt) return { publicationId: publication.publicationId, canonicalClaimId, status: "REFUSED", reason: "N2_PUBLICATION_REVISION_UNAVAILABLE" };
-    const revisionExcerpt = revision.contentExcerpt?.trim();
+    let revisionExcerpt = revision.contentExcerpt?.trim();
+    if (OFFICIAL_PRIMARY_SOURCES.has(publication.sourceId)) {
+      const allowedHosts = OFFICIAL_DOCUMENT_HOSTS[publication.sourceId];
+      if (!allowedHosts) return { publicationId: publication.publicationId, canonicalClaimId, status: "REFUSED", reason: "N3A_OFFICIAL_DOCUMENT_HOST_UNREGISTERED" };
+      const response = await fetchSafeExternalFromAllowedHosts(publication.originalUrl, allowedHosts, { headers: { "User-Agent": this.options.userAgent, Accept: "text/html,application/xhtml+xml" }, signal: signal ?? AbortSignal.timeout(20_000) });
+      if (response.ok) {
+        const body = await response.text();
+        const documentExcerpt = controlledExcerpt(stripDocument(body));
+        if (documentExcerpt) {
+          const documentFingerprint = sha256(body);
+          // A publisher may change harmless HTML chrome on every request. The
+          // durable factual unit is the controlled excerpt; do not create a
+          // new revision merely because an otherwise identical document hash
+          // changed outside that excerpt.
+          if (revision.contentExcerpt !== documentExcerpt) {
+            const nextRevisionNo = revision.revisionNo + 1;
+            const revisionId = `${publication.publicationId}:revision:${nextRevisionNo}`;
+            await this.options.news.ingestPublicationRevision({
+              revision: { publicationRevisionId: revisionId, publicationId: publication.publicationId, revisionNo: nextRevisionNo, title: publication.title, publishedAt: publication.publishedAt, form: publication.form, contentFingerprint: documentFingerprint, contentExcerpt: documentExcerpt, sourceDocumentRef: publication.originalUrl, qualityFlags: [...revision.qualityFlags, "OFFICIAL_DOCUMENT_FETCHED"], supersedesRevisionId: revision.publicationRevisionId },
+              provenance: { provenanceId: `${publication.publicationId}:provenance:${nextRevisionNo}`, publicationRevisionId: revisionId, sourceId: publication.sourceId, providerKey: `global-${publication.sourceId}`, providerObservationKey: `${publication.sourceId}:${publication.externalId}:document`, originalUrl: publication.originalUrl, sourceDocumentRef: publication.originalUrl, retrievedAt: new Date().toISOString(), qualityFlags: ["OFFICIAL_DOCUMENT_FETCHED"] },
+            });
+            const committedRevision = await this.options.news.readPublicationRevisionById(revisionId);
+            revision = committedRevision;
+            if (!revision) return { publicationId: publication.publicationId, canonicalClaimId, status: "FAILED_RETRYABLE", reason: "N3A_OFFICIAL_REVISION_COMMIT_RETRYABLE" };
+          }
+          revisionExcerpt = documentExcerpt;
+        }
+      }
+    }
     if (!revisionExcerpt) return { publicationId: publication.publicationId, canonicalClaimId, status: "REFUSED", reason: "N3A_FACTUAL_EXCERPT_UNAVAILABLE" };
     const evidenceId = `global-document-excerpt-${publication.sourceId}-${publication.externalId}`;
     const provenanceRef = `${publication.publicationId}:provenance:${revision.revisionNo}`;
@@ -97,8 +134,9 @@ export class NewsFactualPipelineV1 {
     const claimKey = claimKeyV1(proposal);
     const corroborationInput: CorroborationInputV1 = { contractVersion: "news-evidence-corroboration-v1", ruleSetVersion: "evidence-corroboration-rule-v1", proposal, claimKey,
       claimIdentities: [{ claimKey, canonicalClaimId, publicationRevisionId: revision.publicationRevisionId, statementFingerprint: sha256(proposal.statement), asKnownAt: proposal.proposedAt }], claimEquivalences: [], cutoffAsKnownAt: proposal.proposedAt, evaluatedAt: revision.asKnownAt,
-      evidence: [{ evidenceId: `n3b-${evidenceId}`, claimKey, originId: `${publication.sourceId}-origin`, sourceDocumentRef: revision.sourceDocumentRef, publicationRevisionId: revision.publicationRevisionId, provenanceRef, contentLocator: "publication:contentExcerpt", statementHash: sha256(proposal.statement), support: "SUPPORTS", asKnownAt: revision.asKnownAt, availableAsKnownAt: revision.asKnownAt, proposalEvidenceId: evidenceId }], verificationProofs: [],
-      origins: [{ originId: `${publication.sourceId}-origin`, sourceDocumentRef: revision.sourceDocumentRef, publicationRevisionId: revision.publicationRevisionId, publisherRef: publication.sourceId, editorialGroupRef: null, sourceKind: "SECONDARY", provenanceRef, availableAsKnownAt: revision.asKnownAt, competence: [{ claimKey, status: "UNKNOWN", basis: "IDENTIFIED_REPORT", evidenceRefs: [] }] }], independence: [] };
+      evidence: [{ evidenceId: `n3b-${evidenceId}`, claimKey, originId: `${publication.sourceId}-origin`, sourceDocumentRef: revision.sourceDocumentRef, publicationRevisionId: revision.publicationRevisionId, provenanceRef, contentLocator: "publication:contentExcerpt", statementHash: sha256(proposal.statement), support: "SUPPORTS", asKnownAt: revision.asKnownAt, availableAsKnownAt: revision.asKnownAt, proposalEvidenceId: evidenceId }],
+      verificationProofs: [],
+      origins: [{ originId: `${publication.sourceId}-origin`, sourceDocumentRef: revision.sourceDocumentRef, publicationRevisionId: revision.publicationRevisionId, publisherRef: publication.sourceId, editorialGroupRef: null, sourceKind: OFFICIAL_PRIMARY_SOURCES.has(publication.sourceId) ? "PRIMARY" : "SECONDARY", provenanceRef, availableAsKnownAt: revision.asKnownAt, competence: [{ claimKey, status: "UNKNOWN", basis: "IDENTIFIED_REPORT", evidenceRefs: [] }] }], independence: [] };
     const corroboration = this.corroborator.evaluate(corroborationInput);
     const persistInput: PersistFactualInputV1 = { attestationId: "pending", canonicalClaimId, proposal, corroborationInput, corroboration,
       evidence: [{ evidenceId, evidenceKind: "N3A_PROPOSAL", claimKey, publicationRevisionId: revision.publicationRevisionId, sourceDocumentRef: revision.sourceDocumentRef, contentLocator: "publication:contentExcerpt", provenanceRef, asKnownAt: revision.asKnownAt }],
@@ -183,7 +221,16 @@ export class NewsFactualPipelineV1 {
     for (const publication of publications.slice(0, this.options.maxDocuments ?? publications.length)) {
       if (signal?.aborted) throw new Error("NEWS_EXECUTION_CANCELLED");
       try { outcomes.push(await this.processOne(publication, signal, assertActive)); }
-      catch (error) { outcomes.push({ publicationId: publication.publicationId, canonicalClaimId: `sec:${publication.externalId}`, status: "FAILED_RETRYABLE", reason: error instanceof Error ? error.message : "NEWS_FACTUAL_RETRYABLE_FAILURE" }); }
+      catch (error) {
+        outcomes.push({
+          publicationId: publication.publicationId,
+          canonicalClaimId: publication.sourceId === "sec-edgar"
+            ? `sec:${publication.externalId}`
+            : `global:${publication.sourceId}:${publication.externalId}`,
+          status: "FAILED_RETRYABLE",
+          reason: error instanceof Error ? error.message : "NEWS_FACTUAL_RETRYABLE_FAILURE",
+        });
+      }
     }
     return outcomes;
   }

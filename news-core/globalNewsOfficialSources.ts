@@ -27,9 +27,9 @@ function officialRss(
     sourceType: "RSS_2",
     endpoint,
     allowedArticleHosts: [...new Set([host, canonicalHost])],
-    rightsPolicyId: "official-metadata-v1",
+    rightsPolicyId: "official-feed-text-v1",
     updatePolicy: { minIntervalSeconds: 300, maxItemsPerCycle: 100 },
-    storagePolicy: { content: "METADATA_ONLY", retentionDays: 30, presentation: "PUBLIC" },
+    storagePolicy: { content: "PERMITTED_TEXT", retentionDays: 30, presentation: "PUBLIC" },
     status: "ACTIVE",
     checkpointScope: sourceId + ":official:v1",
   };

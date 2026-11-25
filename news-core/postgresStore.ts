@@ -740,6 +740,18 @@ export class PostgresNewsStore {
     }));
   }
 
+  /** Reads one just-committed revision by identity after an append. This is
+   * used only to continue the same durable transaction hand-off; consumers
+   * still use the PIT APIs above. */
+  async readPublicationRevisionById(publicationRevisionId: string): Promise<NewsPublicationRevision | null> {
+    const result = await this.pool.query<NewsPublicationRevision>(
+      "select publication_revision_id as \"publicationRevisionId\", publication_id as \"publicationId\", revision_no as \"revisionNo\", title, published_at as \"publishedAt\", form, content_fingerprint as \"contentFingerprint\", content_excerpt as \"contentExcerpt\", source_document_ref as \"sourceDocumentRef\", quality_flags as \"qualityFlags\", supersedes_revision_id as \"supersedesRevisionId\", ingested_at as \"ingestedAt\", as_known_at as \"asKnownAt\" from news_core.publication_revisions where publication_revision_id=$1 and visibility_state='COMMITTED'",
+      [publicationRevisionId],
+    );
+    const row = result.rows[0];
+    return row ? { ...row, publishedAt: optionalIso(row.publishedAt), ingestedAt: optionalIso(row.ingestedAt), asKnownAt: optionalIso(row.asKnownAt), qualityFlags: flags(row.qualityFlags) } : null;
+  }
+
   async readPublicationRevisionsFilteredAsOf(asOf: string, query: string | null, sourceIds: readonly string[], forms: readonly string[]): Promise<NewsPublicationRevision[]> {
     const result = await this.pool.query<NewsPublicationRevision>("select * from news_core.read_publication_revisions_filtered_as_of($1::timestamptz,$2::text,$3::text[],$4::text[])", [asOf, query, sourceIds, forms]);
     return result.rows.map(row => ({ ...row, publishedAt: optionalIso(row.publishedAt), ingestedAt: optionalIso(row.ingestedAt), asKnownAt: optionalIso(row.asKnownAt), qualityFlags: flags(row.qualityFlags) }));

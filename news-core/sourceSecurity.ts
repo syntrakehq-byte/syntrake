@@ -151,6 +151,33 @@ export async function fetchSafeExternal(input: string, init?: RequestInit, fetch
   }
 }
 
+/** Fetches a registered official document with the same SSRF, DNS pinning,
+ * TLS, redirect and response-size protections as SEC, but against an
+ * explicitly supplied allowlist owned by the caller. */
+export async function fetchSafeExternalFromAllowedHosts(input: string, allowedHosts: ReadonlySet<string>, init?: RequestInit, lookupImpl: AddressLookup = lookup as AddressLookup): Promise<Response> {
+  const controller = new AbortController();
+  const deadline = Date.now() + DEFAULT_TIMEOUT_MS;
+  const externalSignal = init?.signal;
+  const forwardAbort = () => controller.abort(externalSignal?.reason ?? new DOMException("The operation was aborted", "AbortError"));
+  if (externalSignal?.aborted) forwardAbort(); else externalSignal?.addEventListener("abort", forwardAbort, { once: true });
+  const deadlineTimer = setTimeout(() => controller.abort(new Error("NEWS_SOURCE_TIMEOUT")), DEFAULT_TIMEOUT_MS);
+  const aborted = new Promise<never>((_, reject) => controller.signal.addEventListener("abort", () => reject(controller.signal.reason ?? new Error("NEWS_SOURCE_ABORTED")), { once: true }));
+  try {
+    const initial = await Promise.race([resolveSafeExternalUrl(input, allowedHosts, lookupImpl), aborted]);
+    const response = await Promise.race([fetchPinnedHttps(initial, { ...init, signal: controller.signal, redirect: "manual" }, Math.max(1, deadline - Date.now())), aborted]);
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get("location");
+      if (!location) throw new Error("NEWS_SOURCE_REDIRECT_INVALID");
+      await Promise.race([resolveSafeExternalUrl(new URL(location, initial.url).toString(), allowedHosts, lookupImpl), aborted]);
+      throw new Error("NEWS_SOURCE_REDIRECT_REQUIRES_REVALIDATION");
+    }
+    return response;
+  } finally {
+    clearTimeout(deadlineTimer);
+    externalSignal?.removeEventListener("abort", forwardAbort);
+  }
+}
+
 /**
  * Fetch a JSON news feed from an explicitly registered HTTPS source.
  * Uses the same pinned-IP TLS transport as SEC ingestion. Redirects are not
