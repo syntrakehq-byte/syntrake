@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mapNewsN5ForSite } from "../siteNewsN5";
+import { assertNewsSiteReadRole, mapNewsN5ForSite, type NewsSiteReaderIdentityV1 } from "../siteNewsN5";
 import type { NewsPublicationRevision } from "../contracts";
 
 const record = (overrides: Partial<NewsPublicationRevision> = {}): NewsPublicationRevision => ({
@@ -46,4 +46,19 @@ test("site N5 mapping ignores unapproved sources and unsafe destinations", () =>
     record({sourceDocumentRef: "https://www.ecb.europa.eu/press", publicationRevisionId: "safe"}),
   ], ["eu-ecb-press"]);
   assert.deepEqual(data.map(x => x.publicationRevisionId), ["safe"]);
+});
+
+test("site accepts only a dedicated unprivileged DB login assuming news_reader", () => {
+  const safe: NewsSiteReaderIdentityV1 = {
+    role_name: "news_reader", login_name: "news_site_reader",
+    rolsuper: false, rolbypassrls: false, rolcreaterole: false,
+    rolcreatedb: false, has_writer_membership: false,
+  };
+  assert.doesNotThrow(() => assertNewsSiteReadRole(safe));
+  assert.throws(() => assertNewsSiteReadRole(undefined), /READER_ROLE_REQUIRED/);
+  assert.throws(() => assertNewsSiteReadRole({ ...safe, role_name: "news_service" }), /READER_ROLE_REQUIRED/);
+  assert.throws(() => assertNewsSiteReadRole({ ...safe, login_name: "postgres", rolsuper: true }), /READER_ROLE_REQUIRED/);
+  assert.throws(() => assertNewsSiteReadRole({ ...safe, has_writer_membership: true }), /READER_ROLE_REQUIRED/);
+  assert.throws(() => assertNewsSiteReadRole({ ...safe, rolbypassrls: true }), /READER_ROLE_REQUIRED/);
+  assert.throws(() => assertNewsSiteReadRole({ ...safe, rolcreaterole: true }), /READER_ROLE_REQUIRED/);
 });
