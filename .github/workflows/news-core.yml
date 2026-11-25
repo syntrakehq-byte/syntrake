@@ -152,6 +152,8 @@ jobs:
           SEC_USER_AGENT: "SYNTRAKE N0 T27 CI/1.0 security@syntrake.com"
       - run: npm run test:news:n0:t20
       - run: npm run test:news:n0:contracts
+      - name: Investing and Trading shared news analysis boundary
+        run: npx tsx --test news-core/tests/analysisNewsConsumer.test.ts
       - name: Checkout real Market Core branch for T33 PIT integration
         uses: actions/checkout@v4
         with:
