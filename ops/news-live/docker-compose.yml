@@ -1,0 +1,41 @@
+# Production-candidate process wrapper for the already-tested News Core supervisor.
+# This starts NO database and does not publish any ports. Do not deploy before
+# verifying least-privilege credentials, N1–N-G8 migrations and operating costs.
+services:
+  news-core:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.news-daemon
+    image: syntrake-news-core:release-candidate
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+    read_only: true
+    user: "node"
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
+    mem_limit: 768m
+    cpus: "0.5"
+    environment:
+      NODE_ENV: production
+      NEWS_EXECUTION_MODE: ${NEWS_EXECUTION_MODE:-FACTUAL}
+      NEWS_DATABASE_URL: ${NEWS_DATABASE_URL:?isolated News Core writer URL required}
+      NEWS_PIPELINE_VERIFIER_DATABASE_URL: ${NEWS_PIPELINE_VERIFIER_DATABASE_URL:-}
+      NEWS_FACTUAL_ATTESTOR_DATABASE_URL: ${NEWS_FACTUAL_ATTESTOR_DATABASE_URL:-}
+      NEWS_FACTUAL_WRITER_DATABASE_URL: ${NEWS_FACTUAL_WRITER_DATABASE_URL:-}
+      SEC_USER_AGENT: ${SEC_USER_AGENT:?real SEC contact user-agent required}
+      SEC_CIK: ${SEC_CIK:-0000320193}
+      NEWS_GLOBAL_SOURCES_PROFILE: official-plus-daily-news-v1
+      NEWS_POLL_INTERVAL_MS: "30000"
+      NEWS_LEASE_SECONDS: "60"
+      NEWS_WORKER_ID: syntrake-news-live-1
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
