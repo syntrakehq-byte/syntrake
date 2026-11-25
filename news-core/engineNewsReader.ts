@@ -34,7 +34,7 @@ export function resolveEngineNewsReaderV1(consumer: NewsConsumerKindV1, env: Nod
   return { url, ca, cursorSecret, credential };
 }
 
-async function withReader<T>(consumer: NewsConsumerKindV1, operation: (api: NewsConsumptionApiV1, auth: NewsServiceAuthV1) => Promise<T>): Promise<T> {
+async function withReader<T>(consumer: NewsConsumerKindV1, operation: (api: NewsConsumptionApiV1, auth: NewsServiceAuthV1, pool: Pool) => Promise<T>): Promise<T> {
   const config = resolveEngineNewsReaderV1(consumer);
   const pool = new Pool({ connectionString: config.url.toString(), ssl: { ca: config.ca, rejectUnauthorized: true },
     max: 2, connectionTimeoutMillis: 6000, idleTimeoutMillis: 4000, statement_timeout: 9000,
@@ -48,7 +48,7 @@ async function withReader<T>(consumer: NewsConsumerKindV1, operation: (api: News
     );
     assertNewsSiteReadRole(identity.rows[0]);
     const api = new NewsConsumptionApiV1({ news: new PostgresNewsStore(pool), factual: new PostgresFactualStore(pool, "news_reader") }, config.cursorSecret, config.credential);
-    return await operation(api, { serviceId: "news_reader", credential: config.credential });
+    return await operation(api, { serviceId: "news_reader", credential: config.credential }, pool);
   } finally { await pool.end(); }
 }
 
@@ -60,4 +60,15 @@ export function readTradingNewsV1(input: AnalysisNewsInputV1) {
 }
 export function readEngineNewsEvidenceV1(consumer: NewsConsumerKindV1, input: EventEvidenceInput & { asOf: string }) {
   return withReader(consumer, (api, auth) => api.getEventEvidence(auth, input));
+}
+
+/** Current operational health, not a historical/backtest fact. The engine
+ * owns its acceptable maximum age; an absent source is never healthy. */
+export function readEngineNewsHealthV1(consumer: NewsConsumerKindV1) {
+  return withReader(consumer, async (_api, _auth, pool) => {
+    const result = await pool.query("select source_id,collection_scope_key,health,coverage,last_success_at,last_published_at,last_error_code from news_core.global_operational_state order by source_id,collection_scope_key");
+    return { observedAt: new Date().toISOString(), sources: result.rows.map(row => Object.fromEntries(
+      Object.entries(row).map(([key, value]) => [key, value instanceof Date ? value.toISOString() : value]),
+    )) };
+  });
 }
