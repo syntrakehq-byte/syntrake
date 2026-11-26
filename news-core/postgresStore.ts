@@ -369,7 +369,7 @@ export class PostgresNewsStore {
                 and exists (select 1 from news_core.publication_revisions pr
                   where pr.publication_id=p.publication_id and pr.visibility_state='COMMITTED'
                     and pr.revision_no=(select max(r.revision_no) from news_core.publication_revisions r where r.publication_id=p.publication_id and r.visibility_state='COMMITTED')
-                    and pr.content_excerpt ~* '(cookies?|toggle search|search the site|skip to main content|subscribe to|privacy preferences|enable javascript)'))
+                    and pr.content_excerpt ~* '(cookies?|toggle search|search the site|skip to main content|subscribe to|privacy preferences|enable javascript)')))
             and p.visibility_state='COMMITTED' and p.as_known_at <= clock_timestamp()
             and ($2::text[] is null or b.publication_id=any($2::text[]))
           order by b.created_at,b.publication_id
