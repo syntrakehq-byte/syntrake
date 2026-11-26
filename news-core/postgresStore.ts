@@ -355,6 +355,27 @@ export class PostgresNewsStore {
   }
 
   async reconcileFactualBacklog(limit = 1000, publicationIds?: readonly string[]): Promise<number> {
+    // Older atomic handoffs captured a pre-finalization payload. Recover only
+    // the precise erroneous terminal refusal; leave other decisions untouched.
+    const repaired = await this.pool.query(
+      `with recoverable as (
+         select b.publication_id
+           from news_core.factual_pipeline_backlog b
+           join news_core.publications p on p.publication_id=b.publication_id
+          where b.state='DONE' and b.completed_status='REFUSED'
+            and b.last_error='N2_PUBLICATION_AS_KNOWN_AT_UNAVAILABLE'
+            and b.publication_payload->>'asKnownAt' is null
+            and p.visibility_state='COMMITTED' and p.as_known_at <= clock_timestamp()
+            and ($2::text[] is null or b.publication_id=any($2::text[]))
+          order by b.created_at,b.publication_id
+          for update of b skip locked limit $1
+       )
+       update news_core.factual_pipeline_backlog b
+          set state='PENDING',completed_status=null,completed_at=null,
+              next_attempt_at=clock_timestamp(),updated_at=clock_timestamp()
+         from recoverable r where b.publication_id=r.publication_id`,
+      [Math.max(1, Math.min(limit, 10000)), publicationIds?.length ? publicationIds : null],
+    );
     const result = await this.pool.query(
       `insert into news_core.factual_pipeline_backlog(publication_id,publication_payload)
        select p.publication_id, jsonb_build_object(
@@ -368,23 +389,28 @@ export class PostgresNewsStore {
           and ($2::text[] is null or p.publication_id = any($2::text[]))
         order by p.as_known_at,p.publication_id limit $1 on conflict do nothing`, [Math.max(1, Math.min(limit, 10000)), publicationIds?.length ? publicationIds : null],
     );
-    return result.rowCount ?? 0;
+    return (result.rowCount ?? 0) + (repaired.rowCount ?? 0);
   }
 
   async claimFactualBacklog(limit: number, owner: string, leaseSeconds = 600, publicationIds?: readonly string[]): Promise<FactualBacklogClaim[]> {
     const result = await this.pool.query<{ publication_payload: NewsPublication; claim_token: string }>(
       `with candidates as (
-         select b.publication_id from news_core.factual_pipeline_backlog b
-          join news_core.publications p on p.publication_id=b.publication_id
-         where p.visibility_state='COMMITTED' and p.as_known_at is not null
+         select b.publication_id, jsonb_build_object(
+           'publicationId',p.publication_id,'sourceId',p.source_id,'originFingerprint',p.origin_fingerprint,
+           'externalId',p.external_id,'originalUrl',p.original_url,'title',p.title,'publishedAt',p.published_at,
+           'firstSeenAt',p.first_seen_at,'ingestedAt',p.ingested_at,'asKnownAt',p.as_known_at,'form',p.form,
+           'contentExcerpt',p.content_excerpt) as committed_payload
+           from news_core.factual_pipeline_backlog b
+           join news_core.publications p on p.publication_id=b.publication_id
+          where p.visibility_state='COMMITTED' and p.as_known_at <= clock_timestamp()
            and ((b.state='PENDING' and b.next_attempt_at <= clock_timestamp())
              or (b.state='PROCESSING' and b.lease_until < clock_timestamp()))
            and ($4::text[] is null or b.publication_id = any($4::text[]))
           order by b.next_attempt_at, b.created_at, b.publication_id
-          for update skip locked limit $1
+          for update of b skip locked limit $1
        )
        update news_core.factual_pipeline_backlog b
-          set state='PROCESSING', attempts=b.attempts+1,
+          set state='PROCESSING', attempts=b.attempts+1, publication_payload=c.committed_payload,
               lease_until=clock_timestamp()+($2::int * interval '1 second'),
               claim_owner=$3, claim_token=gen_random_uuid(),
               last_error=null, updated_at=clock_timestamp()

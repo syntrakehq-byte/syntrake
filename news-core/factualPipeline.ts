@@ -98,11 +98,13 @@ export class NewsFactualPipelineV1 {
    * as SEC and never upgrades a global publication beyond REPORTED. */
   private async processGlobalOne(publication: NewsPublication, signal?: AbortSignal, assertActive?: () => void): Promise<FactualPipelineOutcomeV1> {
     const canonicalClaimId = `global:${publication.sourceId}:${publication.externalId}`;
-    if (!publication.asKnownAt) return { publicationId: publication.publicationId, canonicalClaimId, status: "REFUSED", reason: "N2_PUBLICATION_AS_KNOWN_AT_UNAVAILABLE" };
-    const documentCutoff = OFFICIAL_PRIMARY_SOURCES.has(publication.sourceId) ? new Date().toISOString() : publication.asKnownAt;
+    const documentCutoff = new Date().toISOString();
+    if (!publication.asKnownAt || !Number.isFinite(Date.parse(publication.asKnownAt)) || Date.parse(publication.asKnownAt) > Date.parse(documentCutoff)) {
+      return { publicationId: publication.publicationId, canonicalClaimId, status: "FAILED_RETRYABLE", reason: "N2_PUBLICATION_AS_KNOWN_AT_UNAVAILABLE" };
+    }
     const revisions = await this.options.news.readPublicationRevisionsAsOf(documentCutoff, publication.publicationId);
     let revision = selectGlobalRevisionAtKnownAtV1(revisions, documentCutoff);
-    if (!revision?.asKnownAt || !revision.ingestedAt) return { publicationId: publication.publicationId, canonicalClaimId, status: "REFUSED", reason: "N2_PUBLICATION_REVISION_UNAVAILABLE" };
+    if (!revision?.asKnownAt || !revision.ingestedAt) return { publicationId: publication.publicationId, canonicalClaimId, status: "FAILED_RETRYABLE", reason: "N2_PUBLICATION_REVISION_UNAVAILABLE" };
     let revisionExcerpt = revision.contentExcerpt?.trim();
     if (OFFICIAL_PRIMARY_SOURCES.has(publication.sourceId)) {
       const allowedHosts = OFFICIAL_DOCUMENT_HOSTS[publication.sourceId];
@@ -126,7 +128,7 @@ export class NewsFactualPipelineV1 {
             });
             const committedRevision = await this.options.news.readPublicationRevisionById(revisionId);
             revision = committedRevision;
-            if (!revision) return { publicationId: publication.publicationId, canonicalClaimId, status: "FAILED_RETRYABLE", reason: "N3A_OFFICIAL_REVISION_COMMIT_RETRYABLE" };
+            if (!revision?.asKnownAt || Date.parse(revision.asKnownAt) > Date.now()) return { publicationId: publication.publicationId, canonicalClaimId, status: "FAILED_RETRYABLE", reason: "N3A_OFFICIAL_REVISION_COMMIT_RETRYABLE" };
           }
           revisionExcerpt = documentExcerpt;
         }

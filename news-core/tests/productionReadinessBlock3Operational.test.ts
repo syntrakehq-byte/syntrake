@@ -80,6 +80,20 @@ test("BL3 operational executor runs SEC through N3 and N5 with positive and cons
     await admin.query("delete from news_core.factual_pipeline_backlog where publication_id=$1", [atomicPublicationId]);
     assert.ok((await news.reconcileFactualBacklog()) >= 1, "backfill must restore committed publications missing from the factual queue");
     assert.equal(Number((await admin.query("select count(*)::int n from news_core.factual_pipeline_backlog where publication_id=$1", [atomicPublicationId])).rows[0].n), 1, "backfill must restore the committed publication target");
+    // Real PG regression: the old handoff stored null PIT timestamps before
+    // finalization, then permanently refused a valid committed publication.
+    await admin.query("update news_core.factual_pipeline_backlog set state='DONE', completed_status='REFUSED', completed_at=clock_timestamp(), last_error='N2_PUBLICATION_AS_KNOWN_AT_UNAVAILABLE', publication_payload=jsonb_set(publication_payload,'{asKnownAt}','null'::jsonb) where publication_id=$1", [atomicPublicationId]);
+    const frontierDeadline = Date.now() + 10_000;
+    while (!(await admin.query<{ ready: boolean }>("select as_known_at <= clock_timestamp() as ready from news_core.publications where publication_id=$1", [atomicPublicationId])).rows[0]?.ready && Date.now() < frontierDeadline) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    assert.equal(await news.reconcileFactualBacklog(1000, [atomicPublicationId]), 1);
+    const repairedClaim = (await news.claimFactualBacklog(1, "bl3-pit-repair-" + suffix, 60, [atomicPublicationId]))[0];
+    assert.ok(repairedClaim?.publication.asKnownAt && repairedClaim.publication.ingestedAt, "claim must contain the committed database frontier");
+    const actualFrontier = (await admin.query<{ as_known_at: Date }>("select as_known_at from news_core.publications where publication_id=$1", [atomicPublicationId])).rows[0].as_known_at;
+    assert.equal(Date.parse(repairedClaim.publication.asKnownAt), actualFrontier.getTime());
+    assert.equal(await news.finishFactualBacklog(atomicPublicationId, "bl3-pit-repair-" + suffix, repairedClaim.claimToken, "REFUSED", "REGRESSION_FIXTURE_COMPLETE"), "FINISHED");
+    assert.equal(await news.reconcileFactualBacklog(1000, [atomicPublicationId]), 0, "valid terminal refusals must not be requeued");
     const executorOptions = { store: news, factualPipeline: pipeline, secUserAgent: process.env.SEC_USER_AGENT ?? "SYNTRAKE BL3 operational CI/1.0 security@syntrake.com", collectionScopeKey: scope, fetchTimeoutMs: 120_000 };
     const knownQueue = await admin.query<{ position: number; state: string; claim_owner: string | null; next_attempt_at: string; completed_status: string | null }>(`select position, state, claim_owner, next_attempt_at::text, completed_status from (select b.*, row_number() over (order by b.next_attempt_at, b.created_at, b.publication_id)::int position from news_core.factual_pipeline_backlog b) q where publication_id=$1`, [knownPublicationId]);
     assert.equal(knownQueue.rowCount, 1, "known SEC publication must be present in factual backlog");
