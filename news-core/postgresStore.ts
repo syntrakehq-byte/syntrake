@@ -363,8 +363,13 @@ export class PostgresNewsStore {
            from news_core.factual_pipeline_backlog b
            join news_core.publications p on p.publication_id=b.publication_id
           where b.state='DONE' and b.completed_status='REFUSED'
-            and b.last_error='N2_PUBLICATION_AS_KNOWN_AT_UNAVAILABLE'
-            and b.publication_payload->>'asKnownAt' is null
+            and ((b.last_error='N2_PUBLICATION_AS_KNOWN_AT_UNAVAILABLE' and b.publication_payload->>'asKnownAt' is null)
+              or (b.last_error='N3A_NO_CONTROLLED_RULE_MATCH'
+                and p.source_id in ('us-fed-press','eu-ecb-press','uk-boe-news','us-sec-press','us-bls-latest','ca-boc-press','au-rba-press')
+                and exists (select 1 from news_core.publication_revisions pr
+                  where pr.publication_id=p.publication_id and pr.visibility_state='COMMITTED'
+                    and pr.revision_no=(select max(r.revision_no) from news_core.publication_revisions r where r.publication_id=p.publication_id and r.visibility_state='COMMITTED')
+                    and pr.content_excerpt ~* '(cookies?|toggle search|search the site|skip to main content|subscribe to|privacy preferences|enable javascript)'))
             and p.visibility_state='COMMITTED' and p.as_known_at <= clock_timestamp()
             and ($2::text[] is null or b.publication_id=any($2::text[]))
           order by b.created_at,b.publication_id

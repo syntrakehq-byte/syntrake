@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Pool } from "pg";
 import { fetchSafeExternal, fetchSafeExternalFromAllowedHosts } from "./sourceSecurity";
-import { DeterministicFactClassifierV1, excerptHashV1, type ClassificationInputV1 } from "./factualClassification";
+import { DeterministicFactClassifierV1, excerptHashV1, factRuleCategoriesV1, type ClassificationInputV1 } from "./factualClassification";
 import { claimKeyV1, DeterministicEvidenceCorroboratorV1, type CorroborationInputV1 } from "./evidenceCorroboration";
 import { factualLogicalFingerprintV1, PostgresFactualStore, type PersistFactualInputV1 } from "./factualPersistence";
 import { PostgresNewsStore } from "./postgresStore";
@@ -55,6 +55,33 @@ const stripDocument = (html: string): string => html
   .replace(/\s+/g, " ")
   .trim();
 const controlledExcerpt = (text: string): string | undefined => text.split(/(?<=[.!?])\s+/).map(value => value.trim()).find(value => value.length >= 20 && value.length <= 1200 && /(?:\b(?:declares?|declared|announces?|announced)\b.{0,100}\bdividend\b|\b(?:reports?|reported|announces?|announced)\b.{0,100}\b(?:earnings|revenue|net income|profit|loss)\b|\b(?:was|were|is|are|has|have|had|received|fined|sanctioned|charged|sued|settled|convicted|approved|cleared|ordered)\b.{0,80}\b(?:fine|fined|sanction|sanctioned|charge|charged|lawsuit|sued|settlement|settled|convicted|approved|cleared|order|ordered)\b|\b(?:signed|declared|announced|imposed|lifted|entered|occurred|began|continued|reported)\b.{0,80}\b(?:ceasefire|sanctions?|invasion|military operation|armed conflict|treaty)\b|\b(?:raised|lowered|held|maintained|set|increased|decreased)\b.{0,100}\b(?:interest|policy|funds?|rate|rates|threshold|inflation|unemployment|GDP|gross domestic product|CPI|consumer price)\b|\b(?:released?|published?)\b.{0,100}\b(?:economic|employment|inflation|unemployment|GDP|CPI|price)\b|\b(?:today\s+)?(?:announced|reported|released|published)\b.{0,200}\b(?:threshold|CPI|inflation|employment|unemployment|GDP|rate|rates|price index)\b|\b(?:increase|decrease|rise|fall|change)\b.{0,100}\b(?:threshold|CPI|inflation|employment|unemployment|GDP|rate|rates|price index)\b)/i.test(value));
+// An official headline or site navigation is not a document excerpt.
+export function isOfficialBodyExcerptV1(value: string, title: string): boolean {
+  const clean = value.replace(/\s+/g, " ").trim();
+  const normalizedTitle = title.replace(/\s+/g, " ").trim();
+  return clean.length >= 20 && clean.length <= 1200 &&
+    clean.toLowerCase() !== normalizedTitle.toLowerCase() &&
+    !/\b(?:cookies?|toggle search|search the site|skip to main content|subscribe to|privacy preferences|our use of cookies|enable javascript)\b/i.test(clean) &&
+    factRuleCategoriesV1(clean).length > 0;
+}
+export function selectOfficialFactExcerptV1(html: string, title: string): string | undefined {
+  const cleaned = html.replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<(head|header|nav|footer|aside|script|style|noscript)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, " ");
+  const main = /<main\b[^>]*>([\s\S]*?)<\/main\s*>/i.exec(cleaned)?.[1];
+  const article = /<article\b[^>]*>([\s\S]*?)<\/article\s*>/i.exec(cleaned)?.[1];
+  const regions = [...new Set([main, article, cleaned].filter((x): x is string => Boolean(x)))];
+  for (const region of regions) {
+    const candidates = [...region.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p\s*>/gi)]
+      .flatMap(match => stripDocument(match[1]).split(/(?<=[.!?])\s+/))
+      .map(value => value.trim()).filter(value => isOfficialBodyExcerptV1(value, title));
+    if (/\b(?:bank rate|policy rate|interest rate|overnight rate|cash rate|federal funds rate)\b/i.test(title)) {
+      const rate = candidates.find(value => factRuleCategoriesV1(value).includes("CENTRAL_BANK_DECISION"));
+      if (rate) return rate;
+    }
+    if (candidates.length) return candidates[0];
+  }
+  return undefined;
+}
 const OFFICIAL_PRIMARY_SOURCES = new Set(["eu-ecb-press", "uk-boe-news", "us-sec-press", "ca-boc-press", "au-rba-press", "us-bls-latest", "us-fed-press"]);
 const OFFICIAL_DOCUMENT_HOSTS: Readonly<Record<string, ReadonlySet<string>>> = {
   "eu-ecb-press": new Set(["www.ecb.europa.eu", "ecb.europa.eu"]),
@@ -106,14 +133,17 @@ export class NewsFactualPipelineV1 {
     let revision = selectGlobalRevisionAtKnownAtV1(revisions, documentCutoff);
     if (!revision?.asKnownAt || !revision.ingestedAt) return { publicationId: publication.publicationId, canonicalClaimId, status: "FAILED_RETRYABLE", reason: "N2_PUBLICATION_REVISION_UNAVAILABLE" };
     let revisionExcerpt = revision.contentExcerpt?.trim();
-    if (OFFICIAL_PRIMARY_SOURCES.has(publication.sourceId) && !revisionExcerpt) {
+    if (OFFICIAL_PRIMARY_SOURCES.has(publication.sourceId) &&
+        (!revisionExcerpt || !revision.qualityFlags.includes("OFFICIAL_DOCUMENT_FETCHED") ||
+          !isOfficialBodyExcerptV1(revisionExcerpt, publication.title))) {
+      revisionExcerpt = undefined;
       const allowedHosts = OFFICIAL_DOCUMENT_HOSTS[publication.sourceId];
       if (!allowedHosts) return { publicationId: publication.publicationId, canonicalClaimId, status: "REFUSED", reason: "N3A_OFFICIAL_DOCUMENT_HOST_UNREGISTERED" };
       const response = await fetchSafeExternalFromAllowedHosts(publication.originalUrl, allowedHosts, { headers: { "User-Agent": this.options.userAgent, Accept: "text/html,application/xhtml+xml" }, signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(12_000)]) : AbortSignal.timeout(12_000) });
       if (!response.ok) return { publicationId: publication.publicationId, canonicalClaimId, status: "FAILED_RETRYABLE", reason: "NEWS_FACTUAL_FETCH_RETRYABLE_HTTP_" + response.status };
       if (response.ok) {
         const body = await response.text();
-        const documentExcerpt = controlledExcerpt(stripDocument(body));
+        const documentExcerpt = selectOfficialFactExcerptV1(body, publication.title);
         if (documentExcerpt) {
           const documentFingerprint = sha256(body);
           // A publisher may change harmless HTML chrome on every request. The
@@ -124,7 +154,7 @@ export class NewsFactualPipelineV1 {
             const nextRevisionNo = revision.revisionNo + 1;
             const revisionId = `${publication.publicationId}:revision:${nextRevisionNo}`;
             await this.options.news.ingestPublicationRevision({
-              revision: { publicationRevisionId: revisionId, publicationId: publication.publicationId, revisionNo: nextRevisionNo, title: publication.title, publishedAt: publication.publishedAt, form: publication.form, contentFingerprint: documentFingerprint, contentExcerpt: documentExcerpt, sourceDocumentRef: publication.originalUrl, qualityFlags: [...revision.qualityFlags, "OFFICIAL_DOCUMENT_FETCHED"], supersedesRevisionId: revision.publicationRevisionId },
+              revision: { publicationRevisionId: revisionId, publicationId: publication.publicationId, revisionNo: nextRevisionNo, title: publication.title, publishedAt: publication.publishedAt, form: publication.form, contentFingerprint: documentFingerprint, contentExcerpt: documentExcerpt, sourceDocumentRef: publication.originalUrl, qualityFlags: [...new Set([...revision.qualityFlags, "OFFICIAL_DOCUMENT_FETCHED", "OFFICIAL_DOCUMENT_BODY_V1"])], supersedesRevisionId: revision.publicationRevisionId },
               provenance: { provenanceId: `${publication.publicationId}:provenance:${nextRevisionNo}`, publicationRevisionId: revisionId, sourceId: publication.sourceId, providerKey: `global-${publication.sourceId}`, providerObservationKey: `${publication.sourceId}:${publication.externalId}:document`, originalUrl: publication.originalUrl, sourceDocumentRef: publication.originalUrl, retrievedAt: new Date().toISOString(), qualityFlags: ["OFFICIAL_DOCUMENT_FETCHED"] },
             });
             let committedRevision = await this.options.news.readPublicationRevisionById(revisionId);

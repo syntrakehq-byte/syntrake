@@ -134,7 +134,7 @@ const RULES: readonly Rule[] = [
   { id: "N3A-MA-ANNOUNCED-001", category: "MERGER_ACQUISITION", claimType: "DECLARATION", pattern: /\b(?:announces?|announced|agrees?|agreed|enter(?:s|ed) into|expects?|expected|plans?)\b.{0,120}\b(?:acqui(?:re|red|sition)|merger|takeover|combination)\b/i, futurePattern: /\b(?:to acquire|will acquire|plans? to acquire|expects? to (?:acquire|complete))\b/i, statement: text => text },
   { id: "N3A-GUIDANCE-CHANGE-001", category: "GUIDANCE_CHANGE", claimType: "DECLARATION", pattern: /\b(?:raises?|raised|lowers?|lowered|updates?|updated|revises?|revised)\b.{0,80}\bguidance\b/i, statement: text => text },
   { id: "N3A-EARNINGS-REPORTED-001", category: "EARNINGS", claimType: "DECLARATION", pattern: /\b(?:reports?|reported|announces?|announced)\b.{0,100}\b(?:earnings|revenue|net income|profit|loss)\b/i, statement: text => text },
-  { id: "N3A-CENTRAL-BANK-DECISION-001", category: "CENTRAL_BANK_DECISION", claimType: "DECLARATION", pattern: /\b(?:raises?|raised|cuts?|cut|holds?|held|maintains?|maintained)\b.{0,80}\b(?:interest rate|policy rate|rates)\b/i, statement: text => text },
+  { id: "N3A-CENTRAL-BANK-DECISION-001", category: "CENTRAL_BANK_DECISION", claimType: "DECLARATION", pattern: /\b(?:raises?|raised|cuts?|cut|holds?|held|maintains?|maintained|increas(?:e|es|ed)|reduc(?:e|es|ed)|lowers?|lowered|keeps?|kept)\b.{0,100}\b(?:interest rates?|policy rates?|Bank Rate|overnight rate|cash rate|federal funds rate|deposit facility rate|refinancing rate|rates)\b/i, statement: text => text },
   { id: "N3A-LEGAL-REGULATORY-001", category: "LEGAL_REGULATORY", claimType: "EVENT_OCCURRENCE", pattern: /\b(?:was|were|is|are|has|have|had|received|fined|sanctioned|charged|sued|settled|convicted|approved|cleared|ordered)\b.{0,80}\b(?:fine|fined|sanction|sanctioned|charge|charged|lawsuit|sued|settlement|settled|convicted|approved|cleared|order|ordered)\b/i, statement: text => text },
   { id: "N3A-LEGAL-REGULATORY-ANNOUNCEMENT-001", category: "LEGAL_REGULATORY", claimType: "DECLARATION", pattern: /\b(?:announces?|announced|publishes?|published|issues?|issued)\b.{0,200}\b(?:rule|rules|requirement|requirements|threshold|thresholds|regulation|regulations|exemption)\b/i, statement: text => text },
   { id: "N3A-OPERATIONAL-DISRUPTION-001", category: "OPERATIONAL_DISRUPTION", claimType: "EVENT_OCCURRENCE", pattern: /\b(?:experienced?|reported|occurred|there was|there were|suspended?|halted|shut(?:s|ting)? down)\b.{0,80}\b(?:outage|disruption|service interruption|shutdown)\b/i, statement: text => text },
@@ -156,12 +156,13 @@ const hasFutureLanguage = (text: string, rule: Rule): boolean => Boolean(rule.fu
 const hasUncertainLanguage = (text: string): boolean => /\b(?:could|may|might|if|would|rumou?r|speculation|speculative|possibly|potentially|hypothetical)\b/i.test(text);
 const splitSentences = (text: string): string[] => text.split(/(?<=[.!?])\s+/).map(normalizedText).filter(Boolean);
 const negativeForRule = (text: string, match: RegExpExecArray, rule: Rule): boolean => {
-  if (rule.claimType !== "EVENT_OCCURRENCE" && !["DIVIDEND_ANNOUNCEMENT", "MERGER_ACQUISITION"].includes(rule.category)) return false;
+  if (rule.claimType !== "EVENT_OCCURRENCE" && !["DIVIDEND_ANNOUNCEMENT", "MERGER_ACQUISITION", "CENTRAL_BANK_DECISION"].includes(rule.category)) return false;
   const boundary = Math.max(text.lastIndexOf(".", match.index - 1), text.lastIndexOf(";", match.index - 1), text.lastIndexOf(", but ", match.index - 1), text.lastIndexOf(", however ", match.index - 1), text.lastIndexOf(", and ", match.index - 1), text.lastIndexOf(", while ", match.index - 1));
   const proposition = text.slice(boundary + 1, match.index + match[0].length);
   const targetByCategory: Partial<Record<FactCategoryV1, string>> = {
     DIVIDEND_ANNOUNCEMENT: "dividend",
     MERGER_ACQUISITION: "merger|acqui(?:re|sition)|takeover|combination|speculation",
+    CENTRAL_BANK_DECISION: "interest rates?|policy rates?|Bank Rate|overnight rate|cash rate|federal funds rate|deposit facility rate|refinancing rate|rates",
     OPERATIONAL_DISRUPTION: "outage|disruption|service interruption|shutdown",
     LEGAL_REGULATORY: "fine|fined|sanction|sanctioned|charge|charged|lawsuit|sued|settlement|settled|convicted|approved|cleared|order|ordered",
     GEOPOLITICAL_EVENT: "ceasefire|sanctions?|invasion|military operation|armed conflict|treaty",
@@ -247,3 +248,9 @@ export function assertFactCategoryV1(value: unknown): asserts value is FactCateg
 }
 
 export function excerptHashV1(excerpt: string): string { return sha256(excerpt); }
+
+// Excerpt selection uses the same deterministic rules as the classifier;
+// matching a rule is not itself a verified fact.
+export function factRuleCategoriesV1(text: string): readonly FactCategoryV1[] {
+  return [...new Set(RULES.filter(rule => rule.pattern.test(text)).map(rule => rule.category))];
+}
