@@ -48,11 +48,11 @@ async function runTarget(store: PostgresNewsStore, target: ClaimedTarget, option
   return { ingested: committed.insertedPublications, factualOutcomes };
 }
 
-async function drainFactualBacklog(store: PostgresNewsStore, pipeline: NewsFactualPipelineV1, options: NewsExecutorOptions, signal: AbortSignal, lease?: ExecutionLease): Promise<readonly FactualPipelineOutcomeV1[]> {
+export async function drainFactualBacklog(store: PostgresNewsStore, pipeline: NewsFactualPipelineV1, options: NewsExecutorOptions, signal: AbortSignal, lease?: ExecutionLease): Promise<readonly FactualPipelineOutcomeV1[]> {
   return await (async () => {
         await store.reconcileFactualBacklog(1000, options.factualPublicationIds);
         const factualLeaseSeconds = Math.max(1, Math.floor(lease?.leaseSeconds ?? options.leaseSeconds ?? 60));
-        const claims = await store.claimFactualBacklog(options.factualPipeline!.maxDocuments, options.workerId, factualLeaseSeconds, options.factualPublicationIds);
+        const claims = await store.claimFactualBacklog(pipeline.maxDocuments, options.workerId, factualLeaseSeconds, options.factualPublicationIds);
         if (claims.length === 0) return [];
         const localAbort = new AbortController();
         const combinedSignal = AbortSignal.any([signal, localAbort.signal]);
@@ -68,7 +68,7 @@ async function drainFactualBacklog(store: PostgresNewsStore, pipeline: NewsFactu
           }
         }, Math.max(100, Math.floor(factualLeaseSeconds * 1000 / 3)));
         let outcomes: readonly FactualPipelineOutcomeV1[];
-        try { outcomes = await options.factualPipeline!.processPublications(claims.map(claim => claim.publication), combinedSignal, () => { if (ownershipLost) throw new Error("NEWS_FACTUAL_LEASE_LOST"); }); }
+        try { outcomes = await pipeline.processPublications(claims.map(claim => claim.publication), combinedSignal, () => { if (ownershipLost) throw new Error("NEWS_FACTUAL_LEASE_LOST"); }); }
         catch (error) { outcomes = claims.map(claim => ({ publicationId: claim.publication.publicationId, canonicalClaimId: `sec:${claim.publication.externalId}`, status: "FAILED_RETRYABLE" as const, reason: error instanceof Error ? error.message : "NEWS_FACTUAL_RETRYABLE_FAILURE" })); }
         finally {
           clearInterval(renewal);

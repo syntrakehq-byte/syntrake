@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Pool } from "pg";
-import { registerGlobalTarget, runNewsExecutorOnce } from "./autonomousExecutor";
+import { drainFactualBacklog, registerGlobalTarget, runNewsExecutorOnce } from "./autonomousExecutor";
 import { NEWS_OFFICIAL_PLUS_DAILY_NEWS_V1 } from "./globalNewsOfficialSources";
 import type { GlobalNewsRegistryEntry } from "./globalNewsRegistry";
 import { NewsFactualPipelineV1 } from "./factualPipeline";
@@ -49,6 +49,15 @@ export async function runManualSourceBatch(
     status: results.some(row => row.status === "ERROR" || row.status === "DEADLINE") ? "PARTIAL" : "COMPLETED",
     sources: results,
   };
+}
+
+/** Collection must finish (or reach its own deadline) before factual processing.
+ * A factual retry must never turn a completed source collection into an error. */
+export async function collectThenProcessFacts<T>(collect: () => Promise<T>, processFacts: () => Promise<void>): Promise<T> {
+  const result = await collect();
+  try { await processFacts(); }
+  catch { console.warn("[NEWS_MANUAL] factual processing deferred"); }
+  return result;
 }
 
 type ManualWriterIdentity = {
@@ -106,7 +115,7 @@ export async function refreshPersistedSiteNews(userId: string): Promise<ManualNe
     news: store, verifierPool, attestorPool, writerPool: factualWriterPool, userAgent: secUserAgent,
     maxDocuments: Math.max(1, Math.min(Number(process.env.NEWS_MANUAL_FACTUAL_DOCUMENT_LIMIT ?? 5), 20)),
   });
-  const deadline = AbortSignal.timeout(40_000);
+  const deadline = AbortSignal.timeout(48_000);
   try {
     const identity = await pool.query<ManualWriterIdentity>(
       "select current_user as role_name, session_user as login_name, r.rolsuper, r.rolbypassrls, r.rolcreaterole, r.rolcreatedb, " +
@@ -121,12 +130,21 @@ export async function refreshPersistedSiteNews(userId: string): Promise<ManualNe
       assertManualFactualIdentity(factualWriterPool, "news_factual_writer"),
     ]);
     const workerId = "site-manual-" + randomUUID();
-    return await runManualSourceBatch(NEWS_OFFICIAL_PLUS_DAILY_NEWS_V1, async source => {
-      await registerGlobalTarget(store, source);
-      if (deadline.aborted) throw new Error("NEWS_MANUAL_DEADLINE");
-      return await runNewsExecutorOnce({ store, workerId, secUserAgent, collectionScopeKey: source.checkpointScope,
-        globalSources: [source], factualPipeline, signal: deadline, leaseSeconds: 60, fetchTimeoutMs: 30_000 });
-    }, deadline);
+    const collectionDeadline = AbortSignal.any([deadline, AbortSignal.timeout(36_000)]);
+    return await collectThenProcessFacts(
+      () => runManualSourceBatch(NEWS_OFFICIAL_PLUS_DAILY_NEWS_V1, async source => {
+        await registerGlobalTarget(store, source);
+        if (collectionDeadline.aborted) throw new Error("NEWS_MANUAL_DEADLINE");
+        return await runNewsExecutorOnce({ store, workerId, secUserAgent, collectionScopeKey: source.checkpointScope,
+          globalSources: [source], signal: collectionDeadline, leaseSeconds: 60, fetchTimeoutMs: 30_000 });
+      }, collectionDeadline),
+      async () => {
+        if (deadline.aborted) return;
+        const outcomes = await drainFactualBacklog(store, factualPipeline, { store, workerId, secUserAgent, leaseSeconds: 60 }, deadline);
+        console.log("[NEWS_MANUAL] factual batch", { persisted: outcomes.filter(x => x.status === "PERSISTED").length,
+          refused: outcomes.filter(x => x.status === "REFUSED").length, retryable: outcomes.filter(x => x.status === "FAILED_RETRYABLE").length });
+      },
+    );
   } catch {
     return unavailable;
   } finally {

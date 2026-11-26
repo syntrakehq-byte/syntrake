@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assertManualWriterIdentity, manualNewsRefreshAllowed, runManualSourceBatch } from "../siteNewsManualRefresh";
+import { assertManualWriterIdentity, collectThenProcessFacts, manualNewsRefreshAllowed, runManualSourceBatch } from "../siteNewsManualRefresh";
 import { NEWS_OFFICIAL_PLUS_DAILY_NEWS_V1 as sources } from "../globalNewsOfficialSources";
 
 test("manual refresh is disabled unless N5, feature flag and explicit operator match", () => {
@@ -44,4 +44,13 @@ test("expired request does not begin any new collection", async () => {
   assert.equal(result.status, "PARTIAL");
   assert.equal(result.sources.length, 10);
   assert.ok(result.sources.every(row => row.status === "DEADLINE"));
+});
+
+test("factual backlog cannot preempt collection or invalidate a completed receipt", async () => {
+  const order: string[] = [];
+  const result = await collectThenProcessFacts(async () => { order.push("collection"); return { status: "COMPLETED" }; }, async () => {
+    order.push("facts"); throw new Error("retryable factual failure");
+  });
+  assert.deepEqual(order, ["collection", "facts"]);
+  assert.deepEqual(result, { status: "COMPLETED" });
 });
