@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { normalizeNewsTlsCaPem } from "../databaseTls";
+import { normalizeNewsTlsCaPem, newsDatabaseConnectionUrl } from "../databaseTls";
 import { assertNewsSiteReadRole, mapNewsN5ForSite, type NewsSiteReaderIdentityV1 } from "../siteNewsN5";
 import type { NewsPublicationRevision } from "../contracts";
 
@@ -70,4 +70,19 @@ test("Vercel escaped and ordinary multiline TLS certificates normalize identical
   assert.equal(normalizeNewsTlsCaPem(pem.replaceAll("\n", "\\n")), pem);
   assert.equal(normalizeNewsTlsCaPem(pem.replaceAll("\n", "\\r\\n")), pem);
   assert.equal(normalizeNewsTlsCaPem(""), "");
+});
+
+test("Preview uses only the verified IPv4 session pooler and preserves the dedicated login", () => {
+  const direct = "postgresql://news_fixture:fixture@db.gehlmcjctcfdbtzlyswm.supabase.co:5432/postgres";
+  const preview = newsDatabaseConnectionUrl(direct, "news_reader", "preview");
+  assert.equal(preview.url.hostname, "aws-1-eu-west-3.pooler.supabase.com");
+  assert.equal(preview.url.username, "news_fixture.gehlmcjctcfdbtzlyswm");
+  assert.equal(preview.url.password, "fixture");
+  assert.equal(preview.sessionPooler, true);
+  assert.equal(preview.url.searchParams.has("options"), false);
+  const production = newsDatabaseConnectionUrl(direct, "news_reader", "production");
+  assert.equal(production.url.hostname, "db.gehlmcjctcfdbtzlyswm.supabase.co");
+  assert.equal(production.url.searchParams.get("options"), "-c role=news_reader");
+  assert.throws(() => newsDatabaseConnectionUrl(direct.replace("news_fixture", "postgres"), "news_reader", "preview"));
+  assert.throws(() => newsDatabaseConnectionUrl(direct.replace(":5432", ":6543"), "news_reader", "preview"));
 });

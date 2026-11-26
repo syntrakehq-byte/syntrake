@@ -1,5 +1,5 @@
-import { Pool } from "pg";
-import { normalizeNewsTlsCaPem } from "./databaseTls";
+import type { Pool } from "pg";
+import { normalizeNewsTlsCaPem, makeNewsDatabasePool, newsDatabaseConnectionUrl } from "./databaseTls";
 import { readNewsForAnalysisV1, type AnalysisNewsInputV1 } from "./analysisNewsConsumer";
 import type { NewsConsumerKindV1 } from "./consumerContracts";
 import { GlobalNewsApiV1 } from "./globalNewsApi";
@@ -8,7 +8,7 @@ import { PostgresNewsStore } from "./postgresStore";
 import { PostgresFactualStore } from "./factualPersistence";
 import { assertNewsSiteReadRole, type NewsSiteReaderIdentityV1 } from "./siteNewsN5";
 
-type ReaderConfig = Readonly<{ url: URL; ca: string; cursorSecret: string; credential: string }>;
+type ReaderConfig = Readonly<{ url: URL; connection: string; ca: string; cursorSecret: string; credential: string }>;
 
 /** Internal server adapter. No user, portfolio or execution data enters News.
  * Each engine has its own DB login and stable cursor secret, never a writer. */
@@ -31,13 +31,13 @@ export function resolveEngineNewsReaderV1(consumer: NewsConsumerKindV1, env: Nod
       url.port === "6543" || [...url.searchParams.keys()].some(key => ["options", "sslmode", "sslcert", "sslkey", "sslrootcert"].includes(key.toLowerCase()))) {
     throw new Error("NEWS_ENGINE_READER_DB_CONFIG_INVALID");
   }
-  url.searchParams.set("options", "-c role=news_reader");
-  return { url, ca, cursorSecret, credential };
+  url = newsDatabaseConnectionUrl(connection, "news_reader", env.VERCEL_ENV).url;
+  return { url, connection, ca, cursorSecret, credential };
 }
 
 async function withReader<T>(consumer: NewsConsumerKindV1, operation: (api: NewsConsumptionApiV1, auth: NewsServiceAuthV1, pool: Pool) => Promise<T>): Promise<T> {
   const config = resolveEngineNewsReaderV1(consumer);
-  const pool = new Pool({ connectionString: config.url.toString(), ssl: { ca: config.ca, rejectUnauthorized: true },
+  const pool = makeNewsDatabasePool(config.connection, "news_reader", config.ca, {
     max: 2, connectionTimeoutMillis: 6000, idleTimeoutMillis: 4000, statement_timeout: 9000,
     application_name: "syntrake-news-" + consumer.toLowerCase() + "-reader" });
   try {

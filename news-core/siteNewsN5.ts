@@ -1,9 +1,8 @@
 import { randomBytes } from "node:crypto";
-import { Pool } from "pg";
 import type { NewsPublicationRevision } from "./contracts";
 import { NewsConsumptionApiV1 } from "./n5Api";
 import { PostgresNewsStore } from "./postgresStore";
-import { normalizeNewsTlsCaPem } from "./databaseTls";
+import { normalizeNewsTlsCaPem, makeNewsDatabasePool } from "./databaseTls";
 
 export type SiteNewsRecordV1 = Readonly<{
   sourceId: string;
@@ -84,17 +83,7 @@ export async function readNewsN5ForSite(config: SiteNewsN5Config): Promise<reado
   if (!connectionString || !tlsCaPem.includes("BEGIN CERTIFICATE") || !tlsCaPem.includes("END CERTIFICATE")) {
     throw new Error("NEWS_SITE_N5_NOT_CONFIGURED");
   }
-  let url: URL;
-  try { url = new URL(connectionString); } catch { throw new Error("NEWS_SITE_N5_DB_CONFIG_INVALID"); }
-  if (!["postgres:", "postgresql:"].includes(url.protocol) || !url.hostname || !url.username || !url.password ||
-      url.searchParams.has("options") || url.searchParams.has("sslmode") ||
-      url.searchParams.has("sslcert") || url.searchParams.has("sslkey") || url.searchParams.has("sslrootcert")) {
-    throw new Error("NEWS_SITE_N5_DB_CONFIG_INVALID");
-  }
-  url.searchParams.set("options", "-c role=news_reader");
-  const pool = new Pool({
-    connectionString: url.toString(),
-    ssl: { ca: tlsCaPem, rejectUnauthorized: true },
+  const pool = makeNewsDatabasePool(connectionString, "news_reader", tlsCaPem, {
     max: 2, connectionTimeoutMillis: 6000, idleTimeoutMillis: 4000,
     statement_timeout: 9000, application_name: "syntrake-news-site-reader",
   });

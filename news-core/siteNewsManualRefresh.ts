@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { Pool } from "pg";
+import type { Pool } from "pg";
 import { registerGlobalTarget, runNewsExecutorOnce } from "./autonomousExecutor";
 import { NEWS_OFFICIAL_PLUS_DAILY_NEWS_V1 } from "./globalNewsOfficialSources";
 import type { GlobalNewsRegistryEntry } from "./globalNewsRegistry";
 import { NewsFactualPipelineV1 } from "./factualPipeline";
 import { PostgresNewsStore } from "./postgresStore";
-import { normalizeNewsTlsCaPem } from "./databaseTls";
+import { normalizeNewsTlsCaPem, makeNewsDatabasePool, type NewsDatabaseRole } from "./databaseTls";
 
 export type ManualSourceResult = Readonly<{
   sourceId: string;
@@ -77,12 +77,6 @@ async function assertManualFactualIdentity(pool: Pool, expectedRole: "news_pipel
   }
 }
 
-function roleUrl(connectionString: string, role: string): string {
-  const url = new URL(connectionString);
-  url.searchParams.set("options", `-c role=${role}`);
-  return url.toString();
-}
-
 /** Server-only entry point. Reuses the global executor and N1/N2 persistence,
  * then drains a bounded N2 -> N3-A -> N3-B -> N3-C -> N5 backlog. Headlines
  * without permitted text remain conservatively refused. */
@@ -96,17 +90,11 @@ export async function refreshPersistedSiteNews(userId: string): Promise<ManualNe
   const attestorUrl = process.env.NEWS_MANUAL_ATTESTOR_DATABASE_URL ?? "";
   const factualWriterUrl = process.env.NEWS_MANUAL_FACTUAL_WRITER_DATABASE_URL ?? "";
   if (!connectionString || !verifierUrl || !attestorUrl || !factualWriterUrl || !ca.includes("BEGIN CERTIFICATE") || !ca.includes("END CERTIFICATE") || !secUserAgent) return unavailable;
-  let url: URL;
-  try { url = new URL(connectionString); } catch { return unavailable; }
-  if (!["postgres:", "postgresql:"].includes(url.protocol) || !url.hostname || !url.username || !url.password ||
-      url.port === "6543" || [...url.searchParams.keys()].some(key => ["options", "sslmode", "sslcert", "sslkey", "sslrootcert"].includes(key.toLowerCase()))) return unavailable;
-  url.searchParams.set("options", "-c role=news_service");
-  const pool = new Pool({ connectionString: url.toString(), ssl: { ca, rejectUnauthorized: true },
+  const pool = makeNewsDatabasePool(connectionString, "news_service", ca, {
     max: 3, connectionTimeoutMillis: 4000, idleTimeoutMillis: 4000, statement_timeout: 8000,
     application_name: "syntrake-news-manual-writer" });
-  const poolOptions = (raw: string, role: string, applicationName: string): Pool => new Pool({
-    connectionString: roleUrl(raw, role), ssl: { ca, rejectUnauthorized: true }, max: 2,
-    connectionTimeoutMillis: 4000, idleTimeoutMillis: 4000, statement_timeout: 8000,
+  const poolOptions = (raw: string, role: NewsDatabaseRole, applicationName: string): Pool => makeNewsDatabasePool(raw, role, ca, {
+    max: 2, connectionTimeoutMillis: 4000, idleTimeoutMillis: 4000, statement_timeout: 8000,
     application_name: applicationName,
   });
   const verifierPool = poolOptions(verifierUrl, "news_pipeline_verifier", "syntrake-news-manual-verifier");
