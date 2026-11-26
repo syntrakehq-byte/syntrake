@@ -136,7 +136,7 @@ export async function refreshPersistedSiteNews(userId: string): Promise<ManualNe
       await registerGlobalTarget(store, source);
       if (deadline.aborted) throw new Error("NEWS_MANUAL_DEADLINE");
       return await runNewsExecutorOnce({ store, workerId, secUserAgent, collectionScopeKey: source.checkpointScope,
-        globalSources: [source], factualPipeline, signal: deadline, leaseSeconds: 60, fetchTimeoutMs: 8000 });
+        globalSources: [source], factualPipeline, signal: deadline, leaseSeconds: 60, fetchTimeoutMs: 30_000 });
     }, deadline);
   } catch {
     return unavailable;

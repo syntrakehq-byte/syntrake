@@ -71,6 +71,13 @@ function entityCandidateId(linkRevisionId: string, candidateRef: string): string
 }
 
 export class PostgresNewsStore {
+  /** The finalization guard is finite and measured on the preview database.
+   * Global feeds can contain dozens of items, so keep each atomic
+   * visibility frontier small. Every chunk repeats the same cursor/watermark;
+   * a retry therefore remains idempotent and never advances past uncommitted
+   * content. */
+  static readonly GLOBAL_INGEST_BATCH_SIZE = 10;
+
   constructor(private readonly pool: Pool) {}
   async close(): Promise<void> { await this.pool.end(); }
 
@@ -257,8 +264,20 @@ export class PostgresNewsStore {
   }
   async ingestGlobalBatch(source: GlobalNewsRegistryEntry, items: readonly GlobalNewsItem[], options: IngestOptions = {}): Promise<{ insertedPublications: number; insertedObservations: number }> {
     await this.ensureGlobalSource(source);
-    const batch = globalItemsToNewsBatch(source, items);
-    return options.lease ? this.ingest(batch, { ...options, lease: options.lease }) : this.ingestAdministrative(batch, options);
+    const ordered = [...items].sort((left, right) => left.externalId.localeCompare(right.externalId));
+    const chunks: readonly GlobalNewsItem[][] = ordered.length === 0 ? [[]] : Array.from(
+      { length: Math.ceil(ordered.length / PostgresNewsStore.GLOBAL_INGEST_BATCH_SIZE) },
+      (_, index) => ordered.slice(index * PostgresNewsStore.GLOBAL_INGEST_BATCH_SIZE, (index + 1) * PostgresNewsStore.GLOBAL_INGEST_BATCH_SIZE),
+    );
+    let insertedPublications = 0;
+    let insertedObservations = 0;
+    for (const chunk of chunks) {
+      const batch = globalItemsToNewsBatch(source, chunk);
+      const result = options.lease ? await this.ingest(batch, { ...options, lease: options.lease }) : await this.ingestAdministrative(batch, options);
+      insertedPublications += result.insertedPublications;
+      insertedObservations += result.insertedObservations;
+    }
+    return { insertedPublications, insertedObservations };
   }
   async recordGlobalOperationalState(state: GlobalOperationalState): Promise<void> {
     const installed = (await this.pool.query<{ installed: boolean }>("select to_regclass('news_core.global_operational_state') is not null installed")).rows[0]?.installed;
