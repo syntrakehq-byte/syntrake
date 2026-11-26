@@ -111,6 +111,7 @@ export async function refreshPersistedSiteNews(userId: string): Promise<ManualNe
   const verifierPool = poolOptions(verifierUrl, "news_pipeline_verifier", "syntrake-news-manual-verifier");
   const attestorPool = poolOptions(attestorUrl, "news_factual_attestor", "syntrake-news-manual-attestor");
   const factualWriterPool = poolOptions(factualWriterUrl, "news_factual_writer", "syntrake-news-manual-factual-writer");
+  for (const candidate of [pool, verifierPool, attestorPool, factualWriterPool]) candidate.on("error", () => undefined);
   const store = new PostgresNewsStore(pool);
   const factualPipeline = new NewsFactualPipelineV1({
     news: store, verifierPool, attestorPool, writerPool: factualWriterPool, userAgent: secUserAgent,

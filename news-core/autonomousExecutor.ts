@@ -57,15 +57,23 @@ async function drainFactualBacklog(store: PostgresNewsStore, pipeline: NewsFactu
         const localAbort = new AbortController();
         const combinedSignal = AbortSignal.any([signal, localAbort.signal]);
         let ownershipLost = false;
+        const renewals = new Set<Promise<void>>();
         const renewal = setInterval(() => {
-          for (const claim of claims) void store.renewFactualBacklogClaim(claim.publication.publicationId, options.workerId, claim.claimToken, factualLeaseSeconds).then(alive => {
+          for (const claim of claims) {
+            const pending = store.renewFactualBacklogClaim(claim.publication.publicationId, options.workerId, claim.claimToken, factualLeaseSeconds).then(alive => {
             if (!alive) { ownershipLost = true; localAbort.abort(); }
-          }).catch(() => { ownershipLost = true; localAbort.abort(); });
+            }).catch(() => { ownershipLost = true; localAbort.abort(); });
+            renewals.add(pending);
+            void pending.then(() => renewals.delete(pending), () => renewals.delete(pending));
+          }
         }, Math.max(100, Math.floor(factualLeaseSeconds * 1000 / 3)));
         let outcomes: readonly FactualPipelineOutcomeV1[];
         try { outcomes = await options.factualPipeline!.processPublications(claims.map(claim => claim.publication), combinedSignal, () => { if (ownershipLost) throw new Error("NEWS_FACTUAL_LEASE_LOST"); }); }
         catch (error) { outcomes = claims.map(claim => ({ publicationId: claim.publication.publicationId, canonicalClaimId: `sec:${claim.publication.externalId}`, status: "FAILED_RETRYABLE" as const, reason: error instanceof Error ? error.message : "NEWS_FACTUAL_RETRYABLE_FAILURE" })); }
-        finally { clearInterval(renewal); }
+        finally {
+          clearInterval(renewal);
+          await Promise.allSettled([...renewals]);
+        }
         for (const [index, outcome] of outcomes.entries()) {
           const claim = claims[index];
           if (!claim) continue;
