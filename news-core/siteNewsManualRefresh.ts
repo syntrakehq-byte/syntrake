@@ -138,6 +138,7 @@ export async function refreshPersistedSiteNews(userId: string, mode: "SITE" | "P
       // Only a bounded, one-off Preview acceptance run. Select actual durable
       // publications, prioritize official rate/macro/regulatory announcements,
       // and use the exact same fenced pipeline as a normal manual refresh.
+      await store.reconcileFactualBacklog(1000);
       const selected = await pool.query<{ publication_id: string; source_id: string }>(
         `select p.publication_id,p.source_id
            from news_core.factual_pipeline_backlog b
@@ -149,19 +150,29 @@ export async function refreshPersistedSiteNews(userId: string, mode: "SITE" | "P
                    p.published_at desc nulls last,p.publication_id
           limit 243`);
       const totals = { persisted: 0, refused: 0, retryable: 0 };
-      for (const row of selected.rows) {
-        if (deadline.aborted) break;
-        const outcomes = await drainFactualBacklog(store, factualPipeline, {
-          store, workerId, secUserAgent, leaseSeconds: 60, factualPublicationIds: [row.publication_id],
-        }, deadline);
-        for (const result of outcomes) {
-          if (result.status === "PERSISTED") totals.persisted++;
-          else if (result.status === "REFUSED") totals.refused++;
-          else totals.retryable++;
-          const reason = /^[A-Z0-9_]{3,100}$/.test(result.reason) ? result.reason : "NEWS_FACTUAL_RETRYABLE_FAILURE";
-          console.log("NEWS_PREVIEW_FACTUAL_RECEIPT", { source: row.source_id, status: result.status, reason });
+      // Keep at most three sources active, never two simultaneous requests
+      // to the same publisher, and use distinct fenced worker identities.
+      const sourceGroups = [...new Set(selected.rows.map(row => row.source_id))]
+        .map(sourceId => selected.rows.filter(row => row.source_id === sourceId));
+      let groupIndex = 0;
+      await Promise.all(Array.from({ length: Math.min(3, sourceGroups.length) }, async (_, index) => {
+        while (!deadline.aborted && groupIndex < sourceGroups.length) {
+          const group = sourceGroups[groupIndex++];
+          for (const row of group) {
+            if (deadline.aborted) break;
+            const outcomes = await drainFactualBacklog(store, factualPipeline, {
+              store, workerId: workerId + "-" + index, secUserAgent, leaseSeconds: 60, factualPublicationIds: [row.publication_id],
+            }, deadline);
+            for (const result of outcomes) {
+              if (result.status === "PERSISTED") totals.persisted++;
+              else if (result.status === "REFUSED") totals.refused++;
+              else totals.retryable++;
+              const reason = /^[A-Z0-9_]{3,100}$/.test(result.reason) ? result.reason : "NEWS_FACTUAL_RETRYABLE_FAILURE";
+              console.log("NEWS_PREVIEW_FACTUAL_RECEIPT", { source: row.source_id, status: result.status, reason });
+            }
+          }
         }
-      }
+      }));
       console.log("NEWS_PREVIEW_FACTUAL_TOTALS", totals);
       return { status: totals.persisted ? "COMPLETED" : "PARTIAL", sources: [] };
     }
