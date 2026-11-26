@@ -4,11 +4,26 @@ import { NEWS_OFFICIAL_PLUS_DAILY_NEWS_V1 } from "../news-core/globalNewsOfficia
 import { readInvestingNewsV1, readTradingNewsV1, readEngineNewsEvidenceV1, readEngineNewsHealthV1 } from "../news-core/engineNewsReader";
 import { refreshPersistedSiteNews } from "../news-core/siteNewsManualRefresh";
 
-// Read-only deployment gate on configured Preview builds. The optional
-// operator acceptance run is pinned to one commit and is never enabled in
-// production. It directly invokes the server collection service, not Clerk.
+// Read-only deployment gate on configured N5 builds. Production bootstrap
+// requires an explicit exact-SHA pin; ordinary builds never collect or write.
+// This invokes the restricted server collection service, not Clerk.
 async function main(): Promise<void> {
-  if (process.env.VERCEL_ENV !== "preview" || process.env.NEWS_SITE_READ_MODE !== "N5") return;
+  const production = process.env.VERCEL_ENV === "production";
+  if ((!production && process.env.VERCEL_ENV !== "preview") || process.env.NEWS_SITE_READ_MODE !== "N5") return;
+  const productionPin = process.env.NEWS_PRODUCTION_ACCEPTANCE_SHA;
+  if (production && productionPin && /^[a-f0-9]{40}$/.test(productionPin) && productionPin === process.env.VERCEL_GIT_COMMIT_SHA) {
+    const ids = (process.env.NEWS_MANUAL_REFRESH_USER_IDS ?? "").split(",").map(id => id.trim()).filter(Boolean);
+    assert.equal(ids.length, 1, "NEWS_PRODUCTION_OPERATOR_ALLOWLIST_REQUIRED");
+    for (let pass = 0; pass < 3; pass++) {
+      const result = await refreshPersistedSiteNews(ids[0]);
+      assert.notEqual(result.status, "UNAVAILABLE", "NEWS_PRODUCTION_COLLECTION_UNAVAILABLE");
+      console.log("NEWS_PRODUCTION_COLLECTION_RECEIPT", { pass, status: result.status, sources: result.sources });
+      if (result.status === "COMPLETED") break;
+    }
+    const result = await refreshPersistedSiteNews(ids[0], "PRODUCTION_FACTUAL_ACCEPTANCE");
+    assert.notEqual(result.status, "UNAVAILABLE", "NEWS_PRODUCTION_FACTUAL_ACCEPTANCE_UNAVAILABLE");
+    console.log("NEWS_PRODUCTION_FACTUAL_ACCEPTANCE", { status: result.status });
+  }
   const sourceIds = NEWS_OFFICIAL_PLUS_DAILY_NEWS_V1.map(source => source.sourceId);
   const rows = await readNewsN5ForSite({
     connectionString: process.env.NEWS_READER_DATABASE_URL ?? "",
@@ -19,7 +34,7 @@ async function main(): Promise<void> {
   console.log("NEWS_PREVIEW_N5_READ_PASS", { publications: rows.length, sourcesWithResults: new Set(rows.map(row => row.sourceId)).size });
 
   const pin = process.env.NEWS_PREVIEW_ACCEPTANCE_REFRESH_SHA;
-  if (pin && /^[a-f0-9]{40}$/.test(pin) && pin === process.env.VERCEL_GIT_COMMIT_SHA) {
+  if (!production && pin && /^[a-f0-9]{40}$/.test(pin) && pin === process.env.VERCEL_GIT_COMMIT_SHA) {
     const ids = (process.env.NEWS_MANUAL_REFRESH_USER_IDS ?? "").split(",").map(id => id.trim()).filter(Boolean);
     assert.equal(ids.length, 1, "NEWS_PREVIEW_OPERATOR_ALLOWLIST_REQUIRED");
     const result = await refreshPersistedSiteNews(ids[0], "PREVIEW_FACTUAL_ACCEPTANCE");
@@ -42,6 +57,7 @@ async function main(): Promise<void> {
     assert.ok(evidence.data.length, "NEWS_PREVIEW_EVIDENCE_EMPTY");
     const health = await readEngineNewsHealthV1(consumer);
     assert.ok(sourceIds.every(id => health.sources.some(source => source.source_id === id)), "NEWS_PREVIEW_SOURCE_HEALTH_MISSING");
+    if (production) assert.ok(sourceIds.every(id => health.sources.some(source => source.source_id === id && source.health === "HEALTHY" && source.last_success_at)), "NEWS_PRODUCTION_SOURCE_COLLECTION_NOT_PROVEN");
     console.log("NEWS_PREVIEW_CONSUMER_PASS", { consumer, publications: result.publications.news.data.length, facts: result.events.news.data.length, evidence: evidence.data.length, sources: health.sources.length });
   }
   assert.deepEqual(investing.publications.news.data, trading.publications.news.data, "NEWS_PREVIEW_CONSUMER_PUBLICATION_DIVERGENCE");

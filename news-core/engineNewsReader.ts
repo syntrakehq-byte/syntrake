@@ -31,7 +31,7 @@ export function resolveEngineNewsReaderV1(consumer: NewsConsumerKindV1, env: Nod
       url.port === "6543" || [...url.searchParams.keys()].some(key => ["options", "sslmode", "sslcert", "sslkey", "sslrootcert"].includes(key.toLowerCase()))) {
     throw new Error("NEWS_ENGINE_READER_DB_CONFIG_INVALID");
   }
-  url = newsDatabaseConnectionUrl(connection, "news_reader", env.VERCEL_ENV).url;
+  url = newsDatabaseConnectionUrl(connection, "news_reader", env.VERCEL_ENV, env.NEWS_PRODUCTION_SESSION_POOLER_HOST).url;
   return { url, connection, ca, cursorSecret, credential };
 }
 

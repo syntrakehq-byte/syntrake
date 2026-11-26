@@ -89,13 +89,15 @@ async function assertManualFactualIdentity(pool: Pool, expectedRole: "news_pipel
 /** Server-only entry point. Reuses the global executor and N1/N2 persistence,
  * then drains a bounded N2 -> N3-A -> N3-B -> N3-C -> N5 backlog. Headlines
  * without permitted text remain conservatively refused. */
-export async function refreshPersistedSiteNews(userId: string, mode: "SITE" | "PREVIEW_FACTUAL_ACCEPTANCE" = "SITE"): Promise<ManualNewsRefreshResult> {
+export async function refreshPersistedSiteNews(userId: string, mode: "SITE" | "PREVIEW_FACTUAL_ACCEPTANCE" | "PRODUCTION_FACTUAL_ACCEPTANCE" = "SITE"): Promise<ManualNewsRefreshResult> {
   const unavailable: ManualNewsRefreshResult = { status: "UNAVAILABLE", sources: [] };
   if (!manualNewsRefreshAllowed(userId)) return unavailable;
-  const acceptance = mode === "PREVIEW_FACTUAL_ACCEPTANCE";
-  if (acceptance && (process.env.VERCEL_ENV !== "preview" ||
-      !/^[a-f0-9]{40}$/.test(process.env.NEWS_PREVIEW_ACCEPTANCE_REFRESH_SHA ?? "") ||
-      process.env.NEWS_PREVIEW_ACCEPTANCE_REFRESH_SHA !== process.env.VERCEL_GIT_COMMIT_SHA)) return unavailable;
+  const acceptance = mode !== "SITE";
+  const acceptanceEnvironment = mode === "PRODUCTION_FACTUAL_ACCEPTANCE" ? "production" : "preview";
+  const acceptancePin = acceptanceEnvironment === "production" ? process.env.NEWS_PRODUCTION_ACCEPTANCE_SHA : process.env.NEWS_PREVIEW_ACCEPTANCE_REFRESH_SHA;
+  if (acceptance && (process.env.VERCEL_ENV !== acceptanceEnvironment ||
+      !/^[a-f0-9]{40}$/.test(acceptancePin ?? "") ||
+      acceptancePin !== process.env.VERCEL_GIT_COMMIT_SHA)) return unavailable;
   const connectionString = process.env.NEWS_MANUAL_WRITER_DATABASE_URL ?? "";
   const ca = normalizeNewsTlsCaPem(process.env.NEWS_MANUAL_WRITER_CA_PEM ?? "");
   const secUserAgent = process.env.SEC_USER_AGENT ?? "";
@@ -135,7 +137,7 @@ export async function refreshPersistedSiteNews(userId: string, mode: "SITE" | "P
     ]);
     const workerId = "site-manual-" + randomUUID();
     if (acceptance) {
-      // Only a bounded, one-off Preview acceptance run. Select actual durable
+      // Only a bounded, one-off staged acceptance run. Select actual durable
       // publications, prioritize official rate/macro/regulatory announcements,
       // and use the exact same fenced pipeline as a normal manual refresh.
       await store.reconcileFactualBacklog(1000);

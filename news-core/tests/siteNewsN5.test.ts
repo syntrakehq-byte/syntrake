@@ -86,3 +86,18 @@ test("Preview uses only the verified IPv4 session pooler and preserves the dedic
   assert.throws(() => newsDatabaseConnectionUrl(direct.replace("news_fixture", "postgres"), "news_reader", "preview"));
   assert.throws(() => newsDatabaseConnectionUrl(direct.replace(":5432", ":6543"), "news_reader", "preview"));
 });
+
+test("production session pooler is explicit and bound to the distinct production project and role", () => {
+  const direct = "postgresql://news_prod_site_reader:fixture@db.vbazzxqyuqcrmjytaboc.supabase.co:5432/postgres";
+  const host = "aws-0-eu-west-3.pooler.supabase.com"; // fixture, not a deployment choice
+  const p = newsDatabaseConnectionUrl(direct, "news_reader", "production", host);
+  assert.equal(p.url.hostname, host);
+  assert.equal(p.url.username, "news_prod_site_reader.vbazzxqyuqcrmjytaboc");
+  assert.equal(p.url.password, "fixture");
+  assert.equal(p.sessionPooler, true);
+  assert.equal(p.url.searchParams.has("options"), false);
+  assert.throws(() => newsDatabaseConnectionUrl(direct, "news_reader", "production", "evil.example"));
+  assert.throws(() => newsDatabaseConnectionUrl(direct.replace("vbazzxqyuqcrmjytaboc", "gehlmcjctcfdbtzlyswm"), "news_reader", "production", host));
+  assert.throws(() => newsDatabaseConnectionUrl(direct.replace("news_prod_site_reader", "postgres"), "news_reader", "production", host));
+  assert.equal(newsDatabaseConnectionUrl(direct, "news_reader", "preview", host).url.hostname, "db.vbazzxqyuqcrmjytaboc.supabase.co");
+});

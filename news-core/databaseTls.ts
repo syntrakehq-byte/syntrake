@@ -7,9 +7,11 @@ export function normalizeNewsTlsCaPem(value: string): string {
 const PREVIEW_REF = "gehlmcjctcfdbtzlyswm";
 const PREVIEW_DIRECT_HOST = "db." + PREVIEW_REF + ".supabase.co";
 const PREVIEW_POOLER_HOST = "aws-1-eu-west-3.pooler.supabase.com";
+const PRODUCTION_REF = "vbazzxqyuqcrmjytaboc";
+const PRODUCTION_DIRECT_HOST = "db." + PRODUCTION_REF + ".supabase.co";
 export type NewsDatabaseRole = "news_reader" | "news_service" | "news_pipeline_verifier" | "news_factual_attestor" | "news_factual_writer";
 
-export function newsDatabaseConnectionUrl(raw: string, role: NewsDatabaseRole, environment = process.env.VERCEL_ENV): { url: URL; sessionPooler: boolean } {
+export function newsDatabaseConnectionUrl(raw: string, role: NewsDatabaseRole, environment = process.env.VERCEL_ENV, productionPoolerHost = process.env.NEWS_PRODUCTION_SESSION_POOLER_HOST): { url: URL; sessionPooler: boolean } {
   const url = new URL(raw);
   if (!["postgres:", "postgresql:"].includes(url.protocol) || !url.hostname || !url.username || !url.password ||
       url.port === "6543" || [...url.searchParams.keys()].some(key => ["options", "sslmode", "sslcert", "sslkey", "sslrootcert"].includes(key.toLowerCase()))) {
@@ -19,6 +21,15 @@ export function newsDatabaseConnectionUrl(raw: string, role: NewsDatabaseRole, e
     if (!/^[a-z_][a-z0-9_]*$/.test(url.username) || url.username === "postgres" || (url.port && url.port !== "5432") || url.pathname !== "/postgres") throw new Error("NEWS_PREVIEW_DB_CONFIG_INVALID");
     url.username += "." + PREVIEW_REF;
     url.hostname = PREVIEW_POOLER_HOST;
+    url.port = "5432";
+  }
+  if (environment === "production" && productionPoolerHost) {
+    // Explicit, verified production host only; never repurpose Preview logins.
+    if (!/^aws-[0-9]+-eu-west-3\.pooler\.supabase\.com$/.test(productionPoolerHost) ||
+        url.hostname !== PRODUCTION_DIRECT_HOST || !/^news_prod_[a-z0-9_]+$/.test(url.username) ||
+        (url.port && url.port !== "5432") || url.pathname !== "/postgres") throw new Error("NEWS_PRODUCTION_DB_CONFIG_INVALID");
+    url.username += "." + PRODUCTION_REF;
+    url.hostname = productionPoolerHost;
     url.port = "5432";
   }
   const sessionPooler = url.hostname.endsWith(".pooler.supabase.com");
