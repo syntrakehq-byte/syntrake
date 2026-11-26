@@ -5,6 +5,11 @@ on:
     paths:
       - "market-data-core/**"
       - "app/markets/page.tsx"
+      - "app/news/**"
+      - "news-core/**"
+      - "components/workspace/WorkspaceShell.tsx"
+      - "package.json"
+      - "package-lock.json"
       - "app/api/market-data/**"
       - "app/api/internal/market-core/**"
       - "components/workspace/MarketDataWorkspace.tsx"
