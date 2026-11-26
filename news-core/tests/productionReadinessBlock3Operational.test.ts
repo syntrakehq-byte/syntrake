@@ -126,6 +126,15 @@ test("BL3 operational executor runs SEC through N3 and N5 with positive and cons
       from chosen c where b.publication_id=c.publication_id
       returning b.publication_id`);
     assert.equal(preparedFairness.rowCount, 22);
+    // The fairness test must not claim rows before their real PIT frontier.
+    const fairnessIds = preparedFairness.rows.map(row => row.publication_id);
+    const fairnessDeadline = Date.now() + 10_000;
+    while (true) {
+      const eligible = Number((await admin.query<{ n: number }>("select count(*)::int n from news_core.publications where publication_id=any($1::text[]) and visibility_state='COMMITTED' and as_known_at <= clock_timestamp()", [fairnessIds])).rows[0].n);
+      if (eligible === fairnessIds.length) break;
+      assert.ok(Date.now() < fairnessDeadline, "fairness fixtures must cross their real committed PIT frontier");
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
     const fenceA = await news.claimFactualBacklog(1, `bl3-fence-a-${suffix}`, 1);
     assert.equal(fenceA.length, 1);
     await admin.query("update news_core.factual_pipeline_backlog set lease_until=clock_timestamp()-interval '1 second' where publication_id=$1", [fenceA[0].publication.publicationId]);
