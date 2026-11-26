@@ -39,7 +39,21 @@ export function selectGlobalRevisionAtKnownAtV1(revisions: readonly NewsPublicat
 }
 
 const sha256 = (value: string): string => createHash("sha256").update(value, "utf8").digest("hex");
-const stripDocument = (html: string): string => html.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/\s+/g, " ").trim();
+const stripDocument = (html: string): string => html
+  .replace(/<!--[\s\S]*?-->/g, " ")
+  .replace(/<!--[\s\S]*$/g, " ")
+  .replace(/-->/g, " ")
+  .replace(/<script[\s\S]*?<\/script>/gi, " ")
+  .replace(/<style[\s\S]*?<\/style>/gi, " ")
+  .replace(/<[^>]+>/g, " ")
+  .replace(/&nbsp;/gi, " ")
+  .replace(/&amp;/gi, "&")
+  .replace(/&quot;/gi, '"')
+  .replace(/&#39;/gi, "'")
+  .replace(/&lt;/gi, "<")
+  .replace(/&gt;/gi, ">")
+  .replace(/\s+/g, " ")
+  .trim();
 const controlledExcerpt = (text: string): string | undefined => text.split(/(?<=[.!?])\s+/).map(value => value.trim()).find(value => value.length >= 20 && value.length <= 1200 && /(?:\b(?:declares?|declared|announces?|announced)\b.{0,100}\bdividend\b|\b(?:reports?|reported|announces?|announced)\b.{0,100}\b(?:earnings|revenue|net income|profit|loss)\b|\b(?:was|were|is|are|has|have|had|received|fined|sanctioned|charged|sued|settled|convicted|approved|cleared|ordered)\b.{0,80}\b(?:fine|fined|sanction|sanctioned|charge|charged|lawsuit|sued|settlement|settled|convicted|approved|cleared|order|ordered)\b|\b(?:signed|declared|announced|imposed|lifted|entered|occurred|began|continued|reported)\b.{0,80}\b(?:ceasefire|sanctions?|invasion|military operation|armed conflict|treaty)\b|\b(?:raised|lowered|held|maintained|set|increased|decreased)\b.{0,100}\b(?:interest|policy|funds?|rate|rates|threshold|inflation|unemployment|GDP|gross domestic product|CPI|consumer price)\b|\b(?:released?|published?)\b.{0,100}\b(?:economic|employment|inflation|unemployment|GDP|CPI|price)\b|\b(?:today\s+)?(?:announced|reported|released|published)\b.{0,200}\b(?:threshold|CPI|inflation|employment|unemployment|GDP|rate|rates|price index)\b|\b(?:increase|decrease|rise|fall|change)\b.{0,100}\b(?:threshold|CPI|inflation|employment|unemployment|GDP|rate|rates|price index)\b)/i.test(value));
 const OFFICIAL_PRIMARY_SOURCES = new Set(["eu-ecb-press", "uk-boe-news", "us-sec-press", "ca-boc-press", "au-rba-press", "us-bls-latest", "us-fed-press"]);
 const OFFICIAL_DOCUMENT_HOSTS: Readonly<Record<string, ReadonlySet<string>>> = {
