@@ -34,7 +34,7 @@ async function main(): Promise<void> {
     assert.equal(result.status, "AVAILABLE", "NEWS_PREVIEW_CONSUMER_UNAVAILABLE");
     assert.ok(result.publications.news.data.length, "NEWS_PREVIEW_CONSUMER_PUBLICATIONS_EMPTY");
     assert.ok(result.events.news.data.length, "NEWS_PREVIEW_CONSUMER_FACTS_EMPTY");
-    assert.ok(result.events.news.data.some(row => row.category === "CENTRAL_BANK_DECISION"), "NEWS_PREVIEW_RATE_EVIDENCE_MISSING");
+    assert.ok(result.events.news.data.some(row => "category" in row && row.category === "CENTRAL_BANK_DECISION"), "NEWS_PREVIEW_RATE_EVIDENCE_MISSING");
     const event = result.events.news.data[0] as Record<string, unknown>;
     assert.equal(typeof event.factEventId, "string", "NEWS_PREVIEW_FACT_ID_MISSING");
     const evidence = await readEngineNewsEvidenceV1(consumer, { asOf, eventId: String(event.factEventId) });
