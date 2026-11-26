@@ -14,7 +14,7 @@ test("global official-source worker profile adds 4 verified feeds to the 3 exist
   assert.equal(new Set(selected.map(s => s.sourceId)).size, 7);
   assert.equal(new Set(selected.map(s => s.checkpointScope)).size, 7);
   assert.ok(selected.every(s => s.status === "ACTIVE" && s.sourceType === "RSS_2"));
-  assert.ok(selected.every(s => s.storagePolicy.content === "METADATA_ONLY"));
+  assert.ok(selected.every(s => s.storagePolicy.content === "PERMITTED_TEXT"));
   assert.ok(selected.every(s => s.allowedArticleHosts.includes(new URL(s.endpoint).hostname)));
   assert.deepEqual(NEWS_EXPANSION_OFFICIAL_CANDIDATES_V1.map(s => s.sourceId), [
     "ca-boc-press", "au-rba-press", "us-bls-latest", "us-fed-press",
