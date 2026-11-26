@@ -106,10 +106,11 @@ export class NewsFactualPipelineV1 {
     let revision = selectGlobalRevisionAtKnownAtV1(revisions, documentCutoff);
     if (!revision?.asKnownAt || !revision.ingestedAt) return { publicationId: publication.publicationId, canonicalClaimId, status: "FAILED_RETRYABLE", reason: "N2_PUBLICATION_REVISION_UNAVAILABLE" };
     let revisionExcerpt = revision.contentExcerpt?.trim();
-    if (OFFICIAL_PRIMARY_SOURCES.has(publication.sourceId)) {
+    if (OFFICIAL_PRIMARY_SOURCES.has(publication.sourceId) && !revisionExcerpt) {
       const allowedHosts = OFFICIAL_DOCUMENT_HOSTS[publication.sourceId];
       if (!allowedHosts) return { publicationId: publication.publicationId, canonicalClaimId, status: "REFUSED", reason: "N3A_OFFICIAL_DOCUMENT_HOST_UNREGISTERED" };
-      const response = await fetchSafeExternalFromAllowedHosts(publication.originalUrl, allowedHosts, { headers: { "User-Agent": this.options.userAgent, Accept: "text/html,application/xhtml+xml" }, signal: signal ?? AbortSignal.timeout(20_000) });
+      const response = await fetchSafeExternalFromAllowedHosts(publication.originalUrl, allowedHosts, { headers: { "User-Agent": this.options.userAgent, Accept: "text/html,application/xhtml+xml" }, signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(12_000)]) : AbortSignal.timeout(12_000) });
+      if (!response.ok) return { publicationId: publication.publicationId, canonicalClaimId, status: "FAILED_RETRYABLE", reason: "NEWS_FACTUAL_FETCH_RETRYABLE_HTTP_" + response.status };
       if (response.ok) {
         const body = await response.text();
         const documentExcerpt = controlledExcerpt(stripDocument(body));
@@ -126,7 +127,12 @@ export class NewsFactualPipelineV1 {
               revision: { publicationRevisionId: revisionId, publicationId: publication.publicationId, revisionNo: nextRevisionNo, title: publication.title, publishedAt: publication.publishedAt, form: publication.form, contentFingerprint: documentFingerprint, contentExcerpt: documentExcerpt, sourceDocumentRef: publication.originalUrl, qualityFlags: [...revision.qualityFlags, "OFFICIAL_DOCUMENT_FETCHED"], supersedesRevisionId: revision.publicationRevisionId },
               provenance: { provenanceId: `${publication.publicationId}:provenance:${nextRevisionNo}`, publicationRevisionId: revisionId, sourceId: publication.sourceId, providerKey: `global-${publication.sourceId}`, providerObservationKey: `${publication.sourceId}:${publication.externalId}:document`, originalUrl: publication.originalUrl, sourceDocumentRef: publication.originalUrl, retrievedAt: new Date().toISOString(), qualityFlags: ["OFFICIAL_DOCUMENT_FETCHED"] },
             });
-            const committedRevision = await this.options.news.readPublicationRevisionById(revisionId);
+            let committedRevision = await this.options.news.readPublicationRevisionById(revisionId);
+            const revisionDeadline = Date.now() + 7_000;
+            while (committedRevision?.asKnownAt && Date.parse(committedRevision.asKnownAt) > Date.now() && Date.now() < revisionDeadline && !signal?.aborted) {
+              await new Promise(resolve => setTimeout(resolve, 100));
+              committedRevision = await this.options.news.readPublicationRevisionById(revisionId);
+            }
             revision = committedRevision;
             if (!revision?.asKnownAt || Date.parse(revision.asKnownAt) > Date.now()) return { publicationId: publication.publicationId, canonicalClaimId, status: "FAILED_RETRYABLE", reason: "N3A_OFFICIAL_REVISION_COMMIT_RETRYABLE" };
           }

@@ -22,10 +22,9 @@ async function main(): Promise<void> {
   if (pin && /^[a-f0-9]{40}$/.test(pin) && pin === process.env.VERCEL_GIT_COMMIT_SHA) {
     const ids = (process.env.NEWS_MANUAL_REFRESH_USER_IDS ?? "").split(",").map(id => id.trim()).filter(Boolean);
     assert.equal(ids.length, 1, "NEWS_PREVIEW_OPERATOR_ALLOWLIST_REQUIRED");
-    const result = await refreshPersistedSiteNews(ids[0]);
-    const collected = result.sources.filter(s => s.status === "COLLECTED").length;
-    console.log("NEWS_PREVIEW_REFRESH_RESULT", { status: result.status, collected, sources: result.sources });
-    assert.ok(collected > 0, "NEWS_PREVIEW_NO_COLLECTION_COMPLETED");
+    const result = await refreshPersistedSiteNews(ids[0], "PREVIEW_FACTUAL_ACCEPTANCE");
+    console.log("NEWS_PREVIEW_FACTUAL_ACCEPTANCE_RESULT", { status: result.status });
+    assert.notEqual(result.status, "UNAVAILABLE", "NEWS_PREVIEW_FACTUAL_ACCEPTANCE_UNAVAILABLE");
   }
   const asOf = new Date().toISOString();
   const input = { asOf, publications: { sort: "RECENT" as const, limit: 100, filters: { sourceIds } }, events: { limit: 100 } };

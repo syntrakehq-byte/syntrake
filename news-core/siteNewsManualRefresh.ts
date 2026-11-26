@@ -89,9 +89,13 @@ async function assertManualFactualIdentity(pool: Pool, expectedRole: "news_pipel
 /** Server-only entry point. Reuses the global executor and N1/N2 persistence,
  * then drains a bounded N2 -> N3-A -> N3-B -> N3-C -> N5 backlog. Headlines
  * without permitted text remain conservatively refused. */
-export async function refreshPersistedSiteNews(userId: string): Promise<ManualNewsRefreshResult> {
+export async function refreshPersistedSiteNews(userId: string, mode: "SITE" | "PREVIEW_FACTUAL_ACCEPTANCE" = "SITE"): Promise<ManualNewsRefreshResult> {
   const unavailable: ManualNewsRefreshResult = { status: "UNAVAILABLE", sources: [] };
   if (!manualNewsRefreshAllowed(userId)) return unavailable;
+  const acceptance = mode === "PREVIEW_FACTUAL_ACCEPTANCE";
+  if (acceptance && (process.env.VERCEL_ENV !== "preview" ||
+      !/^[a-f0-9]{40}$/.test(process.env.NEWS_PREVIEW_ACCEPTANCE_REFRESH_SHA ?? "") ||
+      process.env.NEWS_PREVIEW_ACCEPTANCE_REFRESH_SHA !== process.env.VERCEL_GIT_COMMIT_SHA)) return unavailable;
   const connectionString = process.env.NEWS_MANUAL_WRITER_DATABASE_URL ?? "";
   const ca = normalizeNewsTlsCaPem(process.env.NEWS_MANUAL_WRITER_CA_PEM ?? "");
   const secUserAgent = process.env.SEC_USER_AGENT ?? "";
@@ -113,9 +117,9 @@ export async function refreshPersistedSiteNews(userId: string): Promise<ManualNe
   const store = new PostgresNewsStore(pool);
   const factualPipeline = new NewsFactualPipelineV1({
     news: store, verifierPool, attestorPool, writerPool: factualWriterPool, userAgent: secUserAgent,
-    maxDocuments: Math.max(1, Math.min(Number(process.env.NEWS_MANUAL_FACTUAL_DOCUMENT_LIMIT ?? 5), 20)),
+    maxDocuments: acceptance ? 1 : Math.max(1, Math.min(Number(process.env.NEWS_MANUAL_FACTUAL_DOCUMENT_LIMIT ?? 5), 20)),
   });
-  const deadline = AbortSignal.timeout(48_000);
+  const deadline = AbortSignal.timeout(acceptance ? 150_000 : 48_000);
   try {
     const identity = await pool.query<ManualWriterIdentity>(
       "select current_user as role_name, session_user as login_name, r.rolsuper, r.rolbypassrls, r.rolcreaterole, r.rolcreatedb, " +
@@ -130,6 +134,37 @@ export async function refreshPersistedSiteNews(userId: string): Promise<ManualNe
       assertManualFactualIdentity(factualWriterPool, "news_factual_writer"),
     ]);
     const workerId = "site-manual-" + randomUUID();
+    if (acceptance) {
+      // Only a bounded, one-off Preview acceptance run. Select actual durable
+      // publications, prioritize official rate/macro/regulatory announcements,
+      // and use the exact same fenced pipeline as a normal manual refresh.
+      const selected = await pool.query<{ publication_id: string; source_id: string }>(
+        `select p.publication_id,p.source_id
+           from news_core.factual_pipeline_backlog b
+           join news_core.publications p using(publication_id)
+          where b.state='PENDING' and b.next_attempt_at<=clock_timestamp()
+            and p.visibility_state='COMMITTED' and p.as_known_at<=clock_timestamp()
+          order by (p.source_id in ('us-fed-press','eu-ecb-press','uk-boe-news','us-sec-press','us-bls-latest','ca-boc-press','au-rba-press')) desc,
+                   (p.title ~* '(bank rate|policy rate|interest rate|inflation|unemployment|GDP|price index|threshold|charges|earnings)') desc,
+                   p.published_at desc nulls last,p.publication_id
+          limit 243`);
+      const totals = { persisted: 0, refused: 0, retryable: 0 };
+      for (const row of selected.rows) {
+        if (deadline.aborted) break;
+        const outcomes = await drainFactualBacklog(store, factualPipeline, {
+          store, workerId, secUserAgent, leaseSeconds: 60, factualPublicationIds: [row.publication_id],
+        }, deadline);
+        for (const result of outcomes) {
+          if (result.status === "PERSISTED") totals.persisted++;
+          else if (result.status === "REFUSED") totals.refused++;
+          else totals.retryable++;
+          const reason = /^[A-Z0-9_]{3,100}$/.test(result.reason) ? result.reason : "NEWS_FACTUAL_RETRYABLE_FAILURE";
+          console.log("NEWS_PREVIEW_FACTUAL_RECEIPT", { source: row.source_id, status: result.status, reason });
+        }
+      }
+      console.log("NEWS_PREVIEW_FACTUAL_TOTALS", totals);
+      return { status: totals.persisted ? "COMPLETED" : "PARTIAL", sources: [] };
+    }
     const collectionDeadline = AbortSignal.any([deadline, AbortSignal.timeout(36_000)]);
     return await collectThenProcessFacts(
       () => runManualSourceBatch(NEWS_OFFICIAL_PLUS_DAILY_NEWS_V1, async source => {

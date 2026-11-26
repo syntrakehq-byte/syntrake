@@ -437,7 +437,7 @@ export class PostgresNewsStore {
               next_attempt_at=clock_timestamp()+least(300, power(2, least(attempts, 8))) * interval '1 second',
               last_error=$4, updated_at=clock_timestamp()
         where publication_id=$1 and state='PROCESSING' and claim_owner=$2 and claim_token=$3::uuid and lease_until > clock_timestamp()`,
-      [publicationId, owner, claimToken, error instanceof Error ? error.message.slice(0, 1000) : "NEWS_FACTUAL_RETRYABLE_FAILURE"],
+      [publicationId, owner, claimToken, error instanceof Error ? error.message.slice(0, 1000) : typeof error === "string" && /^[A-Z0-9_]{3,100}$/.test(error) ? error : "NEWS_FACTUAL_RETRYABLE_FAILURE"],
     );
     return (result.rowCount ?? 0) === 1 ? "REQUEUED" : "STALE";
   }
