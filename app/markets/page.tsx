@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
-import { UpcomingArea } from "@/components/workspace/UpcomingArea";
+import { MarketDataWorkspace } from "@/components/workspace/MarketDataWorkspace";
+import { WorkspaceShell } from "@/components/workspace/WorkspaceShell";
 import { resolveRequestSiteLang } from "@/lib/i18n/requestSiteLang";
 
 export const runtime = "nodejs";
@@ -19,5 +20,5 @@ export default async function Page({
     redirect("/sign-in?redirect_url=%2Fmarkets");
   }
   const lang = await resolveRequestSiteLang(await searchParams);
-  return <UpcomingArea lang={lang} area="markets" />;
+  return <WorkspaceShell lang={lang} area="markets"><MarketDataWorkspace lang={lang} /></WorkspaceShell>;
 }
