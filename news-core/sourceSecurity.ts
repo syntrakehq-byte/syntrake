@@ -1,11 +1,21 @@
 import { lookup } from "node:dns/promises";
 import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
+import { brotliDecompressSync, gunzipSync, inflateSync } from "node:zlib";
 
 export const SEC_ALLOWED_HOSTS = new Set(["data.sec.gov", "www.sec.gov"]);
 type AddressLookup = (hostname: string, options: { all: true }) => Promise<readonly { address: string; family: 4 | 6 }[]>;
 type ApprovedTarget = { url: URL; address: string; family: 4 | 6 };
 const DEFAULT_TIMEOUT_MS = 20_000, MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
+
+function decodeResponseBody(body: Buffer, contentEncoding: string | undefined): Buffer {
+  const encoding = contentEncoding?.trim().toLowerCase();
+  if (!encoding || encoding === "identity") return body;
+  if (encoding === "gzip") return gunzipSync(body);
+  if (encoding === "deflate") return inflateSync(body);
+  if (encoding === "br") return brotliDecompressSync(body);
+  throw new Error("NEWS_SOURCE_CONTENT_ENCODING_UNSUPPORTED");
+}
 
 function ipv4Value(address: string): number | null {
   const parts = address.split(".").map(Number);
@@ -105,7 +115,18 @@ function fetchPinnedHttps(target: ApprovedTarget, init: RequestInit | undefined,
         if (total > MAX_RESPONSE_BYTES) { req.destroy(new Error("NEWS_SOURCE_RESPONSE_TOO_LARGE")); return; }
         chunks.push(buffer);
       });
-      response.on("end", () => finish(() => resolve(new Response(Buffer.concat(chunks), { status: response.statusCode ?? 0, headers: responseHeaders }))));
+      response.on("end", () => finish(() => {
+        try {
+          const body = decodeResponseBody(Buffer.concat(chunks), responseHeaders["content-encoding"]);
+          if (body.length > MAX_RESPONSE_BYTES) throw new Error("NEWS_SOURCE_RESPONSE_TOO_LARGE");
+          const headers = new Headers(responseHeaders);
+          headers.delete("content-encoding");
+          headers.delete("content-length");
+          resolve(new Response(new Uint8Array(body), { status: response.statusCode ?? 0, headers }));
+        } catch (error) {
+          reject(error);
+        }
+      }));
       response.on("error", error => finish(() => reject(error)));
     });
     req.once("timeout", () => req.destroy(new Error("NEWS_SOURCE_TIMEOUT")));
