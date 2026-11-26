@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Pool } from "pg";
 import { fetchSafeExternal, fetchSafeExternalFromAllowedHosts } from "./sourceSecurity";
-import { DeterministicFactClassifierV1, excerptHashV1, factRuleCategoriesV1, type ClassificationInputV1 } from "./factualClassification";
+import { DeterministicFactClassifierV1, excerptHashV1, factRuleCategoriesV1, isGlobalAnalysisFactRelevantV1, type ClassificationInputV1 } from "./factualClassification";
 import { claimKeyV1, DeterministicEvidenceCorroboratorV1, type CorroborationInputV1 } from "./evidenceCorroboration";
 import { factualLogicalFingerprintV1, PostgresFactualStore, type PersistFactualInputV1 } from "./factualPersistence";
 import { PostgresNewsStore } from "./postgresStore";
@@ -62,7 +62,7 @@ export function isOfficialBodyExcerptV1(value: string, title: string): boolean {
   return clean.length >= 20 && clean.length <= 1200 &&
     clean.toLowerCase() !== normalizedTitle.toLowerCase() &&
     !/\b(?:cookies?|toggle search|search the site|skip to main content|subscribe to|privacy preferences|our use of cookies|enable javascript)\b/i.test(clean) &&
-    factRuleCategoriesV1(clean).length > 0;
+    factRuleCategoriesV1(clean).some(category => isGlobalAnalysisFactRelevantV1(category, clean));
 }
 export function selectOfficialFactExcerptV1(html: string, title: string): string | undefined {
   const cleaned = html.replace(/<!--[\s\S]*?-->/g, " ")
@@ -181,7 +181,8 @@ export class NewsFactualPipelineV1 {
     };
     const classification = this.verifier.classify(classificationInput);
     if (classification.proposals.length === 0) return { publicationId: publication.publicationId, canonicalClaimId, status: "REFUSED", reason: classification.refusalReasons[0] ?? "N3A_REFUSED" };
-    const proposal = classification.proposals[0];
+    const proposal = classification.proposals.find(candidate => isGlobalAnalysisFactRelevantV1(candidate.category, candidate.statement));
+    if (!proposal) return { publicationId: publication.publicationId, canonicalClaimId, status: "REFUSED", reason: "N3A_GLOBAL_ANALYSIS_RELEVANCE_INSUFFICIENT" };
     assertActive?.();
     const claimKey = claimKeyV1(proposal);
     const corroborationInput: CorroborationInputV1 = { contractVersion: "news-evidence-corroboration-v1", ruleSetVersion: "evidence-corroboration-rule-v1", proposal, claimKey,

@@ -254,3 +254,14 @@ export function excerptHashV1(excerpt: string): string { return sha256(excerpt);
 export function factRuleCategoriesV1(text: string): readonly FactCategoryV1[] {
   return [...new Set(RULES.filter(rule => rule.pattern.test(text)).map(rule => rule.category))];
 }
+
+/** A reported factual claim is not an investment recommendation. */
+export function isGlobalAnalysisFactRelevantV1(category: string, statement: string): boolean {
+  const clean = statement.replace(/\s+/g, " ").trim();
+  if (!clean || /\b(?:cookies?|toggle search|search the site|skip to main content|subscribe to|privacy preferences|enable javascript|search options|anytime past month)\b/i.test(clean)) return false;
+  if (category === "LEGAL_REGULATORY") {
+    if (/\bminutes\b.{0,100}\b(?:were|was|are|is)\s+approved\b/i.test(clean)) return false;
+    return /\b(?:rule[s]?|regulat(?:ion|ions|ory)|requirement[s]?|threshold[s]?|exemption[s]?|enforcement|fine[s]?|fined|penalt(?:y|ies)|lawsuit[s]?|fraud|complaint|charge[s]?|charged|court|sanction[s]?|restraining order|asset freeze|prosecution|settlement agreement|legal proceedings)\b/i.test(clean);
+  }
+  return true;
+}

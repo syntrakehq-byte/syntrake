@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { selectOfficialFactExcerptV1, isOfficialBodyExcerptV1 } from "../factualPipeline";
-import { DeterministicFactClassifierV1, excerptHashV1, type ClassificationInputV1 } from "../factualClassification";
+import { DeterministicFactClassifierV1, excerptHashV1, isGlobalAnalysisFactRelevantV1, type ClassificationInputV1 } from "../factualClassification";
 
 const base = (excerpt: string | null, overrides: Partial<ClassificationInputV1> = {}): ClassificationInputV1 => {
   const revision = { publicationRevisionId: "rev-1", publicationId: "pub-1", revisionNo: 1, title: "Headline only", form: "8-K", sourceDocumentRef: "https://www.sec.gov/Archives/edgar/data/1/8-k.htm", contentFingerprint: excerpt ? excerptHashV1(excerpt) : null, publishedAt: null, ingestedAt: "2026-11-12T10:00:00.000Z", asKnownAt: "2026-11-12T10:01:00.000Z", qualityFlags: [], visibilityState: "COMMITTED" as const };
@@ -45,4 +45,12 @@ test("official policy decisions use article paragraphs, not page titles or navig
   assert.equal(new DeterministicFactClassifierV1().classify(base(body)).proposals[0]?.category, "CENTRAL_BANK_DECISION");
   assert.equal(new DeterministicFactClassifierV1().classify(base("The Bank did not increase Bank Rate.")).proposals[0]?.claimType, "DENIAL");
   assert.equal(new DeterministicFactClassifierV1().classify(base("The Bank maintained its target for the overnight rate at 2.25%.")).proposals[0]?.category, "CENTRAL_BANK_DECISION");
+});
+
+test("global analysis relevance excludes meeting minutes, navigation and settlement plumbing", () => {
+  assert.equal(isGlobalAnalysisFactRelevantV1("LEGAL_REGULATORY", "The minutes of the meeting were approved."), false);
+  assert.equal(isGlobalAnalysisFactRelevantV1("LEGAL_REGULATORY", "There was no material change in cleared repo conditions."), false);
+  assert.equal(isGlobalAnalysisFactRelevantV1("LEGAL_REGULATORY", "The regulator announced revised consumer credit requirements."), true);
+  assert.equal(isGlobalAnalysisFactRelevantV1("CENTRAL_BANK_DECISION", "The Committee voted to increase Bank Rate to 4%."), true);
+  assert.equal(isGlobalAnalysisFactRelevantV1("CENTRAL_BANK_DECISION", "Subscribe to news. The Committee voted to increase Bank Rate to 4%."), false);
 });
