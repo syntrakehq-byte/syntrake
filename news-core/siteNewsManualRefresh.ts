@@ -5,6 +5,7 @@ import { NEWS_OFFICIAL_PLUS_DAILY_NEWS_V1 } from "./globalNewsOfficialSources";
 import type { GlobalNewsRegistryEntry } from "./globalNewsRegistry";
 import { NewsFactualPipelineV1 } from "./factualPipeline";
 import { PostgresNewsStore } from "./postgresStore";
+import { normalizeNewsTlsCaPem } from "./databaseTls";
 
 export type ManualSourceResult = Readonly<{
   sourceId: string;
@@ -89,7 +90,7 @@ export async function refreshPersistedSiteNews(userId: string): Promise<ManualNe
   const unavailable: ManualNewsRefreshResult = { status: "UNAVAILABLE", sources: [] };
   if (!manualNewsRefreshAllowed(userId)) return unavailable;
   const connectionString = process.env.NEWS_MANUAL_WRITER_DATABASE_URL ?? "";
-  const ca = process.env.NEWS_MANUAL_WRITER_CA_PEM ?? "";
+  const ca = normalizeNewsTlsCaPem(process.env.NEWS_MANUAL_WRITER_CA_PEM ?? "");
   const secUserAgent = process.env.SEC_USER_AGENT ?? "";
   const verifierUrl = process.env.NEWS_MANUAL_VERIFIER_DATABASE_URL ?? "";
   const attestorUrl = process.env.NEWS_MANUAL_ATTESTOR_DATABASE_URL ?? "";

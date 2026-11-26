@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { normalizeNewsTlsCaPem } from "../databaseTls";
 import { assertNewsSiteReadRole, mapNewsN5ForSite, type NewsSiteReaderIdentityV1 } from "../siteNewsN5";
 import type { NewsPublicationRevision } from "../contracts";
 
@@ -61,4 +62,12 @@ test("site accepts only a dedicated unprivileged DB login assuming news_reader",
   assert.throws(() => assertNewsSiteReadRole({ ...safe, has_writer_membership: true }), /READER_ROLE_REQUIRED/);
   assert.throws(() => assertNewsSiteReadRole({ ...safe, rolbypassrls: true }), /READER_ROLE_REQUIRED/);
   assert.throws(() => assertNewsSiteReadRole({ ...safe, rolcreaterole: true }), /READER_ROLE_REQUIRED/);
+});
+
+test("Vercel escaped and ordinary multiline TLS certificates normalize identically", () => {
+  const pem = "-----BEGIN CERTIFICATE-----\nfixture\n-----END CERTIFICATE-----";
+  assert.equal(normalizeNewsTlsCaPem(pem), pem);
+  assert.equal(normalizeNewsTlsCaPem(pem.replaceAll("\n", "\\n")), pem);
+  assert.equal(normalizeNewsTlsCaPem(pem.replaceAll("\n", "\\r\\n")), pem);
+  assert.equal(normalizeNewsTlsCaPem(""), "");
 });

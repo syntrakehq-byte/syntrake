@@ -3,6 +3,7 @@ import { Pool } from "pg";
 import type { NewsPublicationRevision } from "./contracts";
 import { NewsConsumptionApiV1 } from "./n5Api";
 import { PostgresNewsStore } from "./postgresStore";
+import { normalizeNewsTlsCaPem } from "./databaseTls";
 
 export type SiteNewsRecordV1 = Readonly<{
   sourceId: string;
@@ -78,7 +79,8 @@ export type SiteNewsN5Config = Readonly<{
  * are never accepted by this API and must not be used for site rendering.
  */
 export async function readNewsN5ForSite(config: SiteNewsN5Config): Promise<readonly SiteNewsRecordV1[]> {
-  const { connectionString, tlsCaPem, sourceIds } = config;
+  const { connectionString, sourceIds } = config;
+  const tlsCaPem = normalizeNewsTlsCaPem(config.tlsCaPem);
   if (!connectionString || !tlsCaPem.includes("BEGIN CERTIFICATE") || !tlsCaPem.includes("END CERTIFICATE")) {
     throw new Error("NEWS_SITE_N5_NOT_CONFIGURED");
   }
@@ -96,6 +98,7 @@ export async function readNewsN5ForSite(config: SiteNewsN5Config): Promise<reado
     max: 2, connectionTimeoutMillis: 6000, idleTimeoutMillis: 4000,
     statement_timeout: 9000, application_name: "syntrake-news-site-reader",
   });
+  let stage = "CONNECT_AND_IDENTITY";
   try {
     const identity = await pool.query<NewsSiteReaderIdentityV1>(
       "select current_user as role_name, session_user as login_name, r.rolsuper, r.rolbypassrls, r.rolcreaterole, r.rolcreatedb, " +
@@ -103,7 +106,9 @@ export async function readNewsN5ForSite(config: SiteNewsN5Config): Promise<reado
       "where p.rolname in ('news_service', 'news_pipeline_verifier', 'news_factual_attestor', 'news_factual_writer')),false) as has_writer_membership " +
       "from pg_roles r where r.rolname=session_user",
     );
+    stage = "IDENTITY_VALIDATION";
     assertNewsSiteReadRole(identity.rows[0]);
+    stage = "N5_READ";
     const secret = randomBytes(24).toString("hex");
     const n5 = new NewsConsumptionApiV1(
       { news: new PostgresNewsStore(pool), factual: {} as never },
@@ -114,7 +119,11 @@ export async function readNewsN5ForSite(config: SiteNewsN5Config): Promise<reado
     });
     if (result.status !== "AVAILABLE") throw new Error("NEWS_SITE_N5_UNAVAILABLE");
     return mapNewsN5ForSite(result.data, sourceIds);
-  } catch {
+  } catch (error) {
+    const code = (error as { code?: unknown })?.code;
+    // Never log a connection string, username, credential or raw error message.
+    const safeCode = typeof code === "string" && /^[A-Z0-9_]{3,48}$/.test(code) ? code : "UNAVAILABLE";
+    console.error("[NEWS_SITE_N5]", { stage, code: safeCode });
     throw new Error("NEWS_SITE_N5_UNAVAILABLE");
   } finally {
     await pool.end();

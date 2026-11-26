@@ -1,4 +1,5 @@
 import { Pool } from "pg";
+import { normalizeNewsTlsCaPem } from "./databaseTls";
 import { readNewsForAnalysisV1, type AnalysisNewsInputV1 } from "./analysisNewsConsumer";
 import type { NewsConsumerKindV1 } from "./consumerContracts";
 import { GlobalNewsApiV1 } from "./globalNewsApi";
@@ -16,7 +17,7 @@ export function resolveEngineNewsReaderV1(consumer: NewsConsumerKindV1, env: Nod
   const prefix = consumer + "_NEWS_";
   const connection = env[prefix + "READER_DATABASE_URL"] ?? "";
   const other = env[(consumer === "INVESTING" ? "TRADING" : "INVESTING") + "_NEWS_READER_DATABASE_URL"];
-  const ca = env.NEWS_READER_CA_PEM ?? "";
+  const ca = normalizeNewsTlsCaPem(env.NEWS_READER_CA_PEM ?? "");
   const cursorSecret = env[prefix + "CURSOR_SECRET"] ?? "";
   const credential = env[prefix + "SERVICE_CREDENTIAL"] ?? "";
   if (!connection || !ca.includes("BEGIN CERTIFICATE") || !ca.includes("END CERTIFICATE") ||

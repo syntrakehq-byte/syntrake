@@ -138,6 +138,7 @@ async function getStreams(): Promise<Stream[]> {
         return { sourceId: source.sourceId, publisher: source.publisher, count: items.length, ok: true, items };
       });
     } catch {
+      console.error("[NEWS_SITE_N5] persistent history unavailable");
       return SOURCE_REGISTRY.map(source => ({ sourceId: source.sourceId, publisher: source.publisher, count: 0, ok: false, items: [] }));
     }
   }
