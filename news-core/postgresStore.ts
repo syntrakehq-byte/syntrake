@@ -71,6 +71,13 @@ function entityCandidateId(linkRevisionId: string, candidateRef: string): string
 }
 
 export class PostgresNewsStore {
+  /** The finalization guard is finite and measured on the preview database.
+   * Global feeds can contain dozens of items, so keep each atomic
+   * visibility frontier small. Every chunk repeats the same cursor/watermark;
+   * a retry therefore remains idempotent and never advances past uncommitted
+   * content. */
+  static readonly GLOBAL_INGEST_BATCH_SIZE = 10;
+
   constructor(private readonly pool: Pool) {}
   async close(): Promise<void> { await this.pool.end(); }
 
@@ -257,7 +264,20 @@ export class PostgresNewsStore {
   }
   async ingestGlobalBatch(source: GlobalNewsRegistryEntry, items: readonly GlobalNewsItem[], options: IngestOptions = {}): Promise<{ insertedPublications: number; insertedObservations: number }> {
     await this.ensureGlobalSource(source);
-    return this.ingestAdministrative(globalItemsToNewsBatch(source, items), options);
+    const ordered = [...items].sort((left, right) => left.externalId.localeCompare(right.externalId));
+    const chunks: readonly GlobalNewsItem[][] = ordered.length === 0 ? [[]] : Array.from(
+      { length: Math.ceil(ordered.length / PostgresNewsStore.GLOBAL_INGEST_BATCH_SIZE) },
+      (_, index) => ordered.slice(index * PostgresNewsStore.GLOBAL_INGEST_BATCH_SIZE, (index + 1) * PostgresNewsStore.GLOBAL_INGEST_BATCH_SIZE),
+    );
+    let insertedPublications = 0;
+    let insertedObservations = 0;
+    for (const chunk of chunks) {
+      const batch = globalItemsToNewsBatch(source, chunk);
+      const result = options.lease ? await this.ingest(batch, { ...options, lease: options.lease }) : await this.ingestAdministrative(batch, options);
+      insertedPublications += result.insertedPublications;
+      insertedObservations += result.insertedObservations;
+    }
+    return { insertedPublications, insertedObservations };
   }
   async recordGlobalOperationalState(state: GlobalOperationalState): Promise<void> {
     const installed = (await this.pool.query<{ installed: boolean }>("select to_regclass('news_core.global_operational_state') is not null installed")).rows[0]?.installed;
@@ -335,6 +355,32 @@ export class PostgresNewsStore {
   }
 
   async reconcileFactualBacklog(limit = 1000, publicationIds?: readonly string[]): Promise<number> {
+    // Older atomic handoffs captured a pre-finalization payload. Recover only
+    // the precise erroneous terminal refusal; leave other decisions untouched.
+    const repaired = await this.pool.query(
+      `with recoverable as (
+         select b.publication_id
+           from news_core.factual_pipeline_backlog b
+           join news_core.publications p on p.publication_id=b.publication_id
+          where b.state='DONE' and b.completed_status='REFUSED'
+            and ((b.last_error='N2_PUBLICATION_AS_KNOWN_AT_UNAVAILABLE' and b.publication_payload->>'asKnownAt' is null)
+              or (b.last_error='N3A_NO_CONTROLLED_RULE_MATCH'
+                and p.source_id in ('us-fed-press','eu-ecb-press','uk-boe-news','us-sec-press','us-bls-latest','ca-boc-press','au-rba-press')
+                and exists (select 1 from news_core.publication_revisions pr
+                  where pr.publication_id=p.publication_id and pr.visibility_state='COMMITTED'
+                    and pr.revision_no=(select max(r.revision_no) from news_core.publication_revisions r where r.publication_id=p.publication_id and r.visibility_state='COMMITTED')
+                    and pr.content_excerpt ~* '(cookies?|toggle search|search the site|skip to main content|subscribe to|privacy preferences|enable javascript)')))
+            and p.visibility_state='COMMITTED' and p.as_known_at <= clock_timestamp()
+            and ($2::text[] is null or b.publication_id=any($2::text[]))
+          order by b.created_at,b.publication_id
+          for update of b skip locked limit $1
+       )
+       update news_core.factual_pipeline_backlog b
+          set state='PENDING',completed_status=null,completed_at=null,
+              next_attempt_at=clock_timestamp(),updated_at=clock_timestamp()
+         from recoverable r where b.publication_id=r.publication_id`,
+      [Math.max(1, Math.min(limit, 10000)), publicationIds?.length ? publicationIds : null],
+    );
     const result = await this.pool.query(
       `insert into news_core.factual_pipeline_backlog(publication_id,publication_payload)
        select p.publication_id, jsonb_build_object(
@@ -348,23 +394,28 @@ export class PostgresNewsStore {
           and ($2::text[] is null or p.publication_id = any($2::text[]))
         order by p.as_known_at,p.publication_id limit $1 on conflict do nothing`, [Math.max(1, Math.min(limit, 10000)), publicationIds?.length ? publicationIds : null],
     );
-    return result.rowCount ?? 0;
+    return (result.rowCount ?? 0) + (repaired.rowCount ?? 0);
   }
 
   async claimFactualBacklog(limit: number, owner: string, leaseSeconds = 600, publicationIds?: readonly string[]): Promise<FactualBacklogClaim[]> {
     const result = await this.pool.query<{ publication_payload: NewsPublication; claim_token: string }>(
       `with candidates as (
-         select b.publication_id from news_core.factual_pipeline_backlog b
-          join news_core.publications p on p.publication_id=b.publication_id
-         where p.visibility_state='COMMITTED' and p.as_known_at is not null
+         select b.publication_id, jsonb_build_object(
+           'publicationId',p.publication_id,'sourceId',p.source_id,'originFingerprint',p.origin_fingerprint,
+           'externalId',p.external_id,'originalUrl',p.original_url,'title',p.title,'publishedAt',p.published_at,
+           'firstSeenAt',p.first_seen_at,'ingestedAt',p.ingested_at,'asKnownAt',p.as_known_at,'form',p.form,
+           'contentExcerpt',p.content_excerpt) as committed_payload
+           from news_core.factual_pipeline_backlog b
+           join news_core.publications p on p.publication_id=b.publication_id
+          where p.visibility_state='COMMITTED' and p.as_known_at <= clock_timestamp()
            and ((b.state='PENDING' and b.next_attempt_at <= clock_timestamp())
              or (b.state='PROCESSING' and b.lease_until < clock_timestamp()))
            and ($4::text[] is null or b.publication_id = any($4::text[]))
           order by b.next_attempt_at, b.created_at, b.publication_id
-          for update skip locked limit $1
+          for update of b skip locked limit $1
        )
        update news_core.factual_pipeline_backlog b
-          set state='PROCESSING', attempts=b.attempts+1,
+          set state='PROCESSING', attempts=b.attempts+1, publication_payload=c.committed_payload,
               lease_until=clock_timestamp()+($2::int * interval '1 second'),
               claim_owner=$3, claim_token=gen_random_uuid(),
               last_error=null, updated_at=clock_timestamp()
@@ -391,7 +442,7 @@ export class PostgresNewsStore {
               next_attempt_at=clock_timestamp()+least(300, power(2, least(attempts, 8))) * interval '1 second',
               last_error=$4, updated_at=clock_timestamp()
         where publication_id=$1 and state='PROCESSING' and claim_owner=$2 and claim_token=$3::uuid and lease_until > clock_timestamp()`,
-      [publicationId, owner, claimToken, error instanceof Error ? error.message.slice(0, 1000) : "NEWS_FACTUAL_RETRYABLE_FAILURE"],
+      [publicationId, owner, claimToken, error instanceof Error ? error.message.slice(0, 1000) : typeof error === "string" && /^[A-Z0-9_]{3,100}$/.test(error) ? error : "NEWS_FACTUAL_RETRYABLE_FAILURE"],
     );
     return (result.rowCount ?? 0) === 1 ? "REQUEUED" : "STALE";
   }
@@ -739,6 +790,18 @@ export class PostgresNewsStore {
     }));
   }
 
+  /** Reads one just-committed revision by identity after an append. This is
+   * used only to continue the same durable transaction hand-off; consumers
+   * still use the PIT APIs above. */
+  async readPublicationRevisionById(publicationRevisionId: string): Promise<NewsPublicationRevision | null> {
+    const result = await this.pool.query<NewsPublicationRevision>(
+      "select publication_revision_id as \"publicationRevisionId\", publication_id as \"publicationId\", revision_no as \"revisionNo\", title, published_at as \"publishedAt\", form, content_fingerprint as \"contentFingerprint\", content_excerpt as \"contentExcerpt\", source_document_ref as \"sourceDocumentRef\", quality_flags as \"qualityFlags\", supersedes_revision_id as \"supersedesRevisionId\", ingested_at as \"ingestedAt\", as_known_at as \"asKnownAt\" from news_core.publication_revisions where publication_revision_id=$1 and visibility_state='COMMITTED'",
+      [publicationRevisionId],
+    );
+    const row = result.rows[0];
+    return row ? { ...row, publishedAt: optionalIso(row.publishedAt), ingestedAt: optionalIso(row.ingestedAt), asKnownAt: optionalIso(row.asKnownAt), qualityFlags: flags(row.qualityFlags) } : null;
+  }
+
   async readPublicationRevisionsFilteredAsOf(asOf: string, query: string | null, sourceIds: readonly string[], forms: readonly string[]): Promise<NewsPublicationRevision[]> {
     const result = await this.pool.query<NewsPublicationRevision>("select * from news_core.read_publication_revisions_filtered_as_of($1::timestamptz,$2::text,$3::text[],$4::text[])", [asOf, query, sourceIds, forms]);
     return result.rows.map(row => ({ ...row, publishedAt: optionalIso(row.publishedAt), ingestedAt: optionalIso(row.ingestedAt), asKnownAt: optionalIso(row.asKnownAt), qualityFlags: flags(row.qualityFlags) }));
@@ -864,7 +927,7 @@ export class PostgresNewsStore {
       if (failurePoint === "after-execution-update") throw new Error("INJECTED_FAILURE_DURING_FINISH");
       const target = await client.query(
         `update news_core.collection_targets set lease_owner=null,lease_until=null,active_execution_id=null,
-         next_run_at=clock_timestamp()+(case when $1 then interval '60 seconds' else least(interval '1 hour',interval '5 seconds' * greatest(consecutive_failures+1,1)) end),
+         next_run_at=clock_timestamp()+(case when $1 then make_interval(secs => greatest(60,least(86400,coalesce((parameters->>'minIntervalSeconds')::integer,60)))) else least(interval '1 hour',interval '5 seconds' * greatest(consecutive_failures+1,1)) end),
          consecutive_failures=case when $1 then 0 else consecutive_failures+1 end,
          last_success_at=case when $1 then clock_timestamp() else last_success_at end,last_error_at=case when $1 then last_error_at else clock_timestamp() end,
          last_error=case when $1 then null else $2 end,updated_at=clock_timestamp()

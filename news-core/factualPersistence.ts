@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import type { Pool, PoolClient } from "pg";
-import type { ClassificationProposalV1 } from "./factualClassification";
+import type { Pool } from "pg";
+import { isGlobalAnalysisFactRelevantV1, type ClassificationProposalV1 } from "./factualClassification";
 import { claimKeyV1, DeterministicEvidenceCorroboratorV1, type CorroborationInputV1, type CorroborationResultV1 } from "./evidenceCorroboration";
 
 export type FactualDependencyV1 = Readonly<{ dependencyType: "N2_PUBLICATION_REVISION" | "N3A_PROPOSAL" | "N3B_EVALUATION" | "FACT_REVISION"; dependencyRef: string; asKnownAt: string }>;
@@ -16,7 +16,7 @@ export const factualLogicalFingerprintV1 = (input: PersistFactualInputV1): strin
 const instant = (value: string): number => { const result = Date.parse(value); if (!Number.isFinite(result)) throw new Error("NEWS_FACT_TIMESTAMP_INVALID"); return result; };
 
 export class PostgresFactualStore {
-  constructor(private readonly pool: Pool, private readonly databaseRole: "news_factual_writer" | "news_service" | "news_reader" = "news_factual_writer") {}
+  constructor(private readonly pool: Pool, private readonly databaseRole: "news_factual_writer" | "news_service" | "news_reader" = "news_factual_writer", private readonly analysisEvidenceGate = false) {}
   async close(): Promise<void> { await this.pool.end(); }
   private async publishRevision(revisionId: string, attestationId: string): Promise<void> {
     const client = await this.pool.connect();
@@ -33,13 +33,23 @@ export class PostgresFactualStore {
       await visible.query("select * from news_core.make_fact_revision_visible_v1($1,$2)", [revisionId, attestationId]);
       await visible.query("commit");
     } catch (error) { await visible.query("rollback").catch(() => undefined); throw error; } finally { visible.release(); }
-    const materializer = await this.pool.connect();
-    try {
-      await materializer.query("begin");
-      await materializer.query(`set local role ${this.databaseRole}`);
-      await materializer.query("select * from news_core.materialize_fact_revision_visibility_v1($1)", [revisionId]);
-      await materializer.query("commit");
-    } catch (error) { await materializer.query("rollback").catch(() => undefined); throw error; } finally { materializer.release(); }
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const materializer = await this.pool.connect();
+      try {
+        await materializer.query("begin");
+        await materializer.query(`set local role ${this.databaseRole}`);
+        await materializer.query("select * from news_core.materialize_fact_revision_visibility_v1($1)", [revisionId]);
+        await materializer.query("commit");
+        return;
+      } catch (error) {
+        lastError = error;
+        await materializer.query("rollback").catch(() => undefined);
+        if (!(error instanceof Error) || !/NEWS_PIT_COMMIT_TIMESTAMP_UNAVAILABLE|NEWS_PIT_VISIBILITY_UNPROVEN/.test(error.message) || attempt === 3) throw error;
+        await new Promise(resolve => setTimeout(resolve, 100 * (attempt + 1)));
+      } finally { materializer.release(); }
+    }
+    throw lastError instanceof Error ? lastError : new Error("NEWS_PIT_MATERIALIZATION_FAILED");
   }
 
   async persist(input: PersistFactualInputV1, failurePoint: "none" | "before-commit" | "after-commit" = "none", holdBeforeCommitMs = 0): Promise<PersistFactualResultV1> {
@@ -118,7 +128,23 @@ export class PostgresFactualStore {
 
   async readFilteredAsOf(asOf: string, targets: readonly string[], eventTypes: readonly string[], from: string | null, to: string | null): Promise<FactAsOfRowV1[]> {
     const client = await this.pool.connect();
-    try { await client.query("begin"); if (this.databaseRole) await client.query(`set local role ${this.databaseRole}`); const result = await client.query<FactAsOfRowV1>("select * from news_core.read_fact_revisions_filtered_as_of($1,$2::text[],$3::text[],$4::timestamptz,$5::timestamptz)", [asOf, targets, eventTypes, from, to]); await client.query("commit"); return result.rows; }
+    try { await client.query("begin"); if (this.databaseRole) await client.query(`set local role ${this.databaseRole}`); const result = await client.query<FactAsOfRowV1 & { analysis_evidence_eligible?: boolean }>(
+      this.analysisEvidenceGate ? `with facts as materialized (
+        select * from news_core.read_fact_revisions_filtered_as_of($1,$2::text[],$3::text[],$4::timestamptz,$5::timestamptz)
+      ), official_body as materialized (
+        select "publicationRevisionId" from news_core.read_publication_revisions_as_of($1,null)
+        where "qualityFlags" @> '["OFFICIAL_DOCUMENT_BODY_V1"]'::jsonb
+      )
+      select f.*, case when f."factEventId" not like 'global:%' then true else exists (
+        select 1 from news_core.read_fact_evidence_as_of($1,f."factRevisionId") e
+        join official_body b on b."publicationRevisionId"=e."publicationRevisionId"
+        where e."evidenceKind"='N3A_PROPOSAL'
+      ) end as analysis_evidence_eligible from facts f order by f."factEventId"`
+      : "select * from news_core.read_fact_revisions_filtered_as_of($1,$2::text[],$3::text[],$4::timestamptz,$5::timestamptz)", [asOf, targets, eventTypes, from, to]);
+      await client.query("commit");
+      return result.rows.filter(row => !this.analysisEvidenceGate || (row.analysis_evidence_eligible === true &&
+        (!row.factEventId.startsWith("global:") || isGlobalAnalysisFactRelevantV1(row.category,row.statement))))
+        .map(({ analysis_evidence_eligible: _eligible, ...row }) => row); }
     catch (error) { await client.query("rollback").catch(() => undefined); throw error; } finally { client.release(); }
   }
 

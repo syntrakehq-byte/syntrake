@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DeterministicFactClassifierV1, excerptHashV1, type ClassificationInputV1 } from "../factualClassification";
+import { selectOfficialFactExcerptV1, isOfficialBodyExcerptV1 } from "../factualPipeline";
+import { DeterministicFactClassifierV1, excerptHashV1, isGlobalAnalysisFactRelevantV1, type ClassificationInputV1 } from "../factualClassification";
 
 const base = (excerpt: string | null, overrides: Partial<ClassificationInputV1> = {}): ClassificationInputV1 => {
   const revision = { publicationRevisionId: "rev-1", publicationId: "pub-1", revisionNo: 1, title: "Headline only", form: "8-K", sourceDocumentRef: "https://www.sec.gov/Archives/edgar/data/1/8-k.htm", contentFingerprint: excerpt ? excerptHashV1(excerpt) : null, publishedAt: null, ingestedAt: "2026-11-12T10:00:00.000Z", asKnownAt: "2026-11-12T10:01:00.000Z", qualityFlags: [], visibilityState: "COMMITTED" as const };
@@ -33,3 +34,23 @@ test("temporal fields without a binding stay null and do not leak to other claim
 test("two future claims receive only their explicitly bound dates", () => { const first = base("The company plans to acquire Target A.").evidence[0]; const second = { ...base("The company plans to acquire Target B.").evidence[0], evidenceId: "ev-2" }; const dateA = { ...base(null).evidence[0], evidenceId: "date-a", contentLocator: "field:scheduledForA", structuredField: "scheduledFor", structuredValue: "2027-01-01T00:00:00.000Z", structuredAuthority: "SOURCE_ASSERTED" as const, temporalBinding: { evidenceId: "ev-1", contentLocator: first.contentLocator, statementHash: excerptHashV1("The company plans to acquire Target A.") } }; const dateB = { ...dateA, evidenceId: "date-b", contentLocator: "field:scheduledForB", structuredValue: "2027-02-01T00:00:00.000Z", temporalBinding: { evidenceId: "ev-2", contentLocator: second.contentLocator, statementHash: excerptHashV1("The company plans to acquire Target B.") } }; const result = new DeterministicFactClassifierV1().classify({ ...base(null), evidence: [first, second, dateA, dateB] }); assert.equal(result.proposals.length, 2); assert.equal(result.proposals[0].scheduledFor, "2027-01-01T00:00:00.000Z"); assert.equal(result.proposals[1].scheduledFor, "2027-02-01T00:00:00.000Z"); assert.deepEqual(result.proposals[0].evidenceIds, ["ev-1", "date-a"]); assert.deepEqual(result.proposals[1].evidenceIds, ["ev-2", "date-b"]); });
 test("invalid temporal binding is rejected", () => { const input = base("The company announced a dividend.", { evidence: [...base("The company announced a dividend.").evidence, { evidenceId: "ev-date", publicationRevisionId: "rev-1", kind: "STRUCTURED_FIELD", sourceDocumentRef: "https://www.sec.gov/Archives/edgar/data/1/8-k.htm", contentLocator: "field:occurredAt", excerpt: null, excerptHash: null, hashSemantics: "LOCAL_CONTENT_HASH_ONLY" as const, structuredField: "occurredAt", structuredValue: "2026-11-11T00:00:00.000Z", structuredAuthority: "SOURCE_ASSERTED" as const, temporalBinding: { evidenceId: "missing", contentLocator: null, statementHash: "" }, observedAt: "2026-11-12T10:00:00.000Z", retrievedAt: "2026-11-12T10:00:30.000Z", asKnownAt: "2026-11-12T10:01:00.000Z", provenanceRef: "prov-1" }] }); assert.throws(() => new DeterministicFactClassifierV1().classify(input), /TEMPORAL_BINDING_INVALID/); });
 const classifier = () => new DeterministicFactClassifierV1();
+
+test("official policy decisions use article paragraphs, not page titles or navigation", () => {
+  const title = "Bank Rate increased to 4%";
+  const body = "The Monetary Policy Committee voted to increase Bank Rate by 0.25 percentage points, to 4%.";
+  const html = '<head><title>' + title + '</title></head><nav><p>Subscribe to news. The central bank maintained the policy rate.</p></nav><main><h1>' + title + '</h1><p>Our use of cookies makes the site work.</p><p>' + body + '</p></main>';
+  assert.equal(selectOfficialFactExcerptV1(html, title), body);
+  assert.equal(selectOfficialFactExcerptV1("<h1>" + title + "</h1><p>" + title + "</p>", title), undefined);
+  assert.equal(isOfficialBodyExcerptV1("Subscribe to news. The bank maintained the policy rate.", title), false);
+  assert.equal(new DeterministicFactClassifierV1().classify(base(body)).proposals[0]?.category, "CENTRAL_BANK_DECISION");
+  assert.equal(new DeterministicFactClassifierV1().classify(base("The Bank did not increase Bank Rate.")).proposals[0]?.claimType, "DENIAL");
+  assert.equal(new DeterministicFactClassifierV1().classify(base("The Bank maintained its target for the overnight rate at 2.25%.")).proposals[0]?.category, "CENTRAL_BANK_DECISION");
+});
+
+test("global analysis relevance excludes meeting minutes, navigation and settlement plumbing", () => {
+  assert.equal(isGlobalAnalysisFactRelevantV1("LEGAL_REGULATORY", "The minutes of the meeting were approved."), false);
+  assert.equal(isGlobalAnalysisFactRelevantV1("LEGAL_REGULATORY", "There was no material change in cleared repo conditions."), false);
+  assert.equal(isGlobalAnalysisFactRelevantV1("LEGAL_REGULATORY", "The regulator announced revised consumer credit requirements."), true);
+  assert.equal(isGlobalAnalysisFactRelevantV1("CENTRAL_BANK_DECISION", "The Committee voted to increase Bank Rate to 4%."), true);
+  assert.equal(isGlobalAnalysisFactRelevantV1("CENTRAL_BANK_DECISION", "Subscribe to news. The Committee voted to increase Bank Rate to 4%."), false);
+});

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Pool } from "pg";
-import { fetchSafeExternal } from "./sourceSecurity";
-import { DeterministicFactClassifierV1, excerptHashV1, type ClassificationInputV1 } from "./factualClassification";
+import { fetchSafeExternal, fetchSafeExternalFromAllowedHosts } from "./sourceSecurity";
+import { DeterministicFactClassifierV1, excerptHashV1, factRuleCategoriesV1, isGlobalAnalysisFactRelevantV1, type ClassificationInputV1 } from "./factualClassification";
 import { claimKeyV1, DeterministicEvidenceCorroboratorV1, type CorroborationInputV1 } from "./evidenceCorroboration";
 import { factualLogicalFingerprintV1, PostgresFactualStore, type PersistFactualInputV1 } from "./factualPersistence";
 import { PostgresNewsStore } from "./postgresStore";
@@ -39,8 +39,59 @@ export function selectGlobalRevisionAtKnownAtV1(revisions: readonly NewsPublicat
 }
 
 const sha256 = (value: string): string => createHash("sha256").update(value, "utf8").digest("hex");
-const stripDocument = (html: string): string => html.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/\s+/g, " ").trim();
-const controlledExcerpt = (text: string): string | undefined => text.split(/(?<=[.!?])\s+/).map(value => value.trim()).find(value => value.length >= 20 && value.length <= 1200 && /(?:\b(?:declares?|declared|announces?|announced)\b.{0,100}\bdividend\b|\b(?:reports?|reported|announces?|announced)\b.{0,100}\b(?:earnings|revenue|net income|profit|loss)\b|\b(?:was|were|is|are|has|have|had|received|fined|sanctioned|charged|sued|settled|convicted|approved|cleared|ordered)\b.{0,80}\b(?:fine|fined|sanction|sanctioned|charge|charged|lawsuit|sued|settlement|settled|convicted|approved|cleared|order|ordered)\b|\b(?:signed|declared|announced|imposed|lifted|entered|occurred|began|continued|reported)\b.{0,80}\b(?:ceasefire|sanctions?|invasion|military operation|armed conflict|treaty)\b)/i.test(value));
+const stripDocument = (html: string): string => html
+  .replace(/<!--[\s\S]*?-->/g, " ")
+  .replace(/<!--[\s\S]*$/g, " ")
+  .replace(/-->/g, " ")
+  .replace(/<script[\s\S]*?<\/script>/gi, " ")
+  .replace(/<style[\s\S]*?<\/style>/gi, " ")
+  .replace(/<[^>]+>/g, " ")
+  .replace(/&nbsp;/gi, " ")
+  .replace(/&amp;/gi, "&")
+  .replace(/&quot;/gi, '"')
+  .replace(/&#39;/gi, "'")
+  .replace(/&lt;/gi, "<")
+  .replace(/&gt;/gi, ">")
+  .replace(/\s+/g, " ")
+  .trim();
+const controlledExcerpt = (text: string): string | undefined => text.split(/(?<=[.!?])\s+/).map(value => value.trim()).find(value => value.length >= 20 && value.length <= 1200 && /(?:\b(?:declares?|declared|announces?|announced)\b.{0,100}\bdividend\b|\b(?:reports?|reported|announces?|announced)\b.{0,100}\b(?:earnings|revenue|net income|profit|loss)\b|\b(?:was|were|is|are|has|have|had|received|fined|sanctioned|charged|sued|settled|convicted|approved|cleared|ordered)\b.{0,80}\b(?:fine|fined|sanction|sanctioned|charge|charged|lawsuit|sued|settlement|settled|convicted|approved|cleared|order|ordered)\b|\b(?:signed|declared|announced|imposed|lifted|entered|occurred|began|continued|reported)\b.{0,80}\b(?:ceasefire|sanctions?|invasion|military operation|armed conflict|treaty)\b|\b(?:raised|lowered|held|maintained|set|increased|decreased)\b.{0,100}\b(?:interest|policy|funds?|rate|rates|threshold|inflation|unemployment|GDP|gross domestic product|CPI|consumer price)\b|\b(?:released?|published?)\b.{0,100}\b(?:economic|employment|inflation|unemployment|GDP|CPI|price)\b|\b(?:today\s+)?(?:announced|reported|released|published)\b.{0,200}\b(?:threshold|CPI|inflation|employment|unemployment|GDP|rate|rates|price index)\b|\b(?:increase|decrease|rise|fall|change)\b.{0,100}\b(?:threshold|CPI|inflation|employment|unemployment|GDP|rate|rates|price index)\b)/i.test(value));
+// An official headline or site navigation is not a document excerpt.
+export function isOfficialBodyExcerptV1(value: string, title: string): boolean {
+  const clean = value.replace(/\s+/g, " ").trim();
+  const normalizedTitle = title.replace(/\s+/g, " ").trim();
+  return clean.length >= 20 && clean.length <= 1200 &&
+    clean.toLowerCase() !== normalizedTitle.toLowerCase() &&
+    !/\b(?:cookies?|toggle search|search the site|skip to main content|subscribe to|privacy preferences|our use of cookies|enable javascript)\b/i.test(clean) &&
+    factRuleCategoriesV1(clean).some(category => isGlobalAnalysisFactRelevantV1(category, clean));
+}
+export function selectOfficialFactExcerptV1(html: string, title: string): string | undefined {
+  const cleaned = html.replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<(head|header|nav|footer|aside|script|style|noscript)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, " ");
+  const main = /<main\b[^>]*>([\s\S]*?)<\/main\s*>/i.exec(cleaned)?.[1];
+  const article = /<article\b[^>]*>([\s\S]*?)<\/article\s*>/i.exec(cleaned)?.[1];
+  const regions = [...new Set([main, article, cleaned].filter((x): x is string => Boolean(x)))];
+  for (const region of regions) {
+    const candidates = [...region.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p\s*>/gi)]
+      .flatMap(match => stripDocument(match[1]).split(/(?<=[.!?])\s+/))
+      .map(value => value.trim()).filter(value => isOfficialBodyExcerptV1(value, title));
+    if (/\b(?:bank rate|policy rate|interest rate|overnight rate|cash rate|federal funds rate)\b/i.test(title)) {
+      const rate = candidates.find(value => factRuleCategoriesV1(value).includes("CENTRAL_BANK_DECISION"));
+      if (rate) return rate;
+    }
+    if (candidates.length) return candidates[0];
+  }
+  return undefined;
+}
+const OFFICIAL_PRIMARY_SOURCES = new Set(["eu-ecb-press", "uk-boe-news", "us-sec-press", "ca-boc-press", "au-rba-press", "us-bls-latest", "us-fed-press"]);
+const OFFICIAL_DOCUMENT_HOSTS: Readonly<Record<string, ReadonlySet<string>>> = {
+  "eu-ecb-press": new Set(["www.ecb.europa.eu", "ecb.europa.eu"]),
+  "uk-boe-news": new Set(["www.bankofengland.co.uk", "bankofengland.co.uk"]),
+  "us-sec-press": new Set(["www.sec.gov", "sec.gov"]),
+  "ca-boc-press": new Set(["www.bankofcanada.ca", "bankofcanada.ca"]),
+  "au-rba-press": new Set(["www.rba.gov.au", "rba.gov.au"]),
+  "us-bls-latest": new Set(["www.bls.gov", "bls.gov"]),
+  "us-fed-press": new Set(["www.federalreserve.gov", "federalreserve.gov"]),
+};
 
 export class NewsFactualPipelineV1 {
   readonly maxDocuments: number;
@@ -74,13 +125,51 @@ export class NewsFactualPipelineV1 {
    * as SEC and never upgrades a global publication beyond REPORTED. */
   private async processGlobalOne(publication: NewsPublication, signal?: AbortSignal, assertActive?: () => void): Promise<FactualPipelineOutcomeV1> {
     const canonicalClaimId = `global:${publication.sourceId}:${publication.externalId}`;
-    const excerpt = publication.contentExcerpt?.trim();
-    if (!publication.asKnownAt) return { publicationId: publication.publicationId, canonicalClaimId, status: "REFUSED", reason: "N2_PUBLICATION_AS_KNOWN_AT_UNAVAILABLE" };
-    if (!excerpt) return { publicationId: publication.publicationId, canonicalClaimId, status: "REFUSED", reason: "N3A_FACTUAL_EXCERPT_UNAVAILABLE" };
-    const revisions = await this.options.news.readPublicationRevisionsAsOf(publication.asKnownAt, publication.publicationId);
-    const revision = selectGlobalRevisionAtKnownAtV1(revisions, publication.asKnownAt);
-    if (!revision?.asKnownAt || !revision.ingestedAt) return { publicationId: publication.publicationId, canonicalClaimId, status: "REFUSED", reason: "N2_PUBLICATION_REVISION_UNAVAILABLE" };
-    const revisionExcerpt = revision.contentExcerpt?.trim();
+    const documentCutoff = new Date().toISOString();
+    if (!publication.asKnownAt || !Number.isFinite(Date.parse(publication.asKnownAt)) || Date.parse(publication.asKnownAt) > Date.parse(documentCutoff)) {
+      return { publicationId: publication.publicationId, canonicalClaimId, status: "FAILED_RETRYABLE", reason: "N2_PUBLICATION_AS_KNOWN_AT_UNAVAILABLE" };
+    }
+    const revisions = await this.options.news.readPublicationRevisionsAsOf(documentCutoff, publication.publicationId);
+    let revision = selectGlobalRevisionAtKnownAtV1(revisions, documentCutoff);
+    if (!revision?.asKnownAt || !revision.ingestedAt) return { publicationId: publication.publicationId, canonicalClaimId, status: "FAILED_RETRYABLE", reason: "N2_PUBLICATION_REVISION_UNAVAILABLE" };
+    let revisionExcerpt = revision.contentExcerpt?.trim();
+    if (OFFICIAL_PRIMARY_SOURCES.has(publication.sourceId) &&
+        (!revisionExcerpt || !revision.qualityFlags.includes("OFFICIAL_DOCUMENT_FETCHED") ||
+          !isOfficialBodyExcerptV1(revisionExcerpt, publication.title))) {
+      revisionExcerpt = undefined;
+      const allowedHosts = OFFICIAL_DOCUMENT_HOSTS[publication.sourceId];
+      if (!allowedHosts) return { publicationId: publication.publicationId, canonicalClaimId, status: "REFUSED", reason: "N3A_OFFICIAL_DOCUMENT_HOST_UNREGISTERED" };
+      const response = await fetchSafeExternalFromAllowedHosts(publication.originalUrl, allowedHosts, { headers: { "User-Agent": this.options.userAgent, Accept: "text/html,application/xhtml+xml" }, signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(12_000)]) : AbortSignal.timeout(12_000) });
+      if (!response.ok) return { publicationId: publication.publicationId, canonicalClaimId, status: "FAILED_RETRYABLE", reason: "NEWS_FACTUAL_FETCH_RETRYABLE_HTTP_" + response.status };
+      if (response.ok) {
+        const body = await response.text();
+        const documentExcerpt = selectOfficialFactExcerptV1(body, publication.title);
+        if (documentExcerpt) {
+          const documentFingerprint = sha256(body);
+          // A publisher may change harmless HTML chrome on every request. The
+          // durable factual unit is the controlled excerpt; do not create a
+          // new revision merely because an otherwise identical document hash
+          // changed outside that excerpt.
+          if (revision.contentExcerpt !== documentExcerpt) {
+            const nextRevisionNo = revision.revisionNo + 1;
+            const revisionId = `${publication.publicationId}:revision:${nextRevisionNo}`;
+            await this.options.news.ingestPublicationRevision({
+              revision: { publicationRevisionId: revisionId, publicationId: publication.publicationId, revisionNo: nextRevisionNo, title: publication.title, publishedAt: publication.publishedAt, form: publication.form, contentFingerprint: documentFingerprint, contentExcerpt: documentExcerpt, sourceDocumentRef: publication.originalUrl, qualityFlags: [...new Set([...revision.qualityFlags, "OFFICIAL_DOCUMENT_FETCHED", "OFFICIAL_DOCUMENT_BODY_V1"])], supersedesRevisionId: revision.publicationRevisionId },
+              provenance: { provenanceId: `${publication.publicationId}:provenance:${nextRevisionNo}`, publicationRevisionId: revisionId, sourceId: publication.sourceId, providerKey: `global-${publication.sourceId}`, providerObservationKey: `${publication.sourceId}:${publication.externalId}:document`, originalUrl: publication.originalUrl, sourceDocumentRef: publication.originalUrl, retrievedAt: new Date().toISOString(), qualityFlags: ["OFFICIAL_DOCUMENT_FETCHED"] },
+            });
+            let committedRevision = await this.options.news.readPublicationRevisionById(revisionId);
+            const revisionDeadline = Date.now() + 7_000;
+            while (committedRevision?.asKnownAt && Date.parse(committedRevision.asKnownAt) > Date.now() && Date.now() < revisionDeadline && !signal?.aborted) {
+              await new Promise(resolve => setTimeout(resolve, 100));
+              committedRevision = await this.options.news.readPublicationRevisionById(revisionId);
+            }
+            revision = committedRevision;
+            if (!revision?.asKnownAt || Date.parse(revision.asKnownAt) > Date.now()) return { publicationId: publication.publicationId, canonicalClaimId, status: "FAILED_RETRYABLE", reason: "N3A_OFFICIAL_REVISION_COMMIT_RETRYABLE" };
+          }
+          revisionExcerpt = documentExcerpt;
+        }
+      }
+    }
     if (!revisionExcerpt) return { publicationId: publication.publicationId, canonicalClaimId, status: "REFUSED", reason: "N3A_FACTUAL_EXCERPT_UNAVAILABLE" };
     const evidenceId = `global-document-excerpt-${publication.sourceId}-${publication.externalId}`;
     const provenanceRef = `${publication.publicationId}:provenance:${revision.revisionNo}`;
@@ -92,13 +181,15 @@ export class NewsFactualPipelineV1 {
     };
     const classification = this.verifier.classify(classificationInput);
     if (classification.proposals.length === 0) return { publicationId: publication.publicationId, canonicalClaimId, status: "REFUSED", reason: classification.refusalReasons[0] ?? "N3A_REFUSED" };
-    const proposal = classification.proposals[0];
+    const proposal = classification.proposals.find(candidate => isGlobalAnalysisFactRelevantV1(candidate.category, candidate.statement));
+    if (!proposal) return { publicationId: publication.publicationId, canonicalClaimId, status: "REFUSED", reason: "N3A_GLOBAL_ANALYSIS_RELEVANCE_INSUFFICIENT" };
     assertActive?.();
     const claimKey = claimKeyV1(proposal);
     const corroborationInput: CorroborationInputV1 = { contractVersion: "news-evidence-corroboration-v1", ruleSetVersion: "evidence-corroboration-rule-v1", proposal, claimKey,
       claimIdentities: [{ claimKey, canonicalClaimId, publicationRevisionId: revision.publicationRevisionId, statementFingerprint: sha256(proposal.statement), asKnownAt: proposal.proposedAt }], claimEquivalences: [], cutoffAsKnownAt: proposal.proposedAt, evaluatedAt: revision.asKnownAt,
-      evidence: [{ evidenceId: `n3b-${evidenceId}`, claimKey, originId: `${publication.sourceId}-origin`, sourceDocumentRef: revision.sourceDocumentRef, publicationRevisionId: revision.publicationRevisionId, provenanceRef, contentLocator: "publication:contentExcerpt", statementHash: sha256(proposal.statement), support: "SUPPORTS", asKnownAt: revision.asKnownAt, availableAsKnownAt: revision.asKnownAt, proposalEvidenceId: evidenceId }], verificationProofs: [],
-      origins: [{ originId: `${publication.sourceId}-origin`, sourceDocumentRef: revision.sourceDocumentRef, publicationRevisionId: revision.publicationRevisionId, publisherRef: publication.sourceId, editorialGroupRef: null, sourceKind: "SECONDARY", provenanceRef, availableAsKnownAt: revision.asKnownAt, competence: [{ claimKey, status: "UNKNOWN", basis: "IDENTIFIED_REPORT", evidenceRefs: [] }] }], independence: [] };
+      evidence: [{ evidenceId: `n3b-${evidenceId}`, claimKey, originId: `${publication.sourceId}-origin`, sourceDocumentRef: revision.sourceDocumentRef, publicationRevisionId: revision.publicationRevisionId, provenanceRef, contentLocator: "publication:contentExcerpt", statementHash: sha256(proposal.statement), support: "SUPPORTS", asKnownAt: revision.asKnownAt, availableAsKnownAt: revision.asKnownAt, proposalEvidenceId: evidenceId }],
+      verificationProofs: [],
+      origins: [{ originId: `${publication.sourceId}-origin`, sourceDocumentRef: revision.sourceDocumentRef, publicationRevisionId: revision.publicationRevisionId, publisherRef: publication.sourceId, editorialGroupRef: null, sourceKind: OFFICIAL_PRIMARY_SOURCES.has(publication.sourceId) ? "PRIMARY" : "SECONDARY", provenanceRef, availableAsKnownAt: revision.asKnownAt, competence: [{ claimKey, status: "UNKNOWN", basis: "IDENTIFIED_REPORT", evidenceRefs: [] }] }], independence: [] };
     const corroboration = this.corroborator.evaluate(corroborationInput);
     const persistInput: PersistFactualInputV1 = { attestationId: "pending", canonicalClaimId, proposal, corroborationInput, corroboration,
       evidence: [{ evidenceId, evidenceKind: "N3A_PROPOSAL", claimKey, publicationRevisionId: revision.publicationRevisionId, sourceDocumentRef: revision.sourceDocumentRef, contentLocator: "publication:contentExcerpt", provenanceRef, asKnownAt: revision.asKnownAt }],
@@ -183,7 +274,16 @@ export class NewsFactualPipelineV1 {
     for (const publication of publications.slice(0, this.options.maxDocuments ?? publications.length)) {
       if (signal?.aborted) throw new Error("NEWS_EXECUTION_CANCELLED");
       try { outcomes.push(await this.processOne(publication, signal, assertActive)); }
-      catch (error) { outcomes.push({ publicationId: publication.publicationId, canonicalClaimId: `sec:${publication.externalId}`, status: "FAILED_RETRYABLE", reason: error instanceof Error ? error.message : "NEWS_FACTUAL_RETRYABLE_FAILURE" }); }
+      catch (error) {
+        outcomes.push({
+          publicationId: publication.publicationId,
+          canonicalClaimId: publication.sourceId === "sec-edgar"
+            ? `sec:${publication.externalId}`
+            : `global:${publication.sourceId}:${publication.externalId}`,
+          status: "FAILED_RETRYABLE",
+          reason: error instanceof Error ? error.message : "NEWS_FACTUAL_RETRYABLE_FAILURE",
+        });
+      }
     }
     return outcomes;
   }

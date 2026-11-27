@@ -4,6 +4,8 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { Client, Pool } from "pg";
 import { NewsConsumptionApiV1 } from "../n5Api";
+import { GlobalNewsApiV1 } from "../globalNewsApi";
+import { readNewsForAnalysisV1 } from "../analysisNewsConsumer";
 import { PostgresFactualStore } from "../factualPersistence";
 import { PostgresNewsStore } from "../postgresStore";
 import { runNewsExecutorOnce } from "../autonomousExecutor";
@@ -78,6 +80,20 @@ test("BL3 operational executor runs SEC through N3 and N5 with positive and cons
     await admin.query("delete from news_core.factual_pipeline_backlog where publication_id=$1", [atomicPublicationId]);
     assert.ok((await news.reconcileFactualBacklog()) >= 1, "backfill must restore committed publications missing from the factual queue");
     assert.equal(Number((await admin.query("select count(*)::int n from news_core.factual_pipeline_backlog where publication_id=$1", [atomicPublicationId])).rows[0].n), 1, "backfill must restore the committed publication target");
+    // Real PG regression: the old handoff stored null PIT timestamps before
+    // finalization, then permanently refused a valid committed publication.
+    await admin.query("update news_core.factual_pipeline_backlog set state='DONE', completed_status='REFUSED', completed_at=clock_timestamp(), last_error='N2_PUBLICATION_AS_KNOWN_AT_UNAVAILABLE', publication_payload=jsonb_set(publication_payload,'{asKnownAt}','null'::jsonb) where publication_id=$1", [atomicPublicationId]);
+    const frontierDeadline = Date.now() + 10_000;
+    while (!(await admin.query<{ ready: boolean }>("select as_known_at <= clock_timestamp() as ready from news_core.publications where publication_id=$1", [atomicPublicationId])).rows[0]?.ready && Date.now() < frontierDeadline) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    assert.equal(await news.reconcileFactualBacklog(1000, [atomicPublicationId]), 1);
+    const repairedClaim = (await news.claimFactualBacklog(1, "bl3-pit-repair-" + suffix, 60, [atomicPublicationId]))[0];
+    assert.ok(repairedClaim?.publication.asKnownAt && repairedClaim.publication.ingestedAt, "claim must contain the committed database frontier");
+    const actualFrontier = (await admin.query<{ as_known_at: Date }>("select as_known_at from news_core.publications where publication_id=$1", [atomicPublicationId])).rows[0].as_known_at;
+    assert.equal(Date.parse(repairedClaim.publication.asKnownAt), actualFrontier.getTime());
+    assert.equal(await news.finishFactualBacklog(atomicPublicationId, "bl3-pit-repair-" + suffix, repairedClaim.claimToken, "REFUSED", "REGRESSION_FIXTURE_COMPLETE"), "FINISHED");
+    assert.equal(await news.reconcileFactualBacklog(1000, [atomicPublicationId]), 0, "valid terminal refusals must not be requeued");
     const executorOptions = { store: news, factualPipeline: pipeline, secUserAgent: process.env.SEC_USER_AGENT ?? "SYNTRAKE BL3 operational CI/1.0 security@syntrake.com", collectionScopeKey: scope, fetchTimeoutMs: 120_000 };
     const knownQueue = await admin.query<{ position: number; state: string; claim_owner: string | null; next_attempt_at: string; completed_status: string | null }>(`select position, state, claim_owner, next_attempt_at::text, completed_status from (select b.*, row_number() over (order by b.next_attempt_at, b.created_at, b.publication_id)::int position from news_core.factual_pipeline_backlog b) q where publication_id=$1`, [knownPublicationId]);
     assert.equal(knownQueue.rowCount, 1, "known SEC publication must be present in factual backlog");
@@ -110,6 +126,15 @@ test("BL3 operational executor runs SEC through N3 and N5 with positive and cons
       from chosen c where b.publication_id=c.publication_id
       returning b.publication_id`);
     assert.equal(preparedFairness.rowCount, 22);
+    // The fairness test must not claim rows before their real PIT frontier.
+    const fairnessIds = preparedFairness.rows.map(row => row.publication_id);
+    const fairnessDeadline = Date.now() + 10_000;
+    while (true) {
+      const eligible = Number((await admin.query<{ n: number }>("select count(*)::int n from news_core.publications where publication_id=any($1::text[]) and visibility_state='COMMITTED' and as_known_at <= clock_timestamp()", [fairnessIds])).rows[0].n);
+      if (eligible === fairnessIds.length) break;
+      assert.ok(Date.now() < fairnessDeadline, "fairness fixtures must cross their real committed PIT frontier");
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
     const fenceA = await news.claimFactualBacklog(1, `bl3-fence-a-${suffix}`, 1);
     assert.equal(fenceA.length, 1);
     await admin.query("update news_core.factual_pipeline_backlog set lease_until=clock_timestamp()-interval '1 second' where publication_id=$1", [fenceA[0].publication.publicationId]);
@@ -143,6 +168,45 @@ test("BL3 operational executor runs SEC through N3 and N5 with positive and cons
     assert.equal(events.status, "AVAILABLE"); assert.equal(events.data.length, 1); assert.equal(events.data[0].confirmationStatus, "REPORTED");
     const evidence = await api.getEventEvidence({ serviceId: "news_reader", credential: "bl3-operational-credential" }, { eventId: persisted.factEventId, asOf });
     assert.ok(evidence.data.length > 0); assert.ok(evidence.sourceRefs.some(ref => ref.startsWith("https://www.sec.gov/Archives/edgar/data/")));
+    // Prove both real consumers under separate restricted LOGIN identities,
+    // using the SEC fact created above (no mocked News API).
+    const snapshots = [];
+    for (const consumer of ["INVESTING", "TRADING"] as const) {
+      const role = `bl3_${consumer.toLowerCase()}_${suffix.slice(0, 12)}`;
+      await admin.query(`create role ${role} login noinherit nosuperuser nobypassrls nocreatedb nocreaterole password '${ROLE_PASSWORD}'`);
+      await admin.query(`grant news_reader to ${role}`);
+      const url = new URL(roleUrl(DB_URL, role));
+      url.searchParams.set("options", "-c role=news_reader");
+      const pool = new Pool({ connectionString: url.toString(), max: 2 });
+      try {
+        const identity = await pool.query("select current_user,session_user");
+        assert.equal(identity.rows[0].current_user, "news_reader");
+        assert.equal(identity.rows[0].session_user, role);
+        await assert.rejects(pool.query("select * from news_core.fact_revisions"), /permission denied/);
+        await assert.rejects(pool.query("delete from news_core.publications where false"), /permission denied/);
+        const reader = new PostgresNewsStore(pool);
+        const factReader = new PostgresFactualStore(pool, "news_reader");
+        const restricted = new NewsConsumptionApiV1({ news: reader, factual: factReader }, "0123456789abcdef", "analysis-test-credential");
+        const auth = { serviceId: "news_reader" as const, credential: "analysis-test-credential" };
+        const snapshot = await readNewsForAnalysisV1(new GlobalNewsApiV1(restricted), auth, consumer, {
+          asOf: new Date(asOf).toISOString(), publications: { filters: { sourceIds: ["sec-edgar"] }, limit: 10 },
+          events: { targets: [persisted.factEventId], limit: 10 },
+        });
+        assert.equal(snapshot.status, "AVAILABLE");
+        assert.ok(snapshot.publications.news.data.length > 0);
+        assert.equal(snapshot.events.news.data.length, 1);
+        assert.equal(snapshot.events.news.data[0].asKnownAt <= snapshot.asOf, true);
+        const proof = await restricted.getEventEvidence(auth, { eventId: persisted.factEventId, asOf });
+        assert.ok(proof.data.length > 0);
+        snapshots.push(snapshot);
+        console.log(`NEWS_ANALYSIS_REAL_CONSUMER consumer=${consumer} publications=${snapshot.publications.news.data.length} facts=${snapshot.events.news.data.length} evidence=${proof.data.length} role=restricted`);
+      } finally {
+        await pool.end();
+        await admin.query(`drop role if exists ${role}`);
+      }
+    }
+    assert.deepEqual(snapshots[0].publications.news.data, snapshots[1].publications.news.data);
+    assert.deepEqual(snapshots[0].events.news.data, snapshots[1].events.news.data);
     assert.ok(refused?.canonicalClaimId, "refusal must expose the canonical claim identity used by N5");
     const refusedEvents = await api.getNewsEvents({ serviceId: "news_reader", credential: "bl3-operational-credential" }, { targets: [refused!.canonicalClaimId!], asOf });
     assert.equal(refusedEvents.data.length, 0, "conservative refusal must not create an N5 fact");

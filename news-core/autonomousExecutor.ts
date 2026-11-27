@@ -27,7 +27,7 @@ async function runTarget(store: PostgresNewsStore, target: ClaimedTarget, option
       throw error;
     }
     if (signal.aborted) throw new Error("NEWS_EXECUTION_CANCELLED");
-    const committed = await store.ingestGlobalBatch(source, items, {});
+    const committed = await store.ingestGlobalBatch(source, items, { lease });
     const latestPublishedAt = items.reduce<string | null>((latest, item) => item.publishedAt && (!latest || Date.parse(item.publishedAt) > Date.parse(latest)) ? item.publishedAt : latest, null);
     await store.recordGlobalOperationalState({ sourceId: source.sourceId, collectionScopeKey: target.collectionScopeKey, coverage: "KNOWN", health: items.length ? "HEALTHY" : "EMPTY", observed: items.length, insertedPublications: committed.insertedPublications, lastPublishedAt: latestPublishedAt });
     const factualOutcomes = options.factualPipeline ? await drainFactualBacklog(store, options.factualPipeline, options, signal, lease) : [];
@@ -48,24 +48,32 @@ async function runTarget(store: PostgresNewsStore, target: ClaimedTarget, option
   return { ingested: committed.insertedPublications, factualOutcomes };
 }
 
-async function drainFactualBacklog(store: PostgresNewsStore, pipeline: NewsFactualPipelineV1, options: NewsExecutorOptions, signal: AbortSignal, lease?: ExecutionLease): Promise<readonly FactualPipelineOutcomeV1[]> {
+export async function drainFactualBacklog(store: PostgresNewsStore, pipeline: NewsFactualPipelineV1, options: NewsExecutorOptions, signal: AbortSignal, lease?: ExecutionLease): Promise<readonly FactualPipelineOutcomeV1[]> {
   return await (async () => {
         await store.reconcileFactualBacklog(1000, options.factualPublicationIds);
         const factualLeaseSeconds = Math.max(1, Math.floor(lease?.leaseSeconds ?? options.leaseSeconds ?? 60));
-        const claims = await store.claimFactualBacklog(options.factualPipeline!.maxDocuments, options.workerId, factualLeaseSeconds, options.factualPublicationIds);
+        const claims = await store.claimFactualBacklog(pipeline.maxDocuments, options.workerId, factualLeaseSeconds, options.factualPublicationIds);
         if (claims.length === 0) return [];
         const localAbort = new AbortController();
         const combinedSignal = AbortSignal.any([signal, localAbort.signal]);
         let ownershipLost = false;
+        const renewals = new Set<Promise<void>>();
         const renewal = setInterval(() => {
-          for (const claim of claims) void store.renewFactualBacklogClaim(claim.publication.publicationId, options.workerId, claim.claimToken, factualLeaseSeconds).then(alive => {
+          for (const claim of claims) {
+            const pending = store.renewFactualBacklogClaim(claim.publication.publicationId, options.workerId, claim.claimToken, factualLeaseSeconds).then(alive => {
             if (!alive) { ownershipLost = true; localAbort.abort(); }
-          }).catch(() => { ownershipLost = true; localAbort.abort(); });
+            }).catch(() => { ownershipLost = true; localAbort.abort(); });
+            renewals.add(pending);
+            void pending.then(() => renewals.delete(pending), () => renewals.delete(pending));
+          }
         }, Math.max(100, Math.floor(factualLeaseSeconds * 1000 / 3)));
         let outcomes: readonly FactualPipelineOutcomeV1[];
-        try { outcomes = await options.factualPipeline!.processPublications(claims.map(claim => claim.publication), combinedSignal, () => { if (ownershipLost) throw new Error("NEWS_FACTUAL_LEASE_LOST"); }); }
+        try { outcomes = await pipeline.processPublications(claims.map(claim => claim.publication), combinedSignal, () => { if (ownershipLost) throw new Error("NEWS_FACTUAL_LEASE_LOST"); }); }
         catch (error) { outcomes = claims.map(claim => ({ publicationId: claim.publication.publicationId, canonicalClaimId: `sec:${claim.publication.externalId}`, status: "FAILED_RETRYABLE" as const, reason: error instanceof Error ? error.message : "NEWS_FACTUAL_RETRYABLE_FAILURE" })); }
-        finally { clearInterval(renewal); }
+        finally {
+          clearInterval(renewal);
+          await Promise.allSettled([...renewals]);
+        }
         for (const [index, outcome] of outcomes.entries()) {
           const claim = claims[index];
           if (!claim) continue;
@@ -142,6 +150,6 @@ export async function registerSecTarget(store: PostgresNewsStore, cik: string): 
 
 export async function registerGlobalTarget(store: PostgresNewsStore, source: GlobalNewsRegistryEntry): Promise<string> {
   await store.ensureGlobalSource(source);
-  await store.upsertTarget({ collectionScopeKey: source.checkpointScope, sourceId: source.sourceId, providerKey: globalProviderKey(source.sourceType), entityKey: source.publisherId, parameters: { endpoint: source.endpoint, sourceType: source.sourceType, rightsPolicyId: source.rightsPolicyId } });
+  await store.upsertTarget({ collectionScopeKey: source.checkpointScope, sourceId: source.sourceId, providerKey: globalProviderKey(source.sourceType), entityKey: source.publisherId, parameters: { endpoint: source.endpoint, sourceType: source.sourceType, rightsPolicyId: source.rightsPolicyId, minIntervalSeconds: source.updatePolicy.minIntervalSeconds } });
   return source.checkpointScope;
 }

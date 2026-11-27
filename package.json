@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "scripts": {
     "dev": "next dev",
+    "prebuild": "tsx scripts/news-site-preview-smoke.ts",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
