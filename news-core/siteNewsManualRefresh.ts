@@ -178,9 +178,16 @@ export async function refreshPersistedSiteNews(userId: string, mode: "SITE" | "P
       console.log("NEWS_PREVIEW_FACTUAL_TOTALS", totals);
       return { status: totals.persisted ? "COMPLETED" : "PARTIAL", sources: [] };
     }
+    // A slow source must not starve sources later in the registry across bounded runs.
+    const health = await pool.query<{ source_id: string }>(
+      "select source_id from news_core.global_operational_state where last_success_at is not null order by last_success_at",
+    );
+    const successOrder = new Map(health.rows.map((row, index) => [row.source_id, index]));
+    const sources = [...NEWS_OFFICIAL_PLUS_DAILY_NEWS_V1].sort((left, right) =>
+      (successOrder.get(left.sourceId) ?? -1) - (successOrder.get(right.sourceId) ?? -1));
     const collectionDeadline = AbortSignal.any([deadline, AbortSignal.timeout(36_000)]);
     return await collectThenProcessFacts(
-      () => runManualSourceBatch(NEWS_OFFICIAL_PLUS_DAILY_NEWS_V1, async source => {
+      () => runManualSourceBatch(sources, async source => {
         await registerGlobalTarget(store, source);
         if (collectionDeadline.aborted) throw new Error("NEWS_MANUAL_DEADLINE");
         return await runNewsExecutorOnce({ store, workerId, secUserAgent, collectionScopeKey: source.checkpointScope,
